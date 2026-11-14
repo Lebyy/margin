@@ -208,7 +208,96 @@ function citeNotesTool(notes: string) {
 }
 
 // Longer than one model request, because a level-2 turn is two: the tool call, then the hint.
+// Worst case with both of a turn's model calls stuck: two hedge waits plus two healthy answers, about 36 s.
 const TURN_TIMEOUT_MS = 45_000;
+
+/**
+ * When a model request has not answered after this long, a second copy is sent and the first answer wins.
+ * Measured on 2026-11-14 with the thinking level low: a healthy tool call answers in 2-3 s and a healthy hint in 4-16 s, while about one gemini-4-carbon request in four hung for 20 s or more (one took 146 s to return a 23-token tool call). A hung request does not get faster by waiting; a fresh copy usually answers in the normal time.
+ */
+export const HEDGE_AFTER_MS = 8_000;
+
+/** The most one request may take, hedge included. A model call with both copies stuck fails here instead of holding the turn. */
+export const MODEL_REQUEST_TIMEOUT_MS = 25_000;
+
+/**
+ * How much hidden reasoning the tutor model does per request; see runDeepAgent.
+ * gemini-4-carbon takes a level, not a token budget: `thinkingBudget` is refused with 400 "Thinking budget is not supported for this model. Use thinking level instead."
+ */
+export const TUTOR_THINKING_LEVEL = "low";
+
+/**
+ * The LangChain Gemini client, with hedged requests: a slow request gets one backup copy, and whichever answers first is used.
+ *
+ * Why this exists. A level-2 turn is two tutor requests, and on 2026-11-14 about one request in four hung for 20 s or more. The turn's abort signal is passed to agent.invoke but does not reach the HTTP request (the trace aborted a turn at 90 s and the stuck request still returned at 146 s), so a hung request took the whole turn to the timeout and a 503, and nothing cancelled it. Waiting 20 s and then retrying was measured too: two hangs in one turn still ran past 45 s.
+ *
+ * How. completionWithRetry is where every non-streaming request leaves the client, and it hands its signal to the Google SDK, which aborts the fetch when that signal fires. The first copy is sent at once. If it has not answered after `hedgeAfterMs`, or it failed with a 429 or 5xx, a second copy is sent. The first answer is returned and the other copy is cancelled. Any other error (a 400 would fail again the same way) is thrown at once. Both copies are cancelled at `requestTimeoutMs`, or as soon as the caller's own signal fires. At most two requests per model call, and only one when the model answers in time.
+ *
+ * The client must be built with maxRetries: 0. LangChain's retry wrapper returns to the caller as soon as a signal aborts but keeps retrying in the background, so every cancelled copy turned into an orphan request nobody was waiting for (seen in the trace as a duplicate one second after each retry).
+ */
+export class TimedChatGoogle extends ChatGoogleGenerativeAI {
+  hedgeAfterMs = HEDGE_AFTER_MS;
+  requestTimeoutMs = MODEL_REQUEST_TIMEOUT_MS;
+
+  override completionWithRetry(
+    request: Parameters<ChatGoogleGenerativeAI["completionWithRetry"]>[0],
+    options?: this["ParsedCallOptions"],
+  ): ReturnType<ChatGoogleGenerativeAI["completionWithRetry"]> {
+    type Result = Awaited<ReturnType<ChatGoogleGenerativeAI["completionWithRetry"]>>;
+    const outer = options?.signal;
+    const deadline = AbortSignal.timeout(this.requestTimeoutMs);
+    // Copies still waiting for an answer. Only these are cancelled, so the copy that answered is left alone.
+    const pending = new Set<AbortController>();
+    let sent = 0;
+    const cancelAll = () => pending.forEach((c) => c.abort());
+
+    return new Promise<Result>((resolve, reject) => {
+      let settled = false;
+      let failures = 0;
+      let hedge: ReturnType<typeof setTimeout> | undefined;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(hedge);
+        cancelAll();
+        fn();
+      };
+      const send = () => {
+        if (settled || sent >= 2) return;
+        const copy = new AbortController();
+        pending.add(copy);
+        sent += 1;
+        const signal = AbortSignal.any([copy.signal, deadline, ...(outer ? [outer] : [])]);
+        super.completionWithRetry(request, { ...options, signal } as this["ParsedCallOptions"]).then(
+          (result) => {
+            pending.delete(copy);
+            finish(() => resolve(result));
+          },
+          (error: unknown) => {
+            pending.delete(copy);
+            failures += 1;
+            const status = (error as { status?: number }).status ?? 0;
+            const busy = status === 429 || status >= 500;
+            // A busy provider gets the second copy now instead of after the hedge wait.
+            if (busy && sent < 2 && !outer?.aborted && !deadline.aborted) {
+              clearTimeout(hedge);
+              console.error(`tutor model request got ${status}; sending a second copy`);
+              send();
+              return;
+            }
+            // Wait for the other copy if it is still out; otherwise this error is the answer.
+            if (!busy || failures >= sent) finish(() => reject(error));
+          },
+        );
+      };
+      send();
+      hedge = setTimeout(() => {
+        console.error(`tutor model request has not answered in ${this.hedgeAfterMs} ms; sending a second copy`);
+        send();
+      }, this.hedgeAfterMs);
+    });
+  }
+}
 
 /**
  * The production runner. Tests do not call this.
@@ -216,7 +305,9 @@ const TURN_TIMEOUT_MS = 45_000;
  * The recursion cap is the backstop for a tool loop. It counts graph steps, not model requests, and a deepagent spends several steps per tool round on its own middleware, so the cap has to leave room for two searches and the answer. The search count in citeNotesTool is what actually bounds the requests.
  * StateBackend keeps the agent's files in memory. A filesystem backend would be rooted on the repo, where the answer key is not supposed to be readable or writable.
  * subagents is empty. The general-purpose subagent is disabled on the Google profile, so the model cannot delegate writing the solution.
- * maxRetries is 1. The chat class retries a failed request six times by default, and the guard can ask for three drafts a turn, so one bad minute at the provider would be eighteen calls on the shared credit for a single student message.
+ * TimedChatGoogle cancels one stuck request after 20 s and sends it again. Without it, one request that hung took the whole turn to the timeout.
+ * maxRetries is 0 and TimedChatGoogle retries once. The chat class retries a failed request six times by default, and the guard can ask for three drafts a turn, so one bad minute at the provider would be eighteen calls on the shared credit for a single student message.
+ * The thinking level is low. A hint is at most four sentences, and the uncapped model spent about 600 hidden tokens on one, which made a normal hint take 10-15 s and left no room in the turn for a retry.
  * The abort signal ends a turn that has stalled. The error reaches the route as a 503, or reaches the guard as a failed redraft, which it holds.
  */
 async function runDeepAgent(call: TutorCall): Promise<string> {
@@ -225,13 +316,16 @@ async function runDeepAgent(call: TutorCall): Promise<string> {
     throw new Error("LLM_API_KEY is empty");
   }
 
-  const model = new ChatGoogleGenerativeAI({
+  const model = new TimedChatGoogle({
     model: call.model,
     apiKey,
     baseUrl: call.baseUrl,
     apiVersion: call.apiVersion,
     streaming: false,
-    maxRetries: 1,
+    // TimedChatGoogle does the one retry. See its comment for why this is 0.
+    maxRetries: 0,
+    // The installed client's type lists only the older budget field; the object is passed through to the request as is.
+    thinkingConfig: { thinkingLevel: TUTOR_THINKING_LEVEL } as never,
   });
   const tools = call.toolNames.includes("cite_notes") ? [citeNotesTool(call.notes)] : [];
   const agent = createDeepAgent({

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AGENT_PLATFORM_HOST, CLOUD_PROJECT, MODEL_LOCATION, STRONG_MODEL } from "../src/llm.ts";
-import { buildCall, draftHint, searchNotes, type TutorCall } from "../src/tutor.ts";
+import { buildCall, draftHint, searchNotes, TimedChatGoogle, type TutorCall } from "../src/tutor.ts";
 
 const NOTES = "Lecture 7, slides 12-16: base cases and recursive calls.";
 
@@ -128,5 +128,99 @@ describe("draftHint", () => {
       studentText: "Where do I look?",
     });
     assert.equal(call.notes.includes("Lecture 7, slides 12-16"), true);
+  });
+});
+
+// The hedged requests in runDeepAgent's client. The Google SDK call is
+// replaced by a stand-in that answers, fails with a status, answers after a
+// delay, or hangs until its signal fires (the way the SDK aborts a fetch).
+// The hedge is 30 ms and the cap 150 ms. No network, no model credit.
+describe("TimedChatGoogle", () => {
+  type Reply = "answer" | "hang" | 400 | 429 | 503 | { after: number };
+
+  /** A client whose SDK call follows `script`, one entry per request sent. */
+  function client(script: Reply[]) {
+    const model = new TimedChatGoogle({ model: STRONG_MODEL, apiKey: "test-key", maxRetries: 0 });
+    model.hedgeAfterMs = 30;
+    model.requestTimeoutMs = 150;
+    let calls = 0;
+    let cancelled = 0;
+    (model as unknown as { client: { generateContent: unknown } }).client.generateContent = (
+      _request: unknown,
+      { signal }: { signal?: AbortSignal },
+    ) => {
+      const reply = script[calls] ?? "hang";
+      calls += 1;
+      const id = calls;
+      if (reply === "answer") return Promise.resolve({ response: { text: () => `answer ${id}` } });
+      if (typeof reply === "number") return Promise.reject(Object.assign(new Error(`status ${reply}`), { status: reply }));
+      return new Promise((resolve, reject) => {
+        if (reply !== "hang") setTimeout(() => resolve({ response: { text: () => `answer ${id}` } }), reply.after);
+        signal?.addEventListener("abort", () => {
+          cancelled += 1;
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        });
+      });
+    };
+    return { model, calls: () => calls, cancelled: () => cancelled };
+  }
+
+  const request = { contents: [{ role: "user", parts: [{ text: "hi" }] }] };
+  const text = (r: unknown) => (r as { response: { text: () => string } }).response.text();
+
+  it("sends one request when the model answers before the hedge", async () => {
+    const { model, calls } = client(["answer"]);
+    assert.equal(text(await model.completionWithRetry(request)), "answer 1");
+    assert.equal(calls(), 1);
+  });
+
+  it("sends a second copy when the first hangs, and cancels the first", async () => {
+    // Case: the 146 s request from the trace. The copy sent at the hedge
+    // answers, the hung one is cancelled, and the turn gets its reply.
+    const { model, calls, cancelled } = client(["hang", "answer"]);
+    assert.equal(text(await model.completionWithRetry(request)), "answer 2");
+    assert.equal(calls(), 2);
+    assert.equal(cancelled(), 1);
+  });
+
+  it("uses whichever copy answers first", async () => {
+    // Case: the first copy is only slow. It answers after the hedge was sent
+    // but before the second copy, so its answer is used and the copy is cancelled.
+    const { model, calls, cancelled } = client([{ after: 50 }, { after: 120 }]);
+    assert.equal(text(await model.completionWithRetry(request)), "answer 1");
+    assert.equal(calls(), 2);
+    assert.equal(cancelled(), 1);
+  });
+
+  it("gives up at the cap with two requests, instead of looping", async () => {
+    const { model, calls } = client(["hang", "hang", "hang"]);
+    const started = Date.now();
+    await assert.rejects(model.completionWithRetry(request));
+    assert.equal(calls(), 2);
+    assert.ok(Date.now() - started < 1000);
+  });
+
+  it("sends the second copy at once after a 429 or a 5xx, and does not resend a 400", async () => {
+    // Case: what maxRetries: 1 used to cover. A busy provider gets the second
+    // copy immediately; a bad request would fail the same way again.
+    for (const status of [429, 503] as const) {
+      const { model, calls } = client([status, "answer"]);
+      const started = Date.now();
+      await model.completionWithRetry(request);
+      assert.equal(calls(), 2, `status ${status}`);
+      assert.ok(Date.now() - started < 30, `status ${status} waited for the hedge`);
+    }
+    const { model, calls } = client([400, "answer"]);
+    await assert.rejects(model.completionWithRetry(request));
+    assert.equal(calls(), 1);
+  });
+
+  it("stops both copies when the turn itself is aborted", async () => {
+    const { model, calls } = client(["hang", "hang"]);
+    const turn = new AbortController();
+    setTimeout(() => turn.abort(), 10);
+    await assert.rejects(model.completionWithRetry(request, { signal: turn.signal } as never));
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(calls(), 1, "a copy was sent after the turn was over");
   });
 });
