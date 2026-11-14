@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
-import { FALLBACK_REPLY, fallbackFor, textHasCanary } from "./guard.ts";
+import { fallbackFor, textHasCanary } from "./guard.ts";
 import { completeJson, countIdentity, generateSpeech, type TextGenerator } from "./llm.ts";
 import {
   ASSIGNMENT_KINDS,
@@ -272,11 +272,12 @@ function studentRelease(
   reply: string,
   verdict: GuardVerdict,
   canary: string,
+  fallback: string,
 ): { reply: string; verdict: GuardVerdict; canary?: "absent" } {
   let shownReply = reply;
   let shown = verdict;
   if (textHasCanary(shownReply, canary)) {
-    shownReply = FALLBACK_REPLY;
+    shownReply = fallback;
     shown = { ...shown, leaks: true, layer: "fallback" };
   }
   if (textHasCanary(shown.reason, canary)) {
@@ -407,9 +408,10 @@ async function answerPhoto(
     concepts,
   });
 
-  let asked = await guardQuestion(marked.question, current.answerKey, canary, judge);
+  const fallback = fallbackFor(kind, current.prompt);
+  let asked = await guardQuestion(marked.question, current.answerKey, canary, judge, fallback);
   if (leaksAnotherQuestion(asked.question, current.otherKeys, canary, kind)) {
-    asked = { question: fallbackFor(kind), verdict: HELD_FOR_ANOTHER_QUESTION };
+    asked = { question: fallback, verdict: HELD_FOR_ANOTHER_QUESTION };
   }
   // Stored like a tutor reply, at the level the session is already on, so the
   // professor's transcript and the student's log pair the photo with the
@@ -797,14 +799,16 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
 
-    let released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary);
+    const kind = (assignment.kind ?? "code") as AssignmentKind;
+    // The held-turn sentence for this question: the empty-list one only on sum_list (see fallbackFor).
+    const fallback = fallbackFor(kind, question.prompt);
+    let released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary, fallback);
     // The fixed notice goes after the guarded reply. It is our own sentence, never model text, so it needs no check.
     if (notice) released = { ...released, reply: `${released.reply}\n\n${notice}` };
     // The guard checked this question's key. A reply that holds another
     // question's solution is held the same way, with the same fallback.
-    const kind = (assignment.kind ?? "code") as AssignmentKind;
     if (leaksAnotherQuestion(released.reply, question.otherKeys, canary, kind)) {
-      released = studentRelease(fallbackFor(kind), HELD_FOR_ANOTHER_QUESTION, canary);
+      released = studentRelease(fallback, HELD_FOR_ANOTHER_QUESTION, canary, fallback);
     }
     // The stored tutor message is the text the student was allowed to see.
     // A reload reads this content, so the marker cannot live only in the response.
@@ -917,7 +921,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
     }
     // The same cross-question check as a typed turn.
     if (leaksAnotherQuestion(result.reply, question.otherKeys, canary, (assignment.kind ?? "code") as AssignmentKind)) {
-      result = { ...result, reply: fallbackFor((assignment.kind ?? "code") as AssignmentKind), verdict: HELD_FOR_ANOTHER_QUESTION };
+      result = { ...result, reply: fallbackFor((assignment.kind ?? "code") as AssignmentKind, question.prompt), verdict: HELD_FOR_ANOTHER_QUESTION };
     }
     await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK }).save();
     await new Message({ session_id: session._id, role: "tutor", content: result.reply, hint_level: result.level, guard_verdict: result.verdict, retries: result.retries }).save();

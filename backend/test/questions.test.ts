@@ -141,7 +141,8 @@ describe("questions, the per-question clock, and the reflection", { skip }, () =
     draft = "What happens when the list is empty?";
     const body = JSON.parse(leaked.text);
     assert.equal(body.verdict.leaks, true);
-    assert.equal(body.reply, "What happens when the list is empty?");
+    // Question 2 is count_list, not sum_list, so the held turn shows the general sentence (fallbackFor).
+    assert.equal(body.reply, "What is the question asking you to find?");
     assert.ok(!carriesKey(leaked.text));
   });
 

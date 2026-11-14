@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { assessDraft, checkDeterministic, FALLBACK_REPLY, guardDraft, normalizeDraft } from "../src/guard.ts";
+import { assessDraft, checkDeterministic, FALLBACK_REPLY, FALLBACK_REPLY_GENERAL, fallbackFor, guardDraft, normalizeDraft } from "../src/guard.ts";
 import { FAST_MODEL } from "../src/llm.ts";
 import { CANARY } from "../src/models.ts";
 
@@ -284,5 +284,16 @@ describe("guard module", () => {
     const commented = "return xs[0] # head\n+ sum_list(xs[1:])";
     const plain = "return xs[0] + sum_list(xs[1:])";
     assert.deepEqual(normalizeDraft(commented), normalizeDraft(plain));
+  });
+});
+
+describe("fallbackFor", () => {
+  // The cases: the demo prompt, another code prompt, a prompt left out, and a written assignment.
+  // Only code about sum_list (or a caller that predates the prompt argument) gets the empty-list question.
+  it("keeps the empty-list question for sum_list and nothing else", () => {
+    assert.equal(fallbackFor("code", "Write sum_list(xs) recursively."), FALLBACK_REPLY);
+    assert.equal(fallbackFor("code", "Write fizzbuzz(n) that returns a list of strings."), FALLBACK_REPLY_GENERAL);
+    assert.equal(fallbackFor("code"), FALLBACK_REPLY);
+    assert.equal(fallbackFor("written", "Write sum_list(xs) recursively."), FALLBACK_REPLY_GENERAL);
   });
 });

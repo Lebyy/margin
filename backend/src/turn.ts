@@ -94,6 +94,7 @@ export async function runTurn(
     answerKey: state.answerKey,
     canary: state.canary,
     kind: state.kind,
+    prompt: state.prompt,
     generate: hooks?.generate,
     redraft: (nextLevel, feedback) => draftHint(hintInput(state, studentText, nextLevel, feedback), hooks?.run),
   });
@@ -118,6 +119,7 @@ export async function runSmallerProblem(state: TurnState, hooks?: TurnHooks): Pr
     answerKey: state.answerKey,
     canary: state.canary,
     kind: state.kind,
+    prompt: state.prompt,
     generate: hooks?.generate,
     redraft: (nextLevel, feedback) => draftHint(hintInput(state, SMALLER_PROBLEM_ASK, nextLevel, feedback), hooks?.run),
   });
@@ -152,7 +154,7 @@ function forStudent(guarded: GuardedReply, state: TurnState): TurnResult {
   let layer = guarded.verdict.layer;
   let leaks = guarded.verdict.leaks;
   if (exposesSolution(reply, state.answerKey, state.canary, state.kind)) {
-    reply = fallbackFor(state.kind);
+    reply = fallbackFor(state.kind, state.prompt);
     layer = "fallback";
     leaks = true;
   }

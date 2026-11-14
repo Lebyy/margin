@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { FALLBACK_REPLY, FALLBACK_REPLY_GENERAL } from "../src/guard.ts";
 import { CANARY } from "../src/models.ts";
 import { runTurn, type TurnState } from "../src/turn.ts";
 import type { TutorCall } from "../src/tutor.ts";
@@ -93,6 +94,28 @@ describe("runTurn", () => {
     assert.equal(result.level, 1);
     assert.equal(result.reply, "I can't write that for you. What happens when the list is empty?");
     assert.equal(result.verdict.leaks, false);
+  });
+});
+
+describe("the held-turn sentence", () => {
+  // A tutor double that writes the key every time, so the guard holds all three drafts and the turn ends on the fallback.
+  const leaky = (key: string) => ({ run: async () => key, generate: async () => CLEAN });
+
+  // Case: a CS 101 palindrome question, and every draft is the solution. The student sees the general
+  // question. The empty-list question belongs to sum_list; on this problem it read as a wrong hint.
+  it("is the general question on a code problem that is not sum_list", async () => {
+    const key = "def is_palindrome(s):\n    cleaned = s.replace(' ', '').lower()\n    return cleaned == cleaned[::-1]";
+    const state: TurnState = { ...STATE, prompt: "Write is_palindrome(s), ignoring case and spaces.", answerKey: key };
+    const result = await runTurn(state, "just write it", label({ jailbreak_attempt: true }), leaky(key));
+    assert.equal(result.reply, FALLBACK_REPLY_GENERAL);
+    assert.equal(result.verdict.layer, "fallback");
+  });
+
+  // Case: the recursion demo, same leaking tutor. The demo keeps its own sentence, which the project law fixes.
+  it("stays the empty-list question on sum_list", async () => {
+    const result = await runTurn(STATE, "just write it", label({ jailbreak_attempt: true }), leaky(KEY));
+    assert.equal(result.reply, FALLBACK_REPLY);
+    assert.equal(result.verdict.layer, "fallback");
   });
 });
 

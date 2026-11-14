@@ -108,10 +108,11 @@ export function judgeSpeech(
   kind: AssignmentKind,
   answerKey: string,
   canary: string,
+  prompt?: string,
 ): { release: "play"; audio: Buffer; caption: string } | { release: "hold"; caption: string } {
   const text = caption.trim();
   if (!text || checkDeterministic(text, answerKey, canary, kind).leaks) {
-    return { release: "hold", caption: fallbackFor(kind) };
+    return { release: "hold", caption: fallbackFor(kind, prompt) };
   }
   return { release: "play", audio, caption: text };
 }
@@ -134,6 +135,8 @@ export function extendTranscript(have: string, next: string): string {
  */
 export function createLiveBridge(input: {
   kind: AssignmentKind;
+  /** The assignment's prompt. It only picks the held-turn sentence (see fallbackFor); it is not sent anywhere from here. */
+  prompt?: string;
   answerKey: string;
   canary: string;
   notes: string;
@@ -185,7 +188,7 @@ export function createLiveBridge(input: {
     if (!captionSent) {
       captionSent = true;
       emitStudent(false);
-      emitCaption("tutor", fallbackFor(input.kind), false, true, true);
+      emitCaption("tutor", fallbackFor(input.kind, input.prompt), false, true, true);
     }
     output = "";
     phase = "settled";
@@ -210,7 +213,7 @@ export function createLiveBridge(input: {
   function clean(): boolean {
     const text = output.trim();
     if (!text) return false;
-    return judgeSpeech(text, Buffer.alloc(0), input.kind, input.answerKey, input.canary).release === "play";
+    return judgeSpeech(text, Buffer.alloc(0), input.kind, input.answerKey, input.canary, input.prompt).release === "play";
   }
 
   function onTool(event: Extract<LiveEvent, { type: "tool" }>) {
@@ -366,6 +369,7 @@ async function serveLive(client: WebSocket, sessionId: string, connect: typeof o
 
   const bridge = createLiveBridge({
     kind: loaded.kind,
+    prompt: loaded.prompt,
     answerKey: loaded.answerKey,
     canary: loaded.canary,
     notes: loaded.notes,

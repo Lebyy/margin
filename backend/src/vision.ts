@@ -166,8 +166,8 @@ export type FindStepInput = {
  * layers: the key-line check above (a one-sentence question is shorter than
  * the guard's eight-word window), then assessDraft, which is the
  * deterministic layer plus the judge. A held question is replaced by the
- * guard's fallback sentence, which is itself the level-1 question about the
- * empty list. There is no regeneration loop here: a second vision call would
+ * guard's fallback sentence for this question (`fallback`, from fallbackFor;
+ * left out, it is the demo's empty-list question). There is no regeneration loop here: a second vision call would
  * spend the strong model again to rewrite one sentence.
  */
 export async function guardQuestion(
@@ -175,15 +175,16 @@ export async function guardQuestion(
   answerKey: string,
   canary: string,
   judge?: TextGenerator,
+  fallback: string = FALLBACK_REPLY,
 ): Promise<{ question: string; verdict: GuardVerdict }> {
   if (stepLeaks(question, answerKey, canary)) {
     return {
-      question: FALLBACK_REPLY,
+      question: fallback,
       verdict: { leaks: true, severity: "full", reason: "The question carried part of the solution.", layer: "fallback" },
     };
   }
   const verdict = await assessDraft(question, answerKey, canary, judge);
-  if (verdict.leaks) return { question: FALLBACK_REPLY, verdict: { ...verdict, layer: "fallback" } };
+  if (verdict.leaks) return { question: fallback, verdict: { ...verdict, layer: "fallback" } };
   return { question, verdict };
 }
 

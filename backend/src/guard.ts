@@ -266,14 +266,20 @@ function keywordThenNumber(token: string): string | null {
 export const FALLBACK_REPLY = "What happens when the list is empty?";
 
 /**
- * The fallback sentence for an assignment that is not code.
- * "What happens when the list is empty?" is the level-1 question of the recursion demo, and it means nothing on an essay or an integral. This one is the level-1 question of any problem. Like the other, it is fixed text that no model wrote, so it cannot carry a leak.
+ * The fallback sentence for every problem that is not the recursion demo.
+ * "What happens when the list is empty?" is the level-1 question of sum_list, and it means nothing on an essay, an integral, or a FizzBuzz. This one is the level-1 question of any problem. Like the other, it is fixed text that no model wrote, so it cannot carry a leak.
  */
 export const FALLBACK_REPLY_GENERAL = "What is the question asking you to find?";
 
-/** The sentence a held turn shows, by kind of assignment. */
-export function fallbackFor(kind: AssignmentKind = "code"): string {
-  return kind === "code" ? FALLBACK_REPLY : FALLBACK_REPLY_GENERAL;
+/**
+ * The sentence a held turn shows.
+ *
+ * The empty-list question is kept only for code about sum_list, the same test the tutor uses to pick the demo wording (`/sum_list/` on the prompt), so the demo's fallback is unchanged. Any other code question gets the general sentence: a CS 101 run showed the empty-list question on is_palindrome and fizzbuzz, where it reads as a wrong hint.
+ * `prompt` is the question the student is on. A caller that leaves it out gets the demo sentence for code, which is what every caller did before this argument existed; production callers all pass it.
+ */
+export function fallbackFor(kind: AssignmentKind = "code", prompt?: string): string {
+  if (kind !== "code") return FALLBACK_REPLY_GENERAL;
+  return prompt === undefined || /sum_list/.test(prompt) ? FALLBACK_REPLY : FALLBACK_REPLY_GENERAL;
 }
 
 // One regeneration at a lower level, then one more retry. A third hold spends another tutor call on a draft this layer already refused.
@@ -310,6 +316,8 @@ export type GuardDraftInput = {
   generate?: TextGenerator;
   /** The kind of assignment. It picks the string check and the fallback sentence. Left out, it is code, which is the demo. */
   kind?: AssignmentKind;
+  /** The question the draft answers. Only the fallback sentence reads it; it never reaches the judge. */
+  prompt?: string;
 };
 
 /**
@@ -365,7 +373,7 @@ export async function guardDraft(input: GuardDraftInput): Promise<GuardedReply> 
     }
     if (retries >= MAX_RETRIES) {
       return {
-        reply: fallbackFor(input.kind),
+        reply: fallbackFor(input.kind, input.prompt),
         level,
         verdict: { ...verdict, leaks: true, layer: "fallback" },
         retries,
