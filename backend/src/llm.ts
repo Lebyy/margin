@@ -7,16 +7,17 @@ import { z } from "zod";
 
 /**
  * Strong model, for a photo and for the tutor's model id.
- * Confirmed on this project's key against the Gemini model list: gemini-2.5-pro is offered, and it is the 2.5 model Google documents for harder work.
+ * Gemini 4 Carbon is the strongest model on the current model page, and it accepts text and images. The 2.5 pro id is deprecated.
  * Pointing vision at the fast model would judge a handwritten page with the model we picked for a short JSON label.
  */
-export const STRONG_MODEL = "gemini-2.5-pro";
+export const STRONG_MODEL = "gemini-4-carbon";
 
 /**
  * Fast model, for the guard judge and the scribe.
- * gemini-2.5-flash is the cheap 2.5 model on the same key. The guard runs on every draft, so the slow model would put a pause in front of every hint.
+ * Gemini 3.8 Flash is the current intelligent Flash model, and it is the cheap call that can still judge a draft. The 2.5 flash id is deprecated.
+ * The guard runs on every draft, so the Carbon model would put a long pause in front of every hint.
  */
-export const FAST_MODEL = "gemini-2.5-flash";
+export const FAST_MODEL = "gemini-3.8-flash";
 
 /** Who is asking. There is no tutor role. Adding one would route the tutor through this file. */
 export type ModelRole = "guard" | "scribe" | "vision";
@@ -153,8 +154,6 @@ async function generateWithGemini<T>(
       systemInstruction: request.system,
       responseMimeType: "application/json",
       responseJsonSchema: responseSchema(schema),
-      // Flash can skip the thinking pass. Pro cannot turn it off, and vision is the only pro call in this file.
-      ...(request.model === FAST_MODEL ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
     },
   });
 
