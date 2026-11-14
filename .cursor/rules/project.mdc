@@ -17,17 +17,9 @@ Lebyy (GitHub Lebyy) and David (GitHub WobbbleFoot) each take half of every mile
 
 The task brief, with ids, files, and done-when lines, is `docs/BOARD.md`. The shareable page is https://margin-board-ochre.vercel.app (`docs/index.html`). Read that brief before writing code. An agent invoked by Lebyy takes only the `L-*` tasks. An agent invoked by David takes only the `D-*` tasks. This file is the product law. The board is the work split. If a task conflicts with a safety rule here, this file wins.
 
-Lebyy's machine is a MacBook Air M1. David's machine is a ThinkPad T480. The machine decides who you are. Do not decide from the chat, the git author, or which task looks unfinished.
+Lebyy takes the `L-*` tasks and David takes the `D-*` tasks. Do not take the other person's id, and do not decide who you are from the chat, the git author, or which task looks unfinished. A task that looks stuck is still the other person's. Say which id you are leaving, and stop.
 
-Check before you edit a task file and again before you push:
-
-- macOS, `sysctl -n hw.model` is `MacBookAir10,1` and `sysctl -n machdep.cpu.brand_string` is `Apple M1`: you are Lebyy. Only `L-*`.
-- Linux, `/sys/class/dmi/id/product_version` or `product_family` contains `ThinkPad T480`, or Windows, the computer model contains `ThinkPad T480`: you are David. Only `D-*`.
-- Anything else, including a machine you could not identify: stop. Do not start a task and do not push.
-
-On the MacBook Air, do not implement, edit, commit, or push a `D-*` task. On the ThinkPad, do not implement, edit, commit, or push an `L-*` task. A task that looks stuck is still the other person's. Say which id you are leaving, and stop.
-
-Before every `git push`, read `git log origin/main..HEAD` and the diff. If any commit does the other person's task, do not push. Leave that commit unpushed and say so. Pull with rebase before a push that is yours, and do not force-push. A push from the wrong machine, or a push that contains the other half, is the accident this rule exists to stop.
+Before every `git push`, read `git log origin/main..HEAD` and the diff. If any commit does the other person's task, do not push. Leave that commit unpushed and say so. Pull with rebase before a push that is yours, and do not force-push. A push that contains the other half is the accident this rule exists to stop.
 
 A task is done when the commit that implements it is on `main`. After that push, mark the box. Do not edit `docs/BOARD.md` or `docs/index.html` to record that a task is done.
 
@@ -241,7 +233,7 @@ Margin is for assignments and for learning. An assignment has a `kind`: `code`, 
 Margin is organized as classes, the way an LMS is, with the tutor on top of everything in a class.
 
 - A class (`courses`) has a name, the professor's name, a description, classroom notes, and files. A class is created by a professor, or by saving an assignment under a new course name. The professor's name is a label, not a login.
-- A file added to a class is stored as text (`course_materials`). A text file is stored as written. A PDF or a picture is read into text by the model once, when it is added. The file itself is not kept.
+- A file added to a class is stored as text (`course_materials`). A text file is stored as written. A PDF or a picture is read into text by the model once, when it is added. The file itself is not kept. Lecture slides are the one exception: a professor uploads a lecture PDF (`lecture_files`), it is kept in MongoDB GridFS so students can read the real slides in the browser, and its text is read per page with pdf.js (`slide_pages`), not by the model. An assignment can name the lectures it covers, and its level-2 hint then cites a slide as [Lecture n, slide p], which links to that page.
 - The tutor, the study cards, the quiz, and the canvas read an assignment's notes together with its class's notes and files.
 - A class has a discussion (`posts`). Students and the professor post under the name they typed. Margin replies only when someone asks it to, its reply is marked as the AI tutor's, and it is checked against the answer key of every assignment in the class before it is posted.
 - A quiz is practice written from the notes. The page checks answers on the student's machine. No quiz result is stored or shown to a professor.
