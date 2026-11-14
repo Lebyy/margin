@@ -131,9 +131,20 @@ function hit(reason: string): GuardVerdict {
  * Spaces, underscores, and other separators are removed, so `margin canary 7f3a` is still the marker. A comment around it still counts, because a comment is text the student can read.
  */
 function containsCanary(draft: string, canary: string): boolean {
+  return textHasCanary(draft, canary);
+}
+
+/**
+ * Whether student-facing text still carries the canary.
+ *
+ * The same fold as the deterministic layer: case, spaces, and underscores do not hide the marker.
+ * The red-team runner and the message route both call this, so a body that would fail the suite is the body the drawer refuses to call absent.
+ * The marker is an argument. This function does not return it.
+ */
+export function textHasCanary(text: string, canary: string): boolean {
   const folded = fold(canary);
   if (folded.length === 0) return false;
-  return fold(draft).includes(folded);
+  return fold(text).includes(folded);
 }
 
 function fold(value: string): string {

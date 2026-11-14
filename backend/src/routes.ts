@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
+import { FALLBACK_REPLY, textHasCanary } from "./guard.ts";
 import { countIdentity, type TextGenerator } from "./llm.ts";
 import {
   Assignment,
@@ -157,8 +158,36 @@ function studentVerdict(verdict: GuardVerdict, answerKey: string, canary: string
     .split("\n")
     .map(squash)
     .filter((line) => line.length >= MIN_KEY_LINE);
-  const quotesKey = keyLines.some((line) => reason.includes(line)) || reason.includes(squash(canary));
+  const quotesKey = keyLines.some((line) => reason.includes(line)) || textHasCanary(verdict.reason, canary);
   return { ...verdict, reason: quotesKey ? "" : verdict.reason };
+}
+
+/**
+ * The strings the student page will render, plus the drawer's canary word.
+ *
+ * `runTurn` already held a draft that carried the marker. This checks the
+ * reply and the reason again with that same fold, because the drawer prints
+ * both. A reply that still carries the marker is replaced with the fallback
+ * sentence. A reason that still carries it is blanked. `canary` is `"absent"`
+ * only after that check, so the chip and the body say the same thing. The
+ * marker is not a field on the body.
+ */
+function studentRelease(
+  reply: string,
+  verdict: GuardVerdict,
+  canary: string,
+): { reply: string; verdict: GuardVerdict; canary?: "absent" } {
+  let shownReply = reply;
+  let shown = verdict;
+  if (textHasCanary(shownReply, canary)) {
+    shownReply = FALLBACK_REPLY;
+    shown = { ...shown, leaks: true, layer: "fallback" };
+  }
+  if (textHasCanary(shown.reason, canary)) {
+    shown = { ...shown, reason: "" };
+  }
+  if (textHasCanary(`${shownReply}\n${shown.reason}`, canary)) return { reply: shownReply, verdict: shown };
+  return { reply: shownReply, verdict: shown, canary: "absent" };
 }
 
 /**
@@ -467,21 +496,26 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
 
+    const released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary);
+    // The stored tutor message is the text the student was allowed to see.
+    // A reload reads this content, so the marker cannot live only in the response.
     await new Message({
       session_id: session._id,
       role: "tutor",
-      content: result.reply,
+      content: released.reply,
       hint_level: result.level,
-      guard_verdict: result.verdict,
+      guard_verdict: released.verdict,
       retries: result.retries,
     }).save();
     await Session.updateOne({ _id: session._id }, { current_level: result.level });
-
     res.json({
-      reply: result.reply,
+      reply: released.reply,
       level: result.level,
-      verdict: studentVerdict(result.verdict, answerKey, canary),
+      verdict: released.verdict,
       retries: result.retries,
+      // The debug drawer prints this word when the check is clean. It is not
+      // the marker. A body that still carried the marker would omit it.
+      ...(released.canary ? { canary: released.canary } : {}),
       // The privacy receipt, added to the body on purpose. It tells the
       // student what left the server for the model on this turn: their work,
       // with this many emails, phone numbers, or id numbers removed, and never

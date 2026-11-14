@@ -25,9 +25,10 @@ export type DebugTurn = {
  *
  * Everything here comes from the message response. The drawer does not fetch
  * anything, and it cannot show the answer key, because the response does not
- * contain it. The guard's reason is printed as received: the server has
- * already removed the key and the canary from it, and blanks a reason that
- * still quotes a solution line.
+ * contain it. The guard's reason is printed only when the response says the
+ * canary check is clean. That word is "absent". The marker itself is not in
+ * this file and is not rendered. A reason that still quotes a solution line
+ * was blanked on the server before it got here.
  *
  * It is closed by default and is only mounted on the student page. The
  * professor's screens never render it.
@@ -87,7 +88,9 @@ function TurnTrace({ turn, ceiling, number }: { turn: DebugTurn; ceiling: number
   const { verdict, retries, label, level } = result;
   const fellBack = verdict.layer === "fallback";
   const caught = fellBack || retries > 0;
-  const canaryInDraft = /canary/i.test(verdict.reason);
+  // The chip and the reason agree with the server. "absent" is the only value
+  // that may be shown. Any other value, including a leaked marker, is not rendered.
+  const canaryAbsent = result.canary === "absent";
 
   const policy =
     level > levelBefore
@@ -137,12 +140,13 @@ function TurnTrace({ turn, ceiling, number }: { turn: DebugTurn; ceiling: number
             <Chip size="sm" variant="soft" color={retries > 0 ? "warning" : "default"}>
               retries {retries}
             </Chip>
-            <Chip size="sm" variant="soft" color="success">canary absent from reply</Chip>
-            {canaryInDraft ? (
-              <Chip size="sm" variant="soft" color="danger">canary found in a held draft</Chip>
+            {canaryAbsent ? (
+              <Chip size="sm" variant="soft" color="success">canary absent</Chip>
             ) : null}
           </span>
-          {verdict.reason ? <span className="mt-1.5 block text-xs text-muted">{verdict.reason}</span> : null}
+          {canaryAbsent && verdict.reason ? (
+            <span className="mt-1.5 block text-xs text-muted">{verdict.reason}</span>
+          ) : null}
         </Step>
         <Step index={4} title="Student saw" tone={fellBack ? "warn" : "ok"}>
           {fellBack

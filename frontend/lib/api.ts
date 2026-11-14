@@ -1,9 +1,10 @@
 // Every request the two screens make, in one file.
 //
 // The shapes below are the JSON the Express routes return, field for field.
-// There is no answer-key or canary field on any of them, because no route
-// sends one. A type here that grew such a field would be the first sign a
-// route had started leaking it.
+// There is no answer-key field on any of them, and no route sends the canary
+// marker. The turn reply may say canary: "absent", which is the drawer's word
+// for a clean check, not the marker. A type here that grew the marker as a
+// value would be the first sign a route had started leaking it.
 //
 // Nothing in this file computes a statistic. A percent on screen is the
 // number in the response body. The pages format it and do not recompute it.
@@ -42,6 +43,11 @@ export type TurnReply = {
   level: HintLevel;
   verdict: GuardVerdict;
   retries: number;
+  /**
+   * Set only when the reply and the verdict reason do not carry the canary.
+   * The drawer prints the word "absent". The marker itself is never a value here.
+   */
+  canary?: "absent";
   /** The privacy receipt: how many emails, phone numbers, or ids were removed before the model saw the message, and that the name was not sent. */
   sent: { redactions: number; name_sent: boolean };
   /** The scribe's read of the student's message. `answer_request` is shown only in the debug drawer, never in the chat or the progress panel. */
