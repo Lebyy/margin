@@ -1,7 +1,8 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
+import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
-import { Assignment, CANARY } from "./models.ts";
+import { Assignment, CANARY, findStudentAssignment } from "./models.ts";
 
 // The HTTP routes David owns (board contract: routes.ts). Every record the
 // product shows exists because a request here created it. There is no seed
@@ -47,6 +48,29 @@ const assignmentInput = z.object({
   hint_ceiling: z.number().int().min(1).max(3).default(3),
 });
 
+/**
+ * The same form when it edits a saved assignment.
+ *
+ * `id` names the assignment. `answer_key` may be left out, because the setup
+ * form never receives the key back (every response drops it) and so cannot
+ * send it again. Leaving it out keeps the stored key; sending it replaces it.
+ * Requiring it would force the professor to retype the solution on every edit.
+ */
+const assignmentUpdate = assignmentInput.extend({
+  id: z.string().refine((s) => mongoose.isValidObjectId(s), "id is not an assignment id"),
+  answer_key: z.string().trim().min(1).optional(),
+});
+
+/** Answers a zod failure with field paths only, never the submitted values. */
+function rejectInvalid(res: Response, error: z.ZodError): void {
+  // zod issues name the path and the rule, not the value, so a rejected
+  // request cannot echo the submitted solution into a response or a log.
+  res.status(400).json({
+    error: "invalid_assignment",
+    issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+  });
+}
+
 export function createRouter(): Router {
   const router = Router();
   router.use(requireDb);
@@ -54,27 +78,60 @@ export function createRouter(): Router {
   /**
    * POST /api/prof/assignments: a professor saves an assignment.
    *
-   * This is the only way an assignment enters the database (D-B2). The
-   * response is the saved document passed through the model's toJSON, which
-   * drops `answer_key` and the canary, so even the professor's own reply does
-   * not carry the key back over the wire. Update by id is D-B3.
+   * Without `id` this creates one (201); it is the only way an assignment
+   * enters the database (D-B2). With `id` it edits that assignment (200) or
+   * answers 404. Either way the response goes through the model's toJSON,
+   * which drops `answer_key` and the canary, so even the professor's own reply
+   * does not carry the key back over the wire.
    */
   router.post("/api/prof/assignments", async (req, res) => {
-    const parsed = assignmentInput.safeParse(req.body);
-    if (!parsed.success) {
-      // Field paths and messages only. zod issues never echo the key's text
-      // back, so a rejected request cannot leak the submitted solution in a log.
-      res.status(400).json({
-        error: "invalid_assignment",
-        issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-      });
+    const isUpdate = typeof req.body === "object" && req.body !== null && "id" in req.body;
+
+    if (!isUpdate) {
+      const parsed = assignmentInput.safeParse(req.body);
+      if (!parsed.success) return rejectInvalid(res, parsed.error);
+
+      // `new` + `save` rather than `Assignment.create`: Mongoose 9's typings for
+      // `create` reject a string array field, while the constructor accepts it.
+      const saved = await new Assignment({ ...parsed.data, canary: CANARY }).save();
+      res.status(201).json(saved.toJSON());
       return;
     }
 
-    // `new` + `save` rather than `Assignment.create`: Mongoose 9's typings for
-    // `create` reject a string array field, while the constructor accepts it.
-    const saved = await new Assignment({ ...parsed.data, canary: CANARY }).save();
-    res.status(201).json(saved.toJSON());
+    const parsed = assignmentUpdate.safeParse(req.body);
+    if (!parsed.success) return rejectInvalid(res, parsed.error);
+
+    const { id, answer_key, ...fields } = parsed.data;
+    const doc = await Assignment.findById(id);
+    if (!doc) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+
+    // The canary is never in `fields`, so an edit cannot change it. The key is
+    // only written when the form sent one; otherwise the stored key stays.
+    doc.set(fields);
+    if (answer_key !== undefined) doc.set("answer_key", answer_key);
+    const saved = await doc.save();
+    res.status(200).json(saved.toJSON());
+  });
+
+  /**
+   * GET /api/assignments/:id: the student's view of an assignment.
+   *
+   * This route must not shape the response itself. It returns exactly what
+   * `findStudentAssignment` builds from its inclusion list, so the key and the
+   * canary are absent at the query, in memory, and in the JSON. The frontend is
+   * not trusted to hide anything: what it receives is already safe. An unknown
+   * or malformed id is a 404 rather than a cast error.
+   */
+  router.get("/api/assignments/:id", async (req, res) => {
+    const view = await findStudentAssignment(req.params.id);
+    if (!view) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    res.json(view);
   });
 
   return router;
