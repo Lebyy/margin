@@ -88,7 +88,7 @@
     <h1>Margin <span>board</span></h1>
     <p>The AI tutor your professor approves of. This page is the whole build, split down the middle. Left is Lebyy. Right is David (GitHub WobbbleFoot). Rows run from top to bottom: backend, frontend, richer demo, prize tracks, the judge pamphlet, then ship.</p>
     <p>Share this page: <a href="https://margin-board-ochre.vercel.app">margin-board-ochre.vercel.app</a>. If you are an agent, read this page or <a href="./BOARD.md">BOARD.md</a> before you edit the repo. Lebyy's agent takes only <code>L-*</code> ids. David's agent takes only <code>D-*</code> ids. Product law stays in <code>.cursor/rules/project.mdc</code>. If a task here ever disagrees with that file on safety, the rule file wins. Checkboxes live in this browser only. A task is done when its commit is on <a href="https://github.com/Lebyy/margin">main</a>.</p>
-    <p>Deadline: 8:00 AM America/New_York, Sunday, November 15, 2026. In-person demo, 2 minutes. Public repo only, created during the event. Judging is Creativity, Utility, Charity, and Avidity. Best Overall is automatic and is not something you enter.</p>
+    <p>Deadline: 8:00 AM America/New_York, Sunday, November 15, 2026. In-person demo, 2 minutes. Public repo only, created during the event. Judging is Creativity, Utility, Charity, and Avidity. The main track is Education, judged in both rounds. Winning it blocks Best Overall. Best Overall is a PS5, automatic, and not something you enter.</p>
     <nav class="nav">
       <a href="#catch-up">Catch up</a>
       <a href="#backend">Backend</a>
@@ -703,7 +703,7 @@
       <div class="mile-head">
         <p class="kicker">Row 4</p>
         <h2>Prize tracks</h2>
-        <p>Start only after the localhost demo path works. Entering a track without the thing it requires is a wrong entry. The main track is already decided: Education.</p>
+        <p>Start only after the localhost demo path works. The main track is Education: learning that is more interactive, accessible, or personalized. You enter exactly one main track, and you are judged on it in both rounds. Winning it blocks Best Overall. Best Overall is a PS5, automatic, and every project is considered. Company tracks are judged once in round 1, and each extra one is another demo visit. Enter a track only if the thing it requires is real.</p>
       </div>
       <div class="pair">
         <div class="col"><article class="task" id="L-S1">
@@ -711,10 +711,10 @@
           <input type="checkbox" data-id="L-S1" data-owner="lebyy" aria-label="Mark L-S1 done on this browser">
           <span class="body">
             <span class="id">L-S1</span>
-            <h3>Amazon, Best Practical AI</h3>
-            <p>Write the README section a judge can follow: who the user is, how to run both apps, the demo steps, and how the hint ladder adapts to an attempt rather than to begging. Education is in scope. This track needs a working demo, a clear user, and those docs. MindPad won this last fall. The adaptation has to be visible.</p>
-            <p class="done"><b>Done when.</b> A new person can run the demo from the README without asking either of you.</p>
-            <p class="dont"><b>Do not.</b> Do not describe a feature that is not on the branch.</p>
+            <h3>Amazon, Best Practical AI Innovation</h3>
+            <p>Education is named in this prize, and one example is a learning environment where AI collaborates with you. It is scored equally on creativity, usefulness, technical quality, and UX. The prize is $125, $75, and $50 per person. It needs a working demo, a clear user, and basic docs. Write the README a judge can follow: the professor and the student, how to run both apps, the demo steps, and how the hint ladder adapts to an attempt rather than to begging. MindPad won this last fall. This track is an extra demo visit in round 1.</p>
+            <p class="done"><b>Done when.</b> A new person can run the demo from the README, and the README names the user and those four scores without claiming a feature that is not on the branch.</p>
+            <p class="dont"><b>Do not.</b> Do not describe a feature that is not on the branch. Do not skip the docs.</p>
           </span>
         </label>
       </article>
@@ -723,10 +723,10 @@
           <input type="checkbox" data-id="L-S2" data-owner="lebyy" aria-label="Mark L-S2 done on this browser">
           <span class="body">
             <span class="id">L-S2</span>
-            <h3>Gemini prize check</h3>
-            <p>Open this year's Devpost packet and see whether MLH Best Use of Gemini is actually listed. The project rule says it is not in the packet. If it is absent, write 'not entering' in the pamphlet and stop. If it is present, confirm every model call goes through L-B1.</p>
-            <p class="done"><b>Done when.</b> The pamphlet has one sentence: entering, or not entering, with the reason.</p>
-            <p class="dont"><b>Do not.</b> Do not enter it from memory. Do not add a second provider to chase the prize.</p>
+            <h3>LangChain, Best use of deepagents</h3>
+            <p>Any use case is allowed, and the prize is a Switch 2. Enter only if the tutor, the guard, the scribe, and the coach are actually a deepagent. They are four Express functions. Do not add deepagents unless someone asks. Until that is true, the pamphlet says not entering.</p>
+            <p class="done"><b>Done when.</b> The pamphlet says not entering, and no package.json depends on deepagents. If the four roles later really are a deepagent, change the line to entering.</p>
+            <p class="dont"><b>Do not.</b> Do not add the library to qualify. Do not treat four functions as a deepagent.</p>
           </span>
         </label>
       </article>
@@ -735,10 +735,10 @@
           <input type="checkbox" data-id="L-S3" data-owner="lebyy" aria-label="Mark L-S3 done on this browser">
           <span class="body">
             <span class="id">L-S3</span>
-            <h3>ChatOverflow</h3>
-            <p>Stay connected to the coding agent while you build. There is no product change and no extra Devpost form.</p>
-            <p class="done"><b>Done when.</b> You can say, honestly, that the agent was connected during the build.</p>
-            <p class="dont"><b>Do not.</b> Do not add a badge, a widget, or a feature for this.</p>
+            <h3>ChatOverflow leaderboard</h3>
+            <p>No product change and no extra Devpost submission. Connect the coding agent while you build. Top 3 split $900, plus a $100 raffle.</p>
+            <p class="done"><b>Done when.</b> You can say, honestly, that the agent was connected during the build, and the product has no ChatOverflow feature.</p>
+            <p class="dont"><b>Do not.</b> Do not add a badge, a widget, or a Devpost form for this.</p>
           </span>
         </label>
       </article>
@@ -747,10 +747,10 @@
           <input type="checkbox" data-id="L-S4" data-owner="lebyy" aria-label="Mark L-S4 done on this browser">
           <span class="body">
             <span class="id">L-S4</span>
-            <h3>Scope guard</h3>
-            <p>If an agent or a teammate proposes deepagents, CoStar, Arlequin, Capital One Nessie, Physical AI, or Best Hardware, decline and point at the project rule. Salesforce and Scale AI are career-fair only.</p>
-            <p class="done"><b>Done when.</b> The repo has no dependency and no page for those prizes.</p>
-            <p class="dont"><b>Do not.</b> Do not add them 'just in case'.</p>
+            <h3>Do not enter</h3>
+            <p>Write one line for the pamphlet. Do not enter CoStar, because it needs their building data. Do not enter either Arlequin track, forensics or social graphs. Do not enter Capital One Nessie, because it is a banking API. Do not enter Physical AI or Best Hardware. Salesforce and Scale AI are career-fair only. This packet lists no MLH or Gemini prize, so do not enter one. Gemini stays the model. Best Overall is a PS5 and is automatic. Do not submit it. A win on Education blocks it.</p>
+            <p class="done"><b>Done when.</b> The pamphlet has that line, and the repo has no dependency or page for those prizes.</p>
+            <p class="dont"><b>Do not.</b> Do not add them just in case.</p>
           </span>
         </label>
       </article></div>
@@ -759,10 +759,10 @@
           <input type="checkbox" data-id="D-S1" data-owner="david" aria-label="Mark D-S1 done on this browser">
           <span class="body">
             <span class="id">D-S1</span>
-            <h3>Peri evidence packet</h3>
-            <p>Interview two real people during the weekend. A student org counts. A professor counts only if that person agrees to go on record. Dr. Desmond Lund advised the idea only. He is not the client unless he explicitly agrees, and he is not a team member. Record name, role, and evidence: a photo they agreed to, a short clip, or a direct quote.</p>
-            <p class="done"><b>Done when.</b> The packet has two named people and evidence for each. A missing person means we do not enter Peri.</p>
-            <p class="dont"><b>Do not.</b> Do not claim a pilot. Do not list Dr. Lund as a client, partner, or endorser.</p>
+            <h3>Peri, Forward Deployed Challenge</h3>
+            <p>Any main track is allowed if you consult a real client during the weekend. A student org or club counts. The submission must name the org, the person, and their role, plus evidence: a photo, a clip, a quote, or a screenshot. The prize is intros to Peri partners. Dr. Lund advised the idea only. He is not the client unless he explicitly agrees. If that client names mistake categories, use those. Otherwise keep the four sum_list concepts and say in the README that sum_list is the first assignment.</p>
+            <p class="done"><b>Done when.</b> The packet has the org, the person, the role, and the evidence. A missing person means we do not enter Peri.</p>
+            <p class="dont"><b>Do not.</b> Do not claim a pilot. Do not list Dr. Lund as a client, partner, or endorser. Do not invent a quote.</p>
           </span>
         </label>
       </article>
@@ -771,10 +771,10 @@
           <input type="checkbox" data-id="D-S2" data-owner="david" aria-label="Mark D-S2 done on this browser">
           <span class="body">
             <span class="id">D-S2</span>
-            <h3>His categories</h3>
-            <p>The team defines the mistake categories. Keep the four sum_list concepts unless a real client, on record, replaces them. Say in the README that sum_list is the first assignment.</p>
-            <p class="done"><b>Done when.</b> The concept list matches sum_list, or a named client's confirmed list, and the README says which.</p>
-            <p class="dont"><b>Do not.</b> Do not invent categories and attribute them to Dr. Lund.</p>
+            <h3>Education, the main track</h3>
+            <p>Write the sentence for Devpost and the pamphlet. Margin is learning that is more interactive, accessible, or personalized. It is the only main track. You are judged on it in both rounds. Winning it blocks Best Overall, which is a PS5 and is not something you submit.</p>
+            <p class="done"><b>Done when.</b> That sentence is on the pamphlet and describes the product that exists.</p>
+            <p class="dont"><b>Do not.</b> Do not also enter Business and Enterprise. Do not list Best Overall as an entry.</p>
           </span>
         </label>
       </article>
@@ -783,10 +783,10 @@
           <input type="checkbox" data-id="D-S3" data-owner="david" aria-label="Mark D-S3 done on this browser">
           <span class="body">
             <span class="id">D-S3</span>
-            <h3>Photon go or no-go</h3>
-            <p>Enter the messaging prize only if a student can message the tutor, or the professor actually receives the Thursday card as a message. Enter the voice prize only if voice exists. If neither exists when the pamphlet is written, write 'not entering'.</p>
-            <p class="done"><b>Done when.</b> The pamphlet states the decision in one line.</p>
-            <p class="dont"><b>Do not.</b> Do not add a fake inbox. Do not add voice during this row if the core demo is still shaky. Voice waits until the checkpoint on row 3 is green.</p>
+            <h3>Photon, messaging agent</h3>
+            <p>Enter if students can text the tutor, or the professor gets the mini log as a message. The winner gets $400 plus $300 in credits. The voice prize is separate and only if voice exists. If the message path is not real when the pamphlet is written, write not entering.</p>
+            <p class="done"><b>Done when.</b> The pamphlet says entering or not entering, and names which path is real.</p>
+            <p class="dont"><b>Do not.</b> Do not add a fake inbox. Do not add voice in this row if the core demo is still shaky. Voice waits until the row 3 checkpoint is green.</p>
           </span>
         </label>
       </article>
@@ -795,15 +795,15 @@
           <input type="checkbox" data-id="D-S4" data-owner="david" aria-label="Mark D-S4 done on this browser">
           <span class="body">
             <span class="id">D-S4</span>
-            <h3>Best Rookie check</h3>
-            <p>Ask Lebyy whether this is his first hackathon, and answer for yourself. Enter Best Rookie only if both answers are yes. Write the answer down for the pamphlet.</p>
+            <h3>Best Rookie</h3>
+            <p>The prize is a JBL Charge 6. Enter only if this is every member's first hackathon. Ask Lebyy, and answer for yourself.</p>
             <p class="done"><b>Done when.</b> The pamphlet says entering or not entering.</p>
             <p class="dont"><b>Do not.</b> Do not guess. If either person is unsure, do not enter.</p>
           </span>
         </label>
       </article></div>
       </div>
-      <p class="gate">Checkpoint: Education is the only main track named. Amazon has a README. Peri is either evidenced or explicitly skipped. Gemini, Photon, and Rookie each have a yes or a no.</p>
+      <p class="gate">Checkpoint: Education is the only main track, and the pamphlet says it is judged in both rounds. Amazon has a README. Peri is evidenced or skipped. LangChain says not entering unless a deepagent is actually in the build. Photon and Rookie each have a yes or a no. The pamphlet says there is no MLH or Gemini prize, and Best Overall is not an entry.</p>
     </section>
 <section class="mile" id="pamphlet">
       <div class="mile-head">
@@ -926,7 +926,7 @@
           <span class="body">
             <span class="id">D-J5</span>
             <h3>Tracks on the back</h3>
-            <p>List Education as the main track. List Amazon. List Peri only if the evidence exists. List Gemini, Photon, and Rookie only as the yes or no from row 4. List what we are not entering, in one line, so a judge does not ask us to demo hardware.</p>
+            <p>List Education as the only main track, judged in both rounds. List Amazon with the four scores. List Peri only if the evidence exists. List LangChain, Photon, and Rookie only as the yes or no from row 4. Note ChatOverflow has no extra Devpost form. List what we are not entering, including that this packet has no MLH or Gemini prize and that Best Overall is not an entry.</p>
             <p class="done"><b>Done when.</b> The back of the sheet matches row 4's decisions.</p>
             <p class="dont"><b>Do not.</b> Do not add a track the morning of the demo.</p>
           </span>
@@ -996,7 +996,7 @@
           <span class="body">
             <span class="id">D-H1</span>
             <h3>Devpost draft</h3>
-            <p>Fill the project page: what it is, the Education track, the Amazon track, the built-with list, and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.</p>
+            <p>Fill the project page: what it is, Education as the only main track, Amazon, and any other company track row 4 actually entered. Do not submit Best Overall, LangChain, Photon, or Rookie unless that row said yes. Do not submit an MLH or Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.</p>
             <p class="done"><b>Done when.</b> The draft reads like the pamphlet and the links resolve.</p>
             <p class="dont"><b>Do not.</b> Do not submit from a private repo. The GitHub repo is https://github.com/Lebyy/margin and it was created during the event.</p>
           </span>

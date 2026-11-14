@@ -11,7 +11,7 @@ The same brief is the shareable page at https://margin-board-ochre.vercel.app ([
 
 Product law is `.cursor/rules/project.mdc`. If a task here disagrees with that file on safety, the rule file wins. A task is done when its commit is on `main`. Checkboxes on the web page are local to one browser.
 
-Deadline: 8:00 AM America/New_York, Sunday, November 15, 2026. In-person demo, 2 minutes. Main track: Education. Best Overall is not an entry.
+Deadline: 8:00 AM America/New_York, Sunday, November 15, 2026. In-person demo, 2 minutes. Main track: Education, judged in both rounds. Winning it blocks Best Overall. Best Overall is a PS5 and is not an entry.
 
 ## Catch up
 
@@ -427,79 +427,79 @@ Do not. Do not add gesture recognition, emotion tracking, or a webcam.
 
 ## Row 4 · Prize tracks
 
-Start only after the localhost demo path works. Entering a track without the thing it requires is a wrong entry. The main track is already decided: Education.
+Start only after the localhost demo path works. The main track is Education: learning that is more interactive, accessible, or personalized. You enter exactly one main track, and you are judged on it in both rounds. Winning it blocks Best Overall. Best Overall is a PS5, automatic, and every project is considered. Company tracks are judged once in round 1, and each extra one is another demo visit. Enter a track only if the thing it requires is real.
 
 ### Lebyy
 
-### L-S1 · Amazon, Best Practical AI
+### L-S1 · Amazon, Best Practical AI Innovation
 
-Write the README section a judge can follow: who the user is, how to run both apps, the demo steps, and how the hint ladder adapts to an attempt rather than to begging. Education is in scope. This track needs a working demo, a clear user, and those docs. MindPad won this last fall. The adaptation has to be visible.
+Education is named in this prize, and one example is a learning environment where AI collaborates with you. It is scored equally on creativity, usefulness, technical quality, and UX. The prize is $125, $75, and $50 per person. It needs a working demo, a clear user, and basic docs. Write the README a judge can follow: the professor and the student, how to run both apps, the demo steps, and how the hint ladder adapts to an attempt rather than to begging. MindPad won this last fall. This track is an extra demo visit in round 1.
 
-Done when. A new person can run the demo from the README without asking either of you.
+Done when. A new person can run the demo from the README, and the README names the user and those four scores without claiming a feature that is not on the branch.
 
-Do not. Do not describe a feature that is not on the branch.
+Do not. Do not describe a feature that is not on the branch. Do not skip the docs.
 
-### L-S2 · Gemini prize check
+### L-S2 · LangChain, Best use of deepagents
 
-Open this year's Devpost packet and see whether MLH Best Use of Gemini is actually listed. The project rule says it is not in the packet. If it is absent, write 'not entering' in the pamphlet and stop. If it is present, confirm every model call goes through L-B1.
+Any use case is allowed, and the prize is a Switch 2. Enter only if the tutor, the guard, the scribe, and the coach are actually a deepagent. They are four Express functions. Do not add deepagents unless someone asks. Until that is true, the pamphlet says not entering.
 
-Done when. The pamphlet has one sentence: entering, or not entering, with the reason.
+Done when. The pamphlet says not entering, and no package.json depends on deepagents. If the four roles later really are a deepagent, change the line to entering.
 
-Do not. Do not enter it from memory. Do not add a second provider to chase the prize.
+Do not. Do not add the library to qualify. Do not treat four functions as a deepagent.
 
-### L-S3 · ChatOverflow
+### L-S3 · ChatOverflow leaderboard
 
-Stay connected to the coding agent while you build. There is no product change and no extra Devpost form.
+No product change and no extra Devpost submission. Connect the coding agent while you build. Top 3 split $900, plus a $100 raffle.
 
-Done when. You can say, honestly, that the agent was connected during the build.
+Done when. You can say, honestly, that the agent was connected during the build, and the product has no ChatOverflow feature.
 
-Do not. Do not add a badge, a widget, or a feature for this.
+Do not. Do not add a badge, a widget, or a Devpost form for this.
 
-### L-S4 · Scope guard
+### L-S4 · Do not enter
 
-If an agent or a teammate proposes deepagents, CoStar, Arlequin, Capital One Nessie, Physical AI, or Best Hardware, decline and point at the project rule. Salesforce and Scale AI are career-fair only.
+Write one line for the pamphlet. Do not enter CoStar, because it needs their building data. Do not enter either Arlequin track, forensics or social graphs. Do not enter Capital One Nessie, because it is a banking API. Do not enter Physical AI or Best Hardware. Salesforce and Scale AI are career-fair only. This packet lists no MLH or Gemini prize, so do not enter one. Gemini stays the model. Best Overall is a PS5 and is automatic. Do not submit it. A win on Education blocks it.
 
-Done when. The repo has no dependency and no page for those prizes.
+Done when. The pamphlet has that line, and the repo has no dependency or page for those prizes.
 
-Do not. Do not add them 'just in case'.
+Do not. Do not add them just in case.
 
 
 ### David
 
-### D-S1 · Peri evidence packet
+### D-S1 · Peri, Forward Deployed Challenge
 
-Interview two real people during the weekend. A student org counts. A professor counts only if that person agrees to go on record. Dr. Desmond Lund advised the idea only. He is not the client unless he explicitly agrees, and he is not a team member. Record name, role, and evidence: a photo they agreed to, a short clip, or a direct quote.
+Any main track is allowed if you consult a real client during the weekend. A student org or club counts. The submission must name the org, the person, and their role, plus evidence: a photo, a clip, a quote, or a screenshot. The prize is intros to Peri partners. Dr. Lund advised the idea only. He is not the client unless he explicitly agrees. If that client names mistake categories, use those. Otherwise keep the four sum_list concepts and say in the README that sum_list is the first assignment.
 
-Done when. The packet has two named people and evidence for each. A missing person means we do not enter Peri.
+Done when. The packet has the org, the person, the role, and the evidence. A missing person means we do not enter Peri.
 
-Do not. Do not claim a pilot. Do not list Dr. Lund as a client, partner, or endorser.
+Do not. Do not claim a pilot. Do not list Dr. Lund as a client, partner, or endorser. Do not invent a quote.
 
-### D-S2 · His categories
+### D-S2 · Education, the main track
 
-The team defines the mistake categories. Keep the four sum_list concepts unless a real client, on record, replaces them. Say in the README that sum_list is the first assignment.
+Write the sentence for Devpost and the pamphlet. Margin is learning that is more interactive, accessible, or personalized. It is the only main track. You are judged on it in both rounds. Winning it blocks Best Overall, which is a PS5 and is not something you submit.
 
-Done when. The concept list matches sum_list, or a named client's confirmed list, and the README says which.
+Done when. That sentence is on the pamphlet and describes the product that exists.
 
-Do not. Do not invent categories and attribute them to Dr. Lund.
+Do not. Do not also enter Business and Enterprise. Do not list Best Overall as an entry.
 
-### D-S3 · Photon go or no-go
+### D-S3 · Photon, messaging agent
 
-Enter the messaging prize only if a student can message the tutor, or the professor actually receives the Thursday card as a message. Enter the voice prize only if voice exists. If neither exists when the pamphlet is written, write 'not entering'.
+Enter if students can text the tutor, or the professor gets the mini log as a message. The winner gets $400 plus $300 in credits. The voice prize is separate and only if voice exists. If the message path is not real when the pamphlet is written, write not entering.
 
-Done when. The pamphlet states the decision in one line.
+Done when. The pamphlet says entering or not entering, and names which path is real.
 
-Do not. Do not add a fake inbox. Do not add voice during this row if the core demo is still shaky. Voice waits until the checkpoint on row 3 is green.
+Do not. Do not add a fake inbox. Do not add voice in this row if the core demo is still shaky. Voice waits until the row 3 checkpoint is green.
 
-### D-S4 · Best Rookie check
+### D-S4 · Best Rookie
 
-Ask Lebyy whether this is his first hackathon, and answer for yourself. Enter Best Rookie only if both answers are yes. Write the answer down for the pamphlet.
+The prize is a JBL Charge 6. Enter only if this is every member's first hackathon. Ask Lebyy, and answer for yourself.
 
 Done when. The pamphlet says entering or not entering.
 
 Do not. Do not guess. If either person is unsure, do not enter.
 
 
-**Checkpoint: Education is the only main track named. Amazon has a README. Peri is either evidenced or explicitly skipped. Gemini, Photon, and Rookie each have a yes or a no.**
+**Checkpoint: Education is the only main track, and the pamphlet says it is judged in both rounds. Amazon has a README. Peri is evidenced or skipped. LangChain says not entering unless a deepagent is actually in the build. Photon and Rookie each have a yes or a no. The pamphlet says there is no MLH or Gemini prize, and Best Overall is not an entry.**
 
 ## Row 5 · Judge pamphlet
 
@@ -584,7 +584,7 @@ Do not. Do not call the dashboard surveillance, and do not call it a gradebook.
 
 ### D-J5 · Tracks on the back
 
-List Education as the main track. List Amazon. List Peri only if the evidence exists. List Gemini, Photon, and Rookie only as the yes or no from row 4. List what we are not entering, in one line, so a judge does not ask us to demo hardware.
+List Education as the only main track, judged in both rounds. List Amazon with the four scores. List Peri only if the evidence exists. List LangChain, Photon, and Rookie only as the yes or no from row 4. Note ChatOverflow has no extra Devpost form. List what we are not entering, including that this packet has no MLH or Gemini prize and that Best Overall is not an entry.
 
 Done when. The back of the sheet matches row 4's decisions.
 
@@ -636,7 +636,7 @@ Do not. Do not keep the only working copy on your machine.
 
 ### D-H1 · Devpost draft
 
-Fill the project page: what it is, the Education track, the Amazon track, the built-with list, and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.
+Fill the project page: what it is, Education as the only main track, Amazon, and any other company track row 4 actually entered. Do not submit Best Overall, LangChain, Photon, or Rookie unless that row said yes. Do not submit an MLH or Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.
 
 Done when. The draft reads like the pamphlet and the links resolve.
 

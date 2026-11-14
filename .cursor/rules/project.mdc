@@ -147,7 +147,7 @@ Take one idea from Asclepius: the cloud model should not receive who the student
 
 - Frontend: Next.js. Backend: Express (Node). Do not switch the backend to Python. This overrides any earlier plan for FastAPI.
 - Run both with `npm run dev`. Web is on http://localhost:3000, API health on http://localhost:4000/health. Secrets live in `.env` (gitignored), with `.env.example` committed. Never commit keys.
-- LLM provider: Google Gemini API (handles images and is likely the MLH Best Use of Gemini prize; confirm on Devpost, as this year's packet does not list MLH prizes). All model calls go through one module with a provider interface so switching providers is a one-file change. Check the provider's current docs for model IDs and SDK usage, do not guess. Use a strong model for the tutor and vision, and a fast cheap model for the guard and scribe.
+- LLM provider: Google Gemini API, because it handles images. This packet has no MLH or Gemini prize, so do not enter one. All model calls go through one module with a provider interface so switching providers is a one-file change. Check the provider's current docs for model IDs and SDK usage, do not guess. Use a strong model for the tutor and vision, and a fast cheap model for the guard and scribe.
 - Structured LLM outputs use JSON schema mode, validated (for example with zod). On parse failure retry once, then fall back safely.
 - Database: SQLite or Supabase, whichever is fastest. Keep the app runnable at every commit and deployable to a free host.
 - Simplicity beats cleverness. Ask before adding a heavy dependency or a new service. If something blocks for more than about 20 minutes, stub it, note it in TODO.md, and move on.
@@ -227,22 +227,21 @@ LMS integration (LTI), real auth and role management, multiple courses, essays a
 
 ## Prize entries
 
-Enter exactly one main track: Education. The packet describes Education as projects that make learning more interactive, accessible, or personalized. Do not choose Business & Enterprise.
+Enter exactly one main track: Education. The packet defines it as learning that is more interactive, accessible, or personalized. That is Margin. You are judged on it in both rounds. Winning it blocks Best Overall. Do not also enter Business and Enterprise.
 
-Best Overall is automatic, not an entry. Track winners cannot also win Best Overall.
+Best Overall is a PS5. It is automatic, not an entry. Every project is considered. Track winners cannot also win it.
 
-Enter these sub tracks:
+Company tracks are judged once in round 1. Each extra one is another demo visit. Enter these:
 
-- Amazon, Best Practical AI Innovation: top priority, since MindPad won it last fall. Education is in scope. The entry needs a working demo, a clear user, and basic docs (a good README). Emphasize that the hint ladder adapts to how the student is doing.
-- Peri, Forward Deployed Challenge: requires a real client consulted during the weekend, and a student org counts. Interview a real client during the weekend (for example a Princeton TA, a professor who agrees to go on record, or a student CS or tutoring club). Do not use Dr. Lund as the client unless he explicitly agrees. Include each person's name, role, and evidence (photo, short video, or direct quote). Do not claim a pilot that is not confirmed.
-- MLH Best Use of Gemini API: only if offered on Devpost this year, which the packet does not list. Confirm at opening.
-- LangChain, Best use of deepagents: do not enter. The backend is Express, so do not add deepagents unless asked.
-- Photon messaging agent: enter only if students can message the tutor or the professor gets the log as a message. The voice prize applies only if voice exists. This is a stretch goal only after the core works.
-- ChatOverflow leaderboard: connect the coding agent while building. That needs no product change and no extra Devpost submission.
+- Amazon, Best Practical AI Innovation. Education is named, and one example is a learning environment where AI collaborates with you. Scored equally on creativity, usefulness, technical quality, and UX. Needs a working demo, a clear user, and basic docs. Prize is $125, $75, and $50 per person. Emphasize that the hint ladder adapts to how the student is doing.
+- Peri, Forward Deployed Challenge. Any main track is allowed if you consult a real client during the weekend. A student org or club counts. The submission must name the org, the person, and their role, plus evidence (a photo, a clip, a quote, or a screenshot). The prize is intros to Peri partners. Do not use Dr. Lund as the client unless he explicitly agrees. Do not claim a pilot.
+- LangChain, Best use of deepagents. Any use case is allowed, and the prize is a Switch 2. Enter only if the tutor, the guard, the scribe, and the coach are actually a deepagent. They are Express functions. Do not add deepagents unless asked. Until then, do not enter.
+- Photon, messaging agent. Enter if students can text the tutor or the professor gets the mini log as a message. The winner gets $400 plus $300 in credits. The voice prize is separate and only if voice exists. This is a stretch goal only after the core works.
+- ChatOverflow leaderboard. No product change. Connect the coding agent while you build. Top 3 split $900, plus a $100 raffle. No extra Devpost submission.
 
-Enter Best Rookie only if it is every team member's first hackathon.
+Enter Best Rookie, a JBL Charge 6, only if this is every member's first hackathon.
 
-Do not enter CoStar, because it needs their building data. Do not enter Arlequin forensics, Arlequin social-media analysis, Capital One Nessie, Physical AI, or Best Hardware. Salesforce and Scale AI are career-fair only. This packet has no MLH or Gemini prize listed.
+Do not enter CoStar (their building data), either Arlequin track (forensics, social graphs), Capital One Nessie (banking API), Physical AI, or Best Hardware. Salesforce and Scale AI are career-fair only. This packet lists no MLH or Gemini prize.
 
 ## Tough questions to have answers ready for
 
