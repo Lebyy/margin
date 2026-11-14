@@ -91,6 +91,31 @@ describe("draftHint", () => {
     assert.match(call.user, /\[redacted\]/);
   });
 
+  // Case: the guard held the previous draft and passed its reason. The next prompt is one level lower and includes that reason.
+  // The held draft itself stays out. Pasting it back would hand the tutor the solution it just wrote.
+  it("includes the guard reason and not a second copy of the draft", () => {
+    const call = buildCall({
+      level: 2,
+      prompt: "Write sum_list(xs) recursively.",
+      notes: NOTES,
+      turns: [],
+      studentText: "I tried a recursive call and it never stops.",
+      feedback: "The draft was held.",
+    });
+    assert.match(call.user, /The draft was held/);
+    assert.match(call.systemPrompt, /The hint level is 2/);
+    assert.equal(call.user.includes("Do not repeat the held draft"), true);
+
+    const first = buildCall({
+      level: 2,
+      prompt: "Write sum_list(xs) recursively.",
+      notes: NOTES,
+      turns: [],
+      studentText: "I tried a recursive call and it never stops.",
+    });
+    assert.equal(first.user.includes("previous draft"), false);
+  });
+
   // Case: the demo notes mention the base case, so the search returns Lecture 7, slides 12-16.
   // A search that misses that line would make the level-2 hint cite a lecture the professor did not write.
   it("finds Lecture 7, slides 12-16 in the demo notes", () => {

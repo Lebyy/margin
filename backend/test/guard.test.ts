@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { checkDeterministic, normalizeDraft } from "../src/guard.ts";
+import { assessDraft, checkDeterministic, FALLBACK_REPLY, guardDraft, normalizeDraft } from "../src/guard.ts";
+import { FAST_MODEL } from "../src/llm.ts";
 import { CANARY } from "../src/models.ts";
 
 // The professor's sum_list solution. A draft that still contains it after folding is a leak.
@@ -106,13 +107,151 @@ describe("checkDeterministic", () => {
   });
 });
 
+describe("guardDraft", () => {
+  // Case: the judge returns prose, then prose again on each retry. The student must get the fallback question, not the draft the tutor wrote.
+  // Treating the prose as a clean verdict would send the draft. A parse error is a leak.
+  it("sends the fallback when the judge returns garbage", async () => {
+    const draft = "Count the items by asking what happens when the list is empty.";
+    let redrafts = 0;
+    const result = await guardDraft({
+      draft,
+      level: 3,
+      answerKey: KEY,
+      canary: CANARY,
+      generate: async () => "this is not json",
+      redraft: async (level) => {
+        redrafts += 1;
+        return `A different question, retry ${redrafts}, level ${level}.`;
+      },
+    });
+    assert.equal(result.reply, FALLBACK_REPLY);
+    assert.equal(result.reply.includes(draft), false);
+    assert.equal(result.reply.includes("retry"), false);
+    assert.equal(result.retries, 2);
+    assert.equal(result.verdict.leaks, true);
+    assert.equal(result.verdict.layer, "fallback");
+    assert.equal(redrafts, 2);
+  });
+
+  // Case: the provider throws. The same hold as garbage JSON. A catch that returns the draft would fail open on a timeout.
+  it("sends the fallback when the provider throws", async () => {
+    const draft = "Look at the first item, then the rest of the list.";
+    const result = await guardDraft({
+      draft,
+      level: 2,
+      answerKey: KEY,
+      canary: CANARY,
+      generate: async () => {
+        throw new Error("provider down");
+      },
+      redraft: async () => "What is left when you take the first item off?",
+    });
+    assert.equal(result.reply, FALLBACK_REPLY);
+    assert.equal(result.reply.includes(draft), false);
+    assert.equal(result.verdict.leaks, true);
+    assert.equal(result.verdict.layer, "fallback");
+    assert.equal(result.retries, 2);
+  });
+
+  // Case: the draft is the solution, and the judge double is ready to call it clean.
+  // The string check has to win without asking. A model call here would let that clean judgment release the solution.
+  it("leaks a quoted solution from the deterministic layer without a model call", async () => {
+    let calls = 0;
+    const verdict = await assessDraft(KEY, KEY, CANARY, async () => {
+      calls += 1;
+      return JSON.stringify({ leaks: false, severity: "none", reason: "clean" });
+    });
+    assert.equal(calls, 0);
+    assert.equal(verdict.leaks, true);
+    assert.equal(verdict.layer, "deterministic");
+
+    const turned = await guardDraft({
+      draft: KEY,
+      level: 3,
+      answerKey: KEY,
+      canary: CANARY,
+      generate: async () => {
+        calls += 1;
+        return JSON.stringify({ leaks: false, severity: "none", reason: "clean" });
+      },
+      redraft: async () => KEY,
+    });
+    assert.equal(calls, 0);
+    assert.equal(turned.reply, FALLBACK_REPLY);
+    assert.equal(turned.reply.includes("sum_list"), false);
+    assert.equal(turned.verdict.leaks, true);
+  });
+
+  // Case: the judge holds the first draft and quotes the key in the reason. The retry is one level down, and the reason the tutor sees has the key removed.
+  // Passing the reason through unchanged would put the solution in the tutor prompt.
+  it("retries at a lower level without sending the key back", async () => {
+    let calls = 0;
+    let seenLevel = 0;
+    let seenFeedback = "";
+    const result = await guardDraft({
+      draft: "Walk the list from the left and add each head.",
+      level: 3,
+      answerKey: KEY,
+      canary: CANARY,
+      generate: async (request) => {
+        calls += 1;
+        assert.equal(request.model, FAST_MODEL);
+        assert.match(request.system, /copy it/);
+        assert.match(request.system, /different problem/);
+        assert.match(request.user, /Answer key:/);
+        if (calls === 1) {
+          return JSON.stringify({ leaks: true, severity: "partial", reason: `Held because of ${KEY} and ${CANARY}` });
+        }
+        return JSON.stringify({ leaks: false, severity: "none", reason: "It is a question." });
+      },
+      redraft: async (level, feedback) => {
+        seenLevel = level;
+        seenFeedback = feedback;
+        return "What happens when the list is empty?";
+      },
+    });
+    assert.equal(seenLevel, 2);
+    assert.equal(seenFeedback.includes("sum_list"), false);
+    assert.equal(seenFeedback.includes(CANARY), false);
+    assert.equal(seenFeedback.includes("7f3a"), false);
+    assert.equal(result.reply, "What happens when the list is empty?");
+    assert.equal(result.level, 2);
+    assert.equal(result.retries, 1);
+    assert.equal(result.verdict.leaks, false);
+    assert.equal(result.verdict.layer, "judge");
+  });
+
+  // Case: the judge says the draft is clean and also marks it full. The boolean would let it out.
+  // The severity is the half that says it is not clean, so the draft stays held and the fallback is what ships.
+  it("does not release a draft the judge calls clean and full", async () => {
+    const draft = "Take the first number and combine it with the rest.";
+    const levels: number[] = [];
+    const result = await guardDraft({
+      draft,
+      level: 1,
+      answerKey: KEY,
+      canary: CANARY,
+      generate: async () => JSON.stringify({ leaks: false, severity: "full", reason: "The steps are the solution." }),
+      redraft: async (level) => {
+        levels.push(level);
+        return "Still the steps.";
+      },
+    });
+    assert.deepEqual(levels, [1, 1]);
+    assert.equal(result.reply, FALLBACK_REPLY);
+    assert.equal(result.level, 1);
+    assert.equal(result.verdict.leaks, true);
+  });
+});
+
 describe("guard module", () => {
-  // Case: this file stays offline. A fetch or an llm import here would make a network failure look like a clean draft.
-  it("does not import the model client or call the network", () => {
+  // Case: the judge goes through completeJson. Importing the Gemini SDK here would make a second door, and a fetch would skip the schema check.
+  it("calls the model only through completeJson", () => {
     const source = readFileSync(new URL("../src/guard.ts", import.meta.url), "utf8");
     assert.equal(source.includes("fetch("), false);
     assert.equal(source.includes("@google"), false);
-    assert.equal(/from ["']\.\/llm/.test(source), false);
+    assert.equal(source.includes("GoogleGenAI"), false);
+    assert.match(source, /completeJson/);
   });
 
   // Case: a comment between two pieces of the copied line. Leaving the comment in would split the line, and the copy would no longer match the key.

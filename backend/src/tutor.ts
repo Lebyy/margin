@@ -41,6 +41,11 @@ export type DraftHintInput = {
   notes: string;
   turns: TutorTurn[];
   studentText: string;
+  /**
+   * The guard's reason for the draft it held. Absent on the first draft of a turn.
+   * This is the reason, not the held draft and not the answer key. The held draft may be the solution, so it must not be pasted back into the prompt.
+   */
+  feedback?: string;
 };
 
 type SecretField = "answer_key" | "answerKey" | "canary";
@@ -114,6 +119,15 @@ export function buildCall(input: DraftHintInput): TutorCall {
   const turns = input.turns.map((turn) => `${turn.role}: ${stripIdentity(turn.text)}`).join("\n");
   const endpoint = agentPlatformRequest();
   const toolNames = level === 2 ? ["cite_notes"] : [];
+  const user = ["Assignment:", prompt, "", "Recent turns:", turns || "(none)", "", "Student:", studentText];
+  const feedback = input.feedback?.trim() ?? "";
+  if (feedback.length > 0) {
+    user.push(
+      "",
+      "The previous draft was held. Write a new hint at this level. Do not repeat the held draft.",
+      stripIdentity(feedback),
+    );
+  }
 
   return {
     systemPrompt: systemPrompt(level),
@@ -122,7 +136,7 @@ export function buildCall(input: DraftHintInput): TutorCall {
     baseUrl: endpoint.baseUrl,
     apiVersion: endpoint.apiVersion,
     notes,
-    user: ["Assignment:", prompt, "", "Recent turns:", turns || "(none)", "", "Student:", studentText].join("\n"),
+    user: user.join("\n"),
   };
 }
 
