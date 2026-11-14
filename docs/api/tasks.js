@@ -20,6 +20,7 @@ import {
   BlobNotFoundError,
   BlobPreconditionFailedError,
   get,
+  head,
   put,
 } from "@vercel/blob";
 
@@ -132,7 +133,12 @@ async function readMap() {
   if (!parsed || typeof parsed !== "object" || !parsed.tasks || typeof parsed.tasks !== "object" || Array.isArray(parsed.tasks)) {
     throw new Error("board store payload is not a task map");
   }
-  return { tasks: onlyTasks(parsed.tasks), etag: result.blob.etag };
+  // get() reports the download validator. put() compares ifMatch to the
+  // store etag from head(). Those two stopped matching, so every save failed
+  // its precondition and the checkbox snapped back off.
+  const meta = await head(PATH);
+  const etag = meta && typeof meta.etag === "string" && meta.etag.length > 0 ? meta.etag : null;
+  return { tasks: onlyTasks(parsed.tasks), etag };
 }
 
 function onlyTasks(tasks) {

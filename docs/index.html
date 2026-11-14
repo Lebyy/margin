@@ -1062,28 +1062,36 @@
       apply(body.tasks || {});
       sync.textContent = "";
     }
+    // One save at a time. A row of clicks otherwise races the store, and an
+    // earlier response can paint a box back off after a later click saved it.
+    let pending = Promise.resolve();
     boxes.forEach((box) => {
-      box.addEventListener("change", async () => {
+      box.addEventListener("change", () => {
+        const id = box.dataset.id;
         const done = box.checked;
         counts();
         sync.textContent = "Saving.";
-        try {
-          const response = await fetch("/api/tasks", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: box.dataset.id, done }),
-          });
-          if (!response.ok) throw new Error("save failed");
-          const body = await response.json();
-          apply(body.tasks || {});
-          sync.textContent = "";
-        } catch (error) {
-          box.checked = !done;
-          counts();
-          sync.textContent = "That check did not save. Try again.";
-        }
+        pending = pending.then(() => persist(id, done));
       });
     });
+    async function persist(id, done) {
+      try {
+        const response = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, done }),
+        });
+        if (!response.ok) throw new Error("save failed");
+        const body = await response.json();
+        apply(body.tasks || {});
+        sync.textContent = "";
+      } catch (error) {
+        const box = document.querySelector('input[data-id="' + id + '"]');
+        if (box && box.checked === done) box.checked = !done;
+        counts();
+        sync.textContent = "That check did not save. Try again.";
+      }
+    }
     counts();
     load().catch(() => {
       sync.textContent = "The shared checks did not load.";
