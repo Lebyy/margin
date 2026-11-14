@@ -113,21 +113,26 @@ function isConflict(error) {
  * it with a one-key file.
  */
 async function readMap() {
+  let result;
   try {
-    const result = await get(PATH, { access: "private", useCache: false });
-    if (result.statusCode !== 200 || !result.stream) {
-      throw new Error("board store returned no body");
-    }
-    const text = await new Response(result.stream).text();
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || !parsed.tasks || typeof parsed.tasks !== "object" || Array.isArray(parsed.tasks)) {
-      throw new Error("board store payload is not a task map");
-    }
-    return { tasks: onlyTasks(parsed.tasks), etag: result.blob.etag };
+    result = await get(PATH, { access: "private", useCache: false });
   } catch (error) {
     if (error instanceof BlobNotFoundError) return { tasks: {}, etag: null };
     throw error;
   }
+  // get() returns null when the pathname has never been written. That is the
+  // empty board, not a failed read. Reading .statusCode off null is what made
+  // the first GET a 500.
+  if (!result) return { tasks: {}, etag: null };
+  if (result.statusCode !== 200 || !result.stream) {
+    throw new Error("board store returned no body");
+  }
+  const text = await new Response(result.stream).text();
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || !parsed.tasks || typeof parsed.tasks !== "object" || Array.isArray(parsed.tasks)) {
+    throw new Error("board store payload is not a task map");
+  }
+  return { tasks: onlyTasks(parsed.tasks), etag: result.blob.etag };
 }
 
 function onlyTasks(tasks) {
