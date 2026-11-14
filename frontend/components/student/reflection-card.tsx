@@ -44,7 +44,7 @@ export function ReflectionCard({ sessionId, reflection, questionCount }: { sessi
         <Card.Content className="flex flex-col gap-4">
           <div>
             <h2 className="font-serif text-2xl font-semibold tracking-tight">Look back</h2>
-            <p className="text-sm text-muted">You finished. Two questions about how you got there. Your professor reads your answers; they are not graded.</p>
+            <p className="text-sm text-muted">You submitted. Two questions about how you got there. Your professor reads your answers; they are not graded.</p>
           </div>
           <form
             className="flex flex-col gap-4"

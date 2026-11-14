@@ -1,9 +1,8 @@
 "use client";
 
-import { Alert, Button, Card, Chip, Description, Input, Label, Spinner, Tabs, TextArea, TextField, Tooltip } from "@heroui/react";
-import { ArrowRight, ArrowUp, Bug, Camera, Check, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
+import { Alert, Breadcrumbs, Button, Card, Chip, Description, Drawer, Input, Label, Spinner, Tabs, TextArea, TextField, Tooltip } from "@heroui/react";
+import { ArrowRight, ArrowUp, Bug, Camera, Check, MessageCircle, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import NextLink from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Paper } from "@/components/paper";
@@ -25,6 +24,8 @@ import { KIND } from "@/lib/kinds";
 import { placeCaption } from "@/lib/live-talk";
 import { speak, stopSpeaking, useCanSpeak } from "@/lib/speech";
 import { cn } from "@/lib/utils";
+import { exactDue, relativeDue } from "@/lib/courses";
+import { useMedia } from "@/lib/use-media";
 
 /**
  * The fixed line the demo control sends. It is the claimed-permission
@@ -116,6 +117,11 @@ export default function StudentAssignmentPage() {
   const canSpeak = useCanSpeak();
   /** The student's explanation in the "Understand it" step: what the function should do and what could break it, in their own words. */
   const [plan, setPlan] = useState("");
+  /** The class's code for the breadcrumb ("PHYS 101"). Loaded beside the assignment; the class name stands in until it arrives or if there is none. */
+  const [courseCode, setCourseCode] = useState("");
+  /** On a wide screen Margin sits beside the work. Below `lg` it opens as a bottom sheet from an "Ask Margin" button, so the work keeps the whole width. */
+  const wide = useMedia("(min-width: 1024px)");
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -135,8 +141,16 @@ export default function StudentAssignmentPage() {
         const a = await api.assignment(assignmentId);
         if (!live) return;
         setAssignment(a);
+        if (a.course_id) {
+          api
+            .course(a.course_id)
+            .then((c) => live && setCourseCode(c.code))
+            .catch(() => undefined);
+        }
         setCode(browser.code(assignmentId));
         setPlan(browser.plan(assignmentId));
+        // With Margin off there is no session to restore or start: the server would refuse it.
+        if (a.margin_enabled === false) return;
         const knownStudent = browser.studentId();
         if (knownStudent) setStudentId(knownStudent);
         const stored = browser.sessionId(assignmentId);
@@ -482,18 +496,16 @@ export default function StudentAssignmentPage() {
   const current = Math.min(questionIndex, prompts.length - 1);
   const isLast = current === prompts.length - 1;
 
-  return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+  const header = (
+    <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
-          {assignment.course_id ? (
-            <NextLink href={`/course/${assignment.course_id}`} className="text-sm text-muted underline-offset-4 hover:underline">
-              {assignment.course_name}
-            </NextLink>
-          ) : (
-            <p className="text-sm text-muted">{assignment.course_name}</p>
-          )}
-          <h1 className="font-serif text-4xl font-semibold tracking-tight">{assignment.title}</h1>
+          <Breadcrumbs>
+            <Breadcrumbs.Item href="/">My courses</Breadcrumbs.Item>
+            {assignment.course_id ? <Breadcrumbs.Item href={`/course/${assignment.course_id}?tab=assignments`}>{courseCode || assignment.course_name}</Breadcrumbs.Item> : null}
+            <Breadcrumbs.Item>{assignment.title}</Breadcrumbs.Item>
+          </Breadcrumbs>
+          <h1 className="mt-2 font-serif text-4xl font-semibold tracking-tight">{assignment.title}</h1>
+          <DueLine dueAt={assignment.due_at ?? null} submitted={reflection !== null} />
         </div>
         <div className="flex items-center gap-1">
           {/* A topic has no ladder: nothing is held back, so there is no level to show. */}
@@ -509,112 +521,14 @@ export default function StudentAssignmentPage() {
             <Tooltip.Content>Demo tools. Ctrl .</Tooltip.Content>
           </Tooltip>
         </div>
-      </header>
+    </header>
+  );
 
-      {!sessionId ? <StartCard returning={studentId !== null} name={name} onName={setName} onStart={start} starting={starting} error={sendError} /> : null}
-
-      <div className={sessionId ? "grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_28rem]" : "flex flex-col gap-5"}>
-        <div className="flex min-w-0 flex-col gap-5">
-          <Paper as="article" aria-label="Brief">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">
-              {prompts.length > 1 ? `Question ${current + 1} of ${prompts.length}` : "Brief"}
-            </h2>
-            <p className="mt-1.5 whitespace-pre-wrap font-serif text-lg leading-7">{prompts[current]}</p>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {assignment.concepts.map((c) => (
-                <Chip key={c} size="sm" variant="soft">
-                  {conceptLabel(c)}
-                </Chip>
-              ))}
-            </div>
-            {/*
-              Moving on. Next closes this question and opens the next; Finish closes the
-              last one and brings the two reflection questions. The time each question took
-              goes to the professor's dashboard. There is no clock on this page, and the
-              line below says so plainly, because a timer the student was not told about
-              would make the dashboard the surveillance tool Margin says it is not.
-            */}
-            {sessionId && !reflection ? (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-                <p className="text-sm text-muted">Your professor sees how long each question took. It is feedback, not a grade.</p>
-                <Button size="sm" variant={isLast ? "primary" : "secondary"} isPending={finishing} isDisabled={finishing} onPress={finishQuestion}>
-                  {isLast ? (
-                    <>
-                      <Check className="size-4" aria-hidden /> Finish assignment
-                    </>
-                  ) : (
-                    <>
-                      Next question <ArrowRight className="size-4" aria-hidden />
-                    </>
-                  )}
-                </Button>
-              </div>
-            ) : null}
-          </Paper>
-
-          {sessionId && reflection ? <ReflectionCard sessionId={sessionId} reflection={reflection} questionCount={prompts.length} /> : null}
-
-          {/*
-            Understand it first. This is the comprehension step: before any code, the student says in their own words what the function should do and what input could break it, and Margin responds to that reasoning. It is sent as the student's message through the same turn route, so the scribe labels it and a real explanation counts as a try. Nothing is checked or scored on this page.
-          */}
-          {sessionId ? (
-            <Paper as="section" aria-label="Understand it">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{isTopic ? "Explain it back" : "1. Say what this is asking"}</h2>
-                <span className="flex items-center gap-1">
-                  {/* Saying it out loud is the point of this step, so it can be dictated. The words land in the field first and are sent only when the student presses the button. */}
-                  <MicButton
-                    onText={(v) => {
-                      setPlan(v);
-                      browser.setPlan(assignmentId, v);
-                    }}
-                    isDisabled={sending}
-                  />
-                <Button size="sm" variant="secondary" isDisabled={sending || plan.trim().length === 0} onPress={() => void send(isTopic ? `Here is my explanation, in my own words. Tell me what I have right and what I am missing:\n${plan.trim()}` : `Here is how I understand the problem, before I start:\n${plan.trim()}`, false)}>
-                  Ask about this
-                </Button>
-                </span>
-              </div>
-              <TextField
-                value={plan}
-                onChange={(v) => {
-                  setPlan(v);
-                  browser.setPlan(assignmentId, v);
-                }}
-                fullWidth
-                aria-label="Your understanding of the problem"
-              >
-                <TextArea rows={isTopic ? 6 : 3} placeholder={isTopic ? "Explain the idea in your own words" : kind === "code" ? "What should it return? Which input could break it?" : "What is the question really asking?"} className="font-serif text-[17px] leading-7" />
-              </TextField>
-            </Paper>
-          ) : null}
-
-          {/*
-            The student's work. Code gets the editor with the live margin mark. A written answer and math working get a plain sheet to write on, since a line-numbered code editor is the wrong tool for a paragraph. A topic has no work to hand in, so it has no work area.
-          */}
-          {isTopic ? null : (
-            <Paper as="section" aria-label="Your work" className="pb-4">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{sessionId && !isTopic ? `2. ${KIND[kind].work}` : KIND[kind].work}</h2>
-                {sessionId ? (
-                  <Button size="sm" variant="primary" isDisabled={sending || !codeIsNew} isPending={sending} onPress={() => void send(question || CHECK_MY_WORK)}>
-                    Check my work
-                  </Button>
-                ) : null}
-              </div>
-              {kind === "code" ? (
-                <CodeEditor value={code} onChange={editCode} placeholder={KIND.code.placeholder} />
-              ) : (
-                <TextField value={code} onChange={editCode} fullWidth aria-label={KIND[kind].work}>
-                  <TextArea rows={12} placeholder={KIND[kind].placeholder} className={kind === "math" ? "font-mono text-[15px] leading-7" : "font-serif text-[17px] leading-8"} />
-                </TextField>
-              )}
-            </Paper>
-          )}
-        </div>
-
-        {sessionId ? (
-        <aside className="lg:sticky lg:top-20 lg:self-start" aria-label="Margin">
+  // Margin's panel: the chat, Study, Canvas and Log. It is built once and
+  // placed in one spot: beside the work on a wide screen, or in the bottom
+  // sheet below `lg`. Never both, so the chat's scroll position and focus
+  // have one home.
+  const panel = (
             <Card>
               <Card.Content>
                 <Tabs selectedKey={tab} onSelectionChange={(key) => setTab(String(key))} variant="secondary">
@@ -712,7 +626,8 @@ export default function StudentAssignmentPage() {
                         )}
                         <MicButton onText={setQuestion} isDisabled={sending} />
                         <TalkButton
-                          sessionId={sessionId}
+                          // The panel is only placed once a session exists, so this is never the empty string on screen.
+                          sessionId={sessionId ?? ""}
                           isDisabled={sending}
                           onCaption={(role, text, partial) => setTurns((prev) => placeCaption(prev, { id: crypto.randomUUID(), role, content: text, live: partial }))}
                           onError={setSendError}
@@ -761,12 +676,195 @@ export default function StudentAssignmentPage() {
                 </Tabs>
               </Card.Content>
             </Card>
-        </aside>
+  );
+
+  // Margin is off for this assignment. The student sees the work and the due
+  // date, and a plain line that their professor has not turned the tutor on.
+  // No session is started, so nothing reaches a model.
+  if (assignment.margin_enabled === false) {
+    return (
+      <div className="flex flex-col gap-5">
+        {header}
+        <Paper as="article" aria-label="Brief">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">{prompts.length > 1 ? `${prompts.length} questions` : "Brief"}</h2>
+          {prompts.map((p, i) => (
+            <p key={i} className="mt-1.5 whitespace-pre-wrap font-serif text-lg leading-7">
+              {prompts.length > 1 ? <span className="mr-1.5 text-muted">{i + 1}.</span> : null}
+              {p}
+            </p>
+          ))}
+        </Paper>
+        <Alert status="default">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Description>Margin isn&rsquo;t enabled for this assignment by your professor.</Alert.Description>
+          </Alert.Content>
+        </Alert>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      {header}
+
+      {!sessionId ? <StartCard returning={studentId !== null} name={name} onName={setName} onStart={start} starting={starting} error={sendError} /> : null}
+
+      <div className={sessionId ? "grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_28rem]" : "flex flex-col gap-5"}>
+        <div className="flex min-w-0 flex-col gap-5">
+          <Paper as="article" aria-label="Brief">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">
+              {prompts.length > 1 ? `Question ${current + 1} of ${prompts.length}` : "Brief"}
+            </h2>
+            <p className="mt-1.5 whitespace-pre-wrap font-serif text-lg leading-7">{prompts[current]}</p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {assignment.concepts.map((c) => (
+                <Chip key={c} size="sm" variant="soft">
+                  {conceptLabel(c)}
+                </Chip>
+              ))}
+            </div>
+            {/*
+              Moving on. Next closes this question and opens the next; Finish closes the
+              last one and brings the two reflection questions. The time each question took
+              goes to the professor's dashboard. There is no clock on this page, and the
+              line below says so plainly, because a timer the student was not told about
+              would make the dashboard the surveillance tool Margin says it is not.
+            */}
+            {sessionId && !reflection ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+                <p className="text-sm text-muted">Your professor sees how long each question took. It is feedback, not a grade.</p>
+                <Button size="sm" variant={isLast ? "primary" : "secondary"} isPending={finishing} isDisabled={finishing} onPress={finishQuestion}>
+                  {isLast ? (
+                    <>
+                      <Check className="size-4" aria-hidden /> Submit assignment
+                    </>
+                  ) : (
+                    <>
+                      Next question <ArrowRight className="size-4" aria-hidden />
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : null}
+          </Paper>
+
+          {sessionId && reflection ? <ReflectionCard sessionId={sessionId} reflection={reflection} questionCount={prompts.length} /> : null}
+
+          {/*
+            Understand it first. This is the comprehension step: before any code, the student says in their own words what the function should do and what input could break it, and Margin responds to that reasoning. It is sent as the student's message through the same turn route, so the scribe labels it and a real explanation counts as a try. Nothing is checked or scored on this page.
+          */}
+          {sessionId ? (
+            <Paper as="section" aria-label="Understand it">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{isTopic ? "Explain it back" : "1. Say what this is asking"}</h2>
+                <span className="flex items-center gap-1">
+                  {/* Saying it out loud is the point of this step, so it can be dictated. The words land in the field first and are sent only when the student presses the button. */}
+                  <MicButton
+                    onText={(v) => {
+                      setPlan(v);
+                      browser.setPlan(assignmentId, v);
+                    }}
+                    isDisabled={sending}
+                  />
+                <Button size="sm" variant="secondary" isDisabled={sending || plan.trim().length === 0} onPress={() => void send(isTopic ? `Here is my explanation, in my own words. Tell me what I have right and what I am missing:\n${plan.trim()}` : `Here is how I understand the problem, before I start:\n${plan.trim()}`, false)}>
+                  Ask about this
+                </Button>
+                </span>
+              </div>
+              <TextField
+                value={plan}
+                onChange={(v) => {
+                  setPlan(v);
+                  browser.setPlan(assignmentId, v);
+                }}
+                fullWidth
+                aria-label="Your understanding of the problem"
+              >
+                <TextArea rows={isTopic ? 6 : 3} placeholder={isTopic ? "Explain the idea in your own words" : kind === "code" ? "What should it return? Which input could break it?" : "What is the question really asking?"} className="font-serif text-[17px] leading-7" />
+              </TextField>
+            </Paper>
+          ) : null}
+
+          {/*
+            The student's work. Code gets the editor with the live margin mark. A written answer and math working get a plain sheet to write on, since a line-numbered code editor is the wrong tool for a paragraph. A topic has no work to hand in, so it has no work area.
+          */}
+          {isTopic ? null : (
+            <Paper as="section" aria-label="Your work" className="pb-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{sessionId && !isTopic ? `2. ${KIND[kind].work}` : KIND[kind].work}</h2>
+                {sessionId ? (
+                  <Button size="sm" variant="primary" isDisabled={sending || !codeIsNew} isPending={sending} onPress={() => void send(question || CHECK_MY_WORK)}>
+                    Check my work
+                  </Button>
+                ) : null}
+              </div>
+              {kind === "code" ? (
+                <CodeEditor value={code} onChange={editCode} placeholder={KIND.code.placeholder} />
+              ) : (
+                <TextField value={code} onChange={editCode} fullWidth aria-label={KIND[kind].work}>
+                  <TextArea rows={12} placeholder={KIND[kind].placeholder} className={kind === "math" ? "font-mono text-[15px] leading-7" : "font-serif text-[17px] leading-8"} />
+                </TextField>
+              )}
+            </Paper>
+          )}
+        </div>
+
+        {sessionId && wide ? (
+          <aside className="lg:sticky lg:top-20 lg:self-start" aria-label="Margin">
+            {panel}
+          </aside>
         ) : null}
       </div>
 
+      {/*
+        Below `lg`: Margin is a bottom sheet. The button stays at the bottom of the
+        screen while the student works, and opening the sheet shows the same panel
+        the wide layout puts beside the work.
+      */}
+      {sessionId && !wide ? (
+        <>
+          <div className="sticky bottom-4 z-10 flex justify-end">
+            <Button variant="primary" className="shadow-lg" onPress={() => setSheetOpen(true)}>
+              <MessageCircle className="size-4" aria-hidden /> Ask Margin
+            </Button>
+          </div>
+          <Drawer>
+            <Drawer.Backdrop isOpen={sheetOpen} onOpenChange={setSheetOpen} variant="blur">
+              <Drawer.Content placement="bottom">
+                <Drawer.Dialog className="max-h-[85dvh] w-full" aria-label="Margin">
+                  <Drawer.CloseTrigger />
+                  <Drawer.Header>
+                    <Drawer.Heading>Margin</Drawer.Heading>
+                  </Drawer.Header>
+                  <Drawer.Body className="pb-4">{panel}</Drawer.Body>
+                </Drawer.Dialog>
+              </Drawer.Content>
+            </Drawer.Backdrop>
+          </Drawer>
+        </>
+      ) : null}
+
       <DebugDrawer isOpen={drawerOpen} onOpenChange={setDrawerOpen} turns={debug} ceiling={assignment.hint_ceiling} onDemo={sessionId ? () => void send(DEMO_ATTACK, false) : undefined} demoBusy={sending} />
     </div>
+  );
+}
+
+/**
+ * The due date under the title: "due in 2 days" with the exact time beside
+ * it. Overdue work not yet submitted says so in words and in the danger
+ * colour. No due date prints nothing.
+ */
+function DueLine({ dueAt, submitted }: { dueAt: string | null; submitted: boolean }) {
+  if (!dueAt) return null;
+  const due = relativeDue(dueAt);
+  const overdue = due.overdue && !submitted;
+  return (
+    <p className={cn("mt-1 text-sm", overdue ? "font-medium text-danger" : "text-muted")}>
+      <time dateTime={dueAt}>
+        {submitted ? "Submitted" : due.text.charAt(0).toUpperCase() + due.text.slice(1)} · {exactDue(dueAt)}
+      </time>
+    </p>
   );
 }
 
