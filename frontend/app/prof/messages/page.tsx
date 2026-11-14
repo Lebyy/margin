@@ -76,6 +76,13 @@ export default function MessagesPage() {
       ) : messages && messages.length === 0 ? (
         <EmptyMessages text="No message yet. A message is written when you generate a Thursday card on the dashboard." href="/prof/dashboard" action="Go to the dashboard" />
       ) : (
+        <section aria-labelledby="messages-list-heading">
+        {/* Each message's title is HeroUI's Card.Title, which is always an h3. This
+            h2 sits between it and the page's h1, so a screen reader's heading list
+            does not skip a level (axe heading-order, D-R6). It is read, not shown. */}
+        <h2 id="messages-list-heading" className="sr-only">
+          Messages, newest first
+        </h2>
         <ol className="flex flex-col gap-4">
           {(messages ?? []).map((m, i) => (
             <motion.li key={m.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 6) * 0.05, duration: 0.25 }}>
@@ -83,6 +90,7 @@ export default function MessagesPage() {
             </motion.li>
           ))}
         </ol>
+        </section>
       )}
     </div>
   );

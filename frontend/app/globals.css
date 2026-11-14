@@ -33,6 +33,29 @@
   --paper: oklch(0.992 0.006 85);
   --paper-line: oklch(0.6 0.03 250 / 0.14);
   --paper-shadow: 0 1px 2px oklch(0.2 0.02 60 / 0.06), 0 12px 32px -12px oklch(0.2 0.02 60 / 0.18);
+
+  /*
+   * HeroUI token overrides for contrast (D-R6, WCAG 2.2 AA, measured with
+   * axe-core). These rules sit outside a cascade layer, so they win over
+   * HeroUI's layered theme.
+   * --accent: HeroUI's blue (L 0.62) under white button text is 3.58:1, below
+   *   4.5:1 for 14px text, on every primary button. L 0.53 gives 5.16:1, and
+   *   4.86:1 where the blue is used as text on the page.
+   * --muted: HeroUI's grey (#71717a) on the light page background is 4.43:1.
+   *   L 0.52 gives 5.07:1 there and 5.52:1 on white cards.
+   */
+  --accent: oklch(0.53 0.19 253.83);
+  --muted: oklch(0.52 0.0138 285.94);
+
+  /*
+   * Form field outlines (WCAG 1.4.11, non-text contrast 3:1). HeroUI draws
+   * text fields, text areas, and radio circles with no border (width 0,
+   * colour transparent), so an unselected hint-ceiling radio was a white
+   * circle on a white card. A 1px grey edge at L 0.62 is 3.65:1 on white
+   * cards and 3.35:1 on the page.
+   */
+  --field-border-width: 1px;
+  --field-border: oklch(0.62 0.01 286);
 }
 
 .dark,
@@ -44,6 +67,25 @@
   --paper: oklch(0.225 0.008 260);
   --paper-line: oklch(0.85 0.02 250 / 0.07);
   --paper-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 16px 40px -16px oklch(0 0 0 / 0.6);
+
+  /*
+   * In dark mode a blue dark enough for white text would be too dark to read
+   * as text on the near-black page, so the button turns lighter and its label
+   * turns dark: 7.13:1 on the button, 8.17:1 as text on the page (D-R6).
+   */
+  --accent: oklch(0.72 0.15 253.83);
+  --accent-foreground: oklch(0.2103 0.0059 285.89);
+
+  /*
+   * HeroUI's own dark grey, restated. The light-theme --muted above sits on
+   * :root outside any layer, so without this line it would also win in dark
+   * mode and drop muted text on the dark page to 3.21:1.
+   */
+  --muted: oklch(70.5% 0.015 286.067);
+
+  /* The same field edge in dark mode, where fields share the card's colour: 3.80:1 on the card. */
+  --field-border-width: 1px;
+  --field-border: oklch(0.56 0.01 286);
 }
 
 @theme inline {
