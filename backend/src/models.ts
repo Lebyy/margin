@@ -26,7 +26,8 @@ const HINT_LEVELS = [1, 2, 3] as const;
 // renames a struggle type, severity, or layer, this file stops compiling until
 // the enum matches, so the database cannot accept a value the rest of the app
 // does not know (or reject one it does).
-const STRUGGLE_TYPES = Object.keys({
+// Exported for scribe.ts, which validates the model's label against the same list.
+export const STRUGGLE_TYPES = Object.keys({
   misconception: true,
   stuck_starting: true,
   syntax_or_mechanics: true,
