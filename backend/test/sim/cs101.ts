@@ -32,6 +32,7 @@
 //   SIM_QUESTIONS    stop each student after this many questions (default: all 20)
 //   SIM_PARALLEL     turns in flight at once (default 8)
 //   SIM_REPORT       where to write the JSON report (default: OS temp dir)
+//   SIM_COURSE_SUFFIX  appended to the class name, to tell runs apart (e.g. "test 1")
 
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
@@ -52,6 +53,7 @@ const PARALLEL = Number(process.env.SIM_PARALLEL ?? 8);
 const QUESTION_LIMIT = Math.min(QUESTIONS.length, Number(process.env.SIM_QUESTIONS ?? QUESTIONS.length));
 const ONLY = (process.env.SIM_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 const REPORT_PATH = process.env.SIM_REPORT ?? join(tmpdir(), "margin-sim-cs101.json");
+const COURSE_NAME = process.env.SIM_COURSE_SUFFIX ? `${COURSE.name} ${process.env.SIM_COURSE_SUFFIX}` : COURSE.name;
 
 // ---------------------------------------------------------------------------
 // The call meter. Installed before the app and the SDKs are imported, so
@@ -82,7 +84,7 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters
 const { createApp } = await import("../../src/app.ts");
 const { connectDb, disconnectDb } = await import("../../src/db.ts");
 const { completeJson } = await import("../../src/llm.ts");
-const { checkDeterministic, FALLBACK_REPLY } = await import("../../src/guard.ts");
+const { checkDeterministic, FALLBACK_REPLY, FALLBACK_REPLY_GENERAL } = await import("../../src/guard.ts");
 const { CANARY } = await import("../../src/models.ts");
 const { HELP_LOCKED_NOTICE, NO_SLIDES_NOTICE } = await import("../../src/routes.ts");
 
@@ -387,7 +389,7 @@ describe("CS 101 live class simulation", { skip }, () => {
   });
 
   test("the professor sets up the class, slides, and problem set", async () => {
-    const course = await call("POST", "/api/prof/courses", COURSE);
+    const course = await call("POST", "/api/prof/courses", { ...COURSE, name: COURSE_NAME });
     assert.equal(course.status, 201, course.text);
     courseId = course.json.id;
 
@@ -400,7 +402,7 @@ describe("CS 101 live class simulation", { skip }, () => {
 
     const [first, ...rest] = QUESTIONS;
     const saved = await call("POST", "/api/prof/assignments", {
-      course_name: COURSE.name,
+      course_name: COURSE_NAME,
       title: "Problem Set 3: Python fundamentals",
       prompt: first.prompt,
       answer_key: first.key,
@@ -467,7 +469,8 @@ describe("CS 101 live class simulation", { skip }, () => {
             levelBefore: level,
             level: res.json?.level ?? null,
             retries: res.json?.retries ?? null,
-            fallback: res.status === 200 && guardedPart(reply) === FALLBACK_REPLY,
+            // Either fixed sentence is a held turn. Which one it was is checked below.
+            fallback: res.status === 200 && (guardedPart(reply) === FALLBACK_REPLY || guardedPart(reply) === FALLBACK_REPLY_GENERAL),
             locked: reply.includes(HELP_LOCKED_NOTICE),
             noSlides: reply.includes(NO_SLIDES_NOTICE),
             label: res.json?.label ?? null,
@@ -531,6 +534,14 @@ describe("CS 101 live class simulation", { skip }, () => {
       climbed.map((t) => `${t.student} q${t.question} ${t.intent}: ${t.levelBefore} -> ${t.level}`),
       [],
     );
+  });
+
+  test("a held turn never shows the empty-list sentence on these questions", () => {
+    // None of the twenty prompts is about sum_list, so fallbackFor must give
+    // the general sentence. Before 595e384 every held turn here read "What
+    // happens when the list is empty?", even on fizzbuzz.
+    const wrong = turns.filter((t) => guardedPart(t.reply) === FALLBACK_REPLY);
+    assert.deepEqual(wrong.map((t) => `${t.student} q${t.question} ${t.intent}`), []);
   });
 
   test("report: the class, the dashboard, and the Thursday card", async () => {
