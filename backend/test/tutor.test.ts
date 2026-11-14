@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { AGENT_PLATFORM_HOST, CLOUD_PROJECT, MODEL_LOCATION, STRONG_MODEL } from "../src/llm.ts";
+import { AGENT_PLATFORM_HOST, CLOUD_PROJECT, MODEL_LOCATION, TUTOR_MODEL } from "../src/llm.ts";
 import { buildCall, draftHint, searchNotes, TimedChatGoogle, type TutorCall } from "../src/tutor.ts";
 
 const NOTES = "Lecture 7, slides 12-16: base cases and recursive calls.";
@@ -36,7 +36,7 @@ describe("draftHint", () => {
     assert.match(call.systemPrompt, /one friendly refusal sentence/);
     assert.match(call.systemPrompt, /The hint level is 1/);
     assert.deepEqual(call.toolNames, []);
-    assert.equal(call.model, STRONG_MODEL);
+    assert.equal(call.model, TUTOR_MODEL);
   });
 
   // Case: the chat class defaults to AI Studio. These fields are the Agent Platform path, including global.
@@ -140,7 +140,7 @@ describe("TimedChatGoogle", () => {
 
   /** A client whose SDK call follows `script`, one entry per request sent. */
   function client(script: Reply[]) {
-    const model = new TimedChatGoogle({ model: STRONG_MODEL, apiKey: "test-key", maxRetries: 0 });
+    const model = new TimedChatGoogle({ model: TUTOR_MODEL, apiKey: "test-key", maxRetries: 0 });
     model.hedgeAfterMs = 30;
     model.requestTimeoutMs = 150;
     let calls = 0;

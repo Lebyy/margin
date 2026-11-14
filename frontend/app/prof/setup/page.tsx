@@ -5,11 +5,15 @@ import { ArrowRight, Check, FilePlus2, Lock } from "lucide-react";
 import NextLink from "next/link";
 import { useEffect, useState } from "react";
 import { Paper } from "@/components/paper";
-import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, type HintLevel } from "@/lib/api";
+import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, type AssignmentKind, type HintLevel } from "@/lib/api";
+import { EXAMPLES } from "@/lib/examples";
+import { KIND } from "@/lib/kinds";
+import { cn } from "@/lib/utils";
 import { browser } from "@/lib/browser";
 
 /** The form's fields as the page holds them. Concepts are one per line while typing and become a list when sent. */
 type Form = {
+  kind: AssignmentKind;
   course_name: string;
   title: string;
   prompt: string;
@@ -19,7 +23,7 @@ type Form = {
   hint_ceiling: string;
 };
 
-const EMPTY: Form = { course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3" };
+const EMPTY: Form = { kind: "code", course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3" };
 
 /**
  * The professor's setup form: the one way an assignment enters the product.
@@ -52,11 +56,16 @@ export default function SetupPage() {
     let live = true;
     const stored = browser.profAssignmentId();
     // With nothing stored this resolves to null at once, and the form opens empty.
-    Promise.resolve(stored ? api.profAssignment(stored) : null)
+    // Arriving from a class page with ?course= starts a new item in that class, so the stored assignment is not reloaded.
+    const forCourse = new URLSearchParams(window.location.search).get("course");
+    Promise.resolve(stored && !forCourse ? api.profAssignment(stored) : null)
       .then((a) => {
-        if (!live || !a) return;
+        if (!live) return;
+        if (forCourse) setForm((f) => ({ ...f, course_name: forCourse }));
+        if (!a) return;
         setEditingId(a.id);
         setForm({
+          kind: a.kind,
           course_name: a.course_name,
           title: a.title,
           prompt: a.prompt,
@@ -89,7 +98,7 @@ export default function SetupPage() {
     if (!form.course_name.trim()) missing.course_name = "Name the course.";
     if (!form.title.trim()) missing.title = "Give the assignment a title.";
     if (!form.prompt.trim()) missing.prompt = "Write the prompt students will see.";
-    if (!editingId && !form.answer_key.trim()) missing.answer_key = "The guard needs the answer key to check hints against.";
+    if (!editingId && form.kind !== "topic" && !form.answer_key.trim()) missing.answer_key = "The guard needs the answer key to check hints against.";
     if (concepts.length === 0) missing.concepts = "List at least one concept.";
     if (new Set(concepts).size !== concepts.length) missing.concepts = "Each concept can appear once.";
     setIssues(missing);
@@ -100,6 +109,7 @@ export default function SetupPage() {
     try {
       const result = await api.saveAssignment({
         ...(editingId ? { id: editingId } : {}),
+        kind: form.kind,
         course_name: form.course_name.trim(),
         title: form.title.trim(),
         prompt: form.prompt.trim(),
@@ -118,7 +128,7 @@ export default function SetupPage() {
         setIssues(Object.fromEntries(e.issues.map((i) => [i.path, i.message])));
         setError("Some fields were not accepted.");
       } else {
-        setError("The assignment was not saved. Check that the API and the database are running.");
+        setError("Not saved. Try again.");
       }
     } finally {
       setSaving(false);
@@ -139,11 +149,10 @@ export default function SetupPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="font-serif text-3xl font-semibold tracking-tight">
-              {editingId ? "Edit the assignment" : "Set up an assignment"}
+              {editingId ? "Edit" : "New"} {form.kind === "topic" ? "topic" : "assignment"}
             </h1>
             <p className="mt-1 text-muted">
-              Signed in as <span className="font-mono">prof</span>. Students see the prompt and the notes. They never see
-              the answer key.
+              {form.kind === "topic" ? "Material to learn. Margin teaches it from your notes." : "Students see the prompt and the notes. Never the answer key."}
             </p>
           </div>
           {editingId ? (
@@ -172,26 +181,74 @@ export default function SetupPage() {
               void save();
             }}
           >
+            {/*
+              What kind of work this is. The kind decides how the guard reads the key and what the student's work area looks like. A topic has no key at all: it is material to learn, and Margin teaches it openly.
+            */}
+            <div role="group" aria-label="Kind of assignment" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(Object.keys(KIND) as AssignmentKind[]).map((k) => {
+                const Icon = KIND[k].icon;
+                const on = form.kind === k;
+                return (
+                  <Button
+                    key={k}
+                    variant={on ? "secondary" : "outline"}
+                    aria-pressed={on}
+                    className={cn("h-auto flex-col items-start gap-1 px-3 py-3 text-left", on && "ring-2 ring-accent")}
+                    onPress={() => {
+                      setForm((f) => ({ ...f, kind: k }));
+                      setSaved(null);
+                    }}
+                  >
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <Icon className="size-4" aria-hidden /> {KIND[k].name}
+                    </span>
+                    <span className="whitespace-normal text-xs font-normal text-muted">{KIND[k].blurb}</span>
+                  </Button>
+                );
+              })}
+            </div>
+
+            {/* Examples fill the form and save nothing. The professor still reads, edits, and saves. */}
+            {!editingId ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-sm text-muted">Start from an example</span>
+                {EXAMPLES.filter((e) => e.kind === form.kind).map((e) => (
+                  <Button
+                    key={e.title}
+                    size="sm"
+                    variant="ghost"
+                    onPress={() => {
+                      setForm({ kind: e.kind, course_name: e.course_name, title: e.title, prompt: e.prompt, answer_key: e.answer_key, notes: e.notes, concepts: e.concepts.join("\n"), hint_ceiling: String(e.hint_ceiling) });
+                      setIssues({});
+                    }}
+                  >
+                    {e.title}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+
             <div className="grid gap-4 sm:grid-cols-2">
               <TextField value={form.course_name} onChange={set("course_name")} isRequired isInvalid={!!issues.course_name} fullWidth name="course_name">
                 <Label>Course</Label>
-                <Input placeholder="Intro CS, Python recursion" />
+                <Input />
                 {issues.course_name ? <FieldNote>{issues.course_name}</FieldNote> : null}
               </TextField>
               <TextField value={form.title} onChange={set("title")} isRequired isInvalid={!!issues.title} fullWidth name="title">
                 <Label>Title</Label>
-                <Input placeholder="Write sum_list(xs) recursively" />
+                <Input />
                 {issues.title ? <FieldNote>{issues.title}</FieldNote> : null}
               </TextField>
             </div>
 
             <TextField value={form.prompt} onChange={set("prompt")} isRequired isInvalid={!!issues.prompt} fullWidth name="prompt">
               <Label>Prompt</Label>
-              <TextArea rows={3} placeholder="What the student is asked to do." />
-              <Description>Students see this exactly as written.</Description>
-              {issues.prompt ? <FieldNote>{issues.prompt}</FieldNote> : null}
+              <TextArea rows={3} />
+                            {issues.prompt ? <FieldNote>{issues.prompt}</FieldNote> : null}
             </TextField>
 
+            {form.kind === "topic" ? null : (
+              <>
             <TextField value={form.answer_key} onChange={set("answer_key")} isRequired={!editingId} isInvalid={!!issues.answer_key} fullWidth name="answer_key">
               <Label>
                 <span className="inline-flex items-center gap-1.5">
@@ -203,11 +260,10 @@ export default function SetupPage() {
                 className="font-mono text-[13px]"
                 spellCheck={false}
                 autoComplete="off"
-                placeholder={editingId ? "A key is stored. Leave this empty to keep it, or paste a new one to replace it." : "Your solution. It stays on the server."}
+                placeholder={editingId ? "Leave empty to keep the stored key." : "Your solution"}
               />
               <Description>
-                Stored on the server and read only by the guard, which checks every hint against it. It is not sent to the
-                tutor, to students, or back to this page.
+                Only the guard reads it. It is never sent to the tutor, to students, or back to this page.
               </Description>
               {issues.answer_key ? <FieldNote>{issues.answer_key}</FieldNote> : null}
             </TextField>
@@ -217,10 +273,12 @@ export default function SetupPage() {
                 <Lock className="size-3.5" aria-hidden /> Canary
               </p>
               <p className="mt-0.5 text-sm text-muted">
-                Set by the server and stored beside the key. If that marker ever shows up in a hint, the guard treats the
-                hint as a leak. It is not editable, so the guard always knows which marker to look for.
+                A marker stored beside the key. A hint that contains it is held.
               </p>
             </div>
+
+              </>
+            )}
 
             {/* A whole lecture can be pasted here (D-R5). The server caps notes at
                 MAX_NOTES_CHARS (routes.ts); maxLength stops the paste at the same
@@ -234,8 +292,7 @@ export default function SetupPage() {
                 placeholder={"Lecture 7, slides 12-16: recursion\nEvery recursive function needs a base case...\n\nPaste a whole lecture: headings like \"Lecture 7\" or \"Slide 13\" are kept with the text under them."}
               />
               <Description>
-                Paste a whole lecture or just the key points. A level-2 hint cites the lecture and slide where a student&rsquo;s
-                concept is covered, and revision cards are written from the same text. {form.notes.length.toLocaleString()} of{" "}
+                Paste a whole lecture or just the key points. Hints cite it, and study cards are written from it. {form.notes.length.toLocaleString()} of{" "}
                 {MAX_NOTES_CHARS.toLocaleString()} characters.
               </Description>
             </TextField>
@@ -243,7 +300,7 @@ export default function SetupPage() {
             <TextField value={form.concepts} onChange={set("concepts")} isRequired isInvalid={!!issues.concepts} fullWidth name="concepts">
               <Label>Concepts</Label>
               <TextArea rows={4} className="font-mono text-[13px]" spellCheck={false} placeholder={"base_case\nrecursive_call_progress\nreturn_value_propagation\ncall_stack_tracing"} />
-              <Description>One per line. Every student turn is labelled with exactly one of these, and each becomes a row of your heatmap.</Description>
+              <Description>One per line. Each becomes a row of your heatmap.</Description>
               {issues.concepts ? <FieldNote>{issues.concepts}</FieldNote> : null}
             </TextField>
             {concepts.length > 0 ? (
@@ -256,9 +313,10 @@ export default function SetupPage() {
               </div>
             ) : null}
 
+            {form.kind === "topic" ? null : (
             <RadioGroup value={form.hint_ceiling} onChange={set("hint_ceiling")} name="hint_ceiling">
               <Label>Hint ceiling</Label>
-              <Description>The highest level a student can reach on this assignment. The tutor never goes past it.</Description>
+              <Description>The highest hint a student can reach.</Description>
               {([1, 2, 3] as HintLevel[]).map((n) => (
                 <Radio key={n} value={String(n)}>
                   <Radio.Content>
@@ -271,6 +329,7 @@ export default function SetupPage() {
                 </Radio>
               ))}
             </RadioGroup>
+            )}
 
             {error ? (
               <Alert status="danger">
@@ -289,11 +348,10 @@ export default function SetupPage() {
                 <Alert.Content>
                   <Alert.Title>Saved</Alert.Title>
                   <Alert.Description>
-                    The key is stored on the server and has been cleared from this page. Send students to{" "}
+                    The key has been cleared from this page.{" "}
                     <NextLink className="underline underline-offset-2" href={`/student/assignment/${saved}`}>
-                      the student page
+                      Open the student page
                     </NextLink>
-                    , then open the dashboard once someone has studied.
                   </Alert.Description>
                 </Alert.Content>
               </Alert>

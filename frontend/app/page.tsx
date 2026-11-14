@@ -1,141 +1,102 @@
 "use client";
 
 import { Button, Card, Chip, Spinner } from "@heroui/react";
-import { ArrowRight, GraduationCap, PencilLine } from "lucide-react";
+import { ArrowRight, GraduationCap } from "lucide-react";
+import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { HighlightText } from "@/components/animate-ui/primitives/texts/highlight";
-import { Paper } from "@/components/paper";
-import { api, ApiError, type AssignmentListItem } from "@/lib/api";
+import { api, ApiError, type CourseListItem } from "@/lib/api";
 
 /**
- * The home page: the name, the one line, and two ways in.
+ * The home page: what Margin is, then everything a student can open.
  *
- * Choosing a side is the whole sign-in. The two hard-coded logins are the
+ * Choosing a card is the whole sign-in. The two hard-coded logins are the
  * words `student` and `prof`, there is no password, and nothing is typed.
  *
- * The student button goes to the newest assignment a professor saved. That
- * list is read from the API on load. If it is empty, the button is disabled
- * and the page says why, because the only way an assignment exists is that
- * someone saved the setup form. This page does not create one to fill the gap.
+ * The cards are the classes professors have created, read from the API on
+ * load. A class opens to its lessons, its assignments, and its handouts. If
+ * there are none, the page says so. It does not create one to fill the gap.
  */
 export default function Home() {
   const router = useRouter();
-  const [assignments, setAssignments] = useState<AssignmentListItem[] | null>(null);
+  const [items, setItems] = useState<CourseListItem[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
     api
-      .listAssignments()
-      .then((r) => live && setAssignments(r.assignments))
+      .courses()
+      .then((r) => live && setItems(r.courses))
       .catch((e: unknown) => {
         if (!live) return;
-        setAssignments([]);
-        setProblem(
-          e instanceof ApiError && e.code === "database_unavailable"
-            ? "The API is running without a database. Set MONGODB_URI in .env and restart."
-            : "The API is not answering on localhost:4000. Start it with npm run dev.",
-        );
+        setItems([]);
+        setProblem(e instanceof ApiError && e.code === "database_unavailable" ? "The database is not connected." : "Margin is not reachable.");
       });
     return () => {
       live = false;
     };
   }, []);
 
-  const latest = assignments?.[0] ?? null;
-
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-8 pt-6 sm:pt-12">
-      <Paper as="div" className="py-8 sm:py-10" aria-label="What Margin is">
-        <h1 className="font-serif text-5xl font-semibold tracking-tight sm:text-6xl">Margin</h1>
-        <p className="mt-3 text-lg text-muted">The AI tutor your professor approves of.</p>
-        <p className="mt-6 max-w-2xl font-serif text-xl leading-9 sm:text-2xl sm:leading-10">
-          Paste the attempt, find the mistake,{" "}
-          <HighlightText
-            text="never get the answer."
-            className="rounded bg-linear-to-r from-margin-red-soft to-margin-red-soft px-1 text-margin-red"
-            transition={{ duration: 0.9, ease: "easeInOut" }}
-            delay={250}
-          />{" "}
-          And your professor sees what the class does not understand.
+    <div className="flex flex-col gap-12 pt-8 sm:pt-14">
+      <section className="mx-auto max-w-3xl text-center" aria-label="What Margin is">
+        <Chip variant="soft" color="danger" className="mb-5">
+          The AI tutor your professor approves of
+        </Chip>
+        <h1 className="font-serif text-6xl font-semibold tracking-tight sm:text-7xl">
+          Use AI.{" "}
+          <HighlightText text="Do your own work." className="rounded-lg bg-linear-to-r from-margin-red-soft to-margin-red-soft px-2 text-margin-red" transition={{ duration: 0.9, ease: "easeInOut" }} delay={250} />
+        </h1>
+        <p className="mx-auto mt-6 max-w-2xl text-xl leading-8 text-muted">
+          Paste the attempt, find the mistake, never get the answer. And your professor sees what the class does not understand.
         </p>
-        <div className="mt-6 flex flex-wrap gap-2">
-          <Chip variant="soft" size="sm">1 · one question</Chip>
-          <Chip variant="soft" size="sm">2 · your professor&rsquo;s slide</Chip>
-          <Chip variant="soft" size="sm">3 · a different worked example</Chip>
-          <Chip variant="soft" size="sm" color="danger">never the solution</Chip>
+        <div className="mt-7 flex flex-wrap justify-center gap-2">
+          <Button size="lg" variant="secondary" onPress={() => router.push("/prof/courses")}>
+            <GraduationCap className="size-5" aria-hidden /> I teach
+          </Button>
+          {items && items.length > 0 ? (
+            <Button size="lg" variant="ghost" onPress={() => router.push("/prof/dashboard")}>
+              Class dashboard <ArrowRight className="size-4" aria-hidden />
+            </Button>
+          ) : null}
         </div>
-      </Paper>
+      </section>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <Card.Header>
-            <div className="flex items-center gap-2">
-              <PencilLine className="size-5 text-margin-red" aria-hidden />
-              <Card.Title>Student</Card.Title>
-            </div>
-            <Card.Description>
-              Get a hint on your own work. The hint changes after you show a real try.
-            </Card.Description>
-          </Card.Header>
-          <Card.Content>
-            {assignments === null ? (
-              <div className="flex items-center gap-2 text-sm text-muted">
-                <Spinner size="sm" /> Looking for your assignment
-              </div>
-            ) : latest ? (
-              <p className="text-sm text-muted">
-                {latest.course_name} · <span className="text-foreground">{latest.title}</span>
-              </p>
-            ) : (
-              <p className="text-sm text-muted">
-                {problem ?? "No assignment has been posted yet. A professor creates one from the setup page."}
-              </p>
-            )}
-          </Card.Content>
-          <Card.Footer>
-            <Button
-              variant="primary"
-              isDisabled={!latest}
-              onPress={() => latest && router.push(`/student/assignment/${latest.id}`)}
-            >
-              Enter as student <ArrowRight className="size-4" aria-hidden />
-            </Button>
-          </Card.Footer>
-        </Card>
+      {items === null ? (
+        <div className="flex justify-center py-10">
+          <Spinner aria-label="Loading" />
+        </div>
+      ) : items.length === 0 ? (
+        <p className="text-center text-lg text-muted">{problem ?? "Nothing has been posted yet."}</p>
+      ) : (
+        <section aria-label="Your classes">
+          <h2 className="mb-4 font-serif text-3xl font-semibold tracking-tight">Your classes</h2>
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {items.map((c, i) => (
+              <motion.li key={c.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 8) * 0.05, duration: 0.25 }} whileHover={{ y: -4 }}>
+                <Card className="h-full">
+                  <Card.Header>
+                    <Card.Title className="font-serif text-2xl leading-8">{c.name}</Card.Title>
+                    {c.description ? <Card.Description>{c.description}</Card.Description> : null}
+                  </Card.Header>
+                  <Card.Content className="flex gap-2">
+                    <Chip size="sm" variant="soft" color="success">{c.lessons} to learn</Chip>
+                    <Chip size="sm" variant="soft" color="accent">{c.assignments} to do</Chip>
+                  </Card.Content>
+                  <Card.Footer>
+                    <Button variant="primary" onPress={() => router.push(`/course/${c.id}`)}>
+                      Enter <ArrowRight className="size-4" aria-hidden />
+                    </Button>
+                  </Card.Footer>
+                </Card>
+              </motion.li>
+            ))}
+          </ul>
+        </section>
+      )}
 
-        <Card>
-          <Card.Header>
-            <div className="flex items-center gap-2">
-              <GraduationCap className="size-5 text-margin-red" aria-hidden />
-              <Card.Title>Professor</Card.Title>
-            </div>
-            <Card.Description>
-              Set up an assignment, then see which concept the class is stuck on and what to reteach.
-            </Card.Description>
-          </Card.Header>
-          <Card.Content>
-            <p className="text-sm text-muted">
-              Class patterns first. An individual student only when you open one. Formative, never a grade.
-            </p>
-          </Card.Content>
-          <Card.Footer className="flex gap-2">
-            <Button variant="secondary" onPress={() => router.push("/prof/setup")}>
-              Enter as prof <ArrowRight className="size-4" aria-hidden />
-            </Button>
-            {latest ? (
-              <Button variant="ghost" onPress={() => router.push("/prof/dashboard")}>
-                Dashboard
-              </Button>
-            ) : null}
-          </Card.Footer>
-        </Card>
-      </div>
-
-      <p className="text-center text-sm text-muted">
-        CS50&rsquo;s rule is, if you use AI, use ours. Margin is that rule for every course.
-      </p>
+      <p className="text-center text-sm text-muted">CS50&rsquo;s rule is, if you use AI, use ours. Margin is that rule for every course.</p>
     </div>
   );
 }

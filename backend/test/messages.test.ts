@@ -62,6 +62,7 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
     await connectDb(uri);
     await clearCollections();
     server = createApp({
+      offline: true,
       scribe: async () => scribeReply,
       tutor: () => tutorReply(),
       judge: async () => judgeReply,

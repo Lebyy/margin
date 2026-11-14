@@ -49,6 +49,7 @@ describe("GET /api/students/:id/progress (D-B7)", { skip }, () => {
     await connectDb(uri);
     await clearCollections();
     server = createApp({
+      offline: true,
       scribe: async () =>
         JSON.stringify({
           concept: current.concept,

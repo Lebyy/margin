@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 import { completeJson, type TextGenerator } from "./llm.ts";
-import type { GuardSeverity, GuardVerdict, HintLevel } from "./types.ts";
+import type { AssignmentKind, GuardSeverity, GuardVerdict, HintLevel } from "./types.ts";
 
 // Eight consecutive normalized words is a copied stretch. Seven can be the base case plus a few words of a hint, which this layer is not supposed to hold.
 const WINDOW = 8;
@@ -60,10 +60,11 @@ const KEYWORDS_BY_LENGTH = [...KEYWORDS].sort((left, right) => right.length - le
  * `answerKey` is the hidden solution. `canary` is the marker stored beside it. Neither string is copied into the reason.
  * The return value is a plain object. A promise here would mean this layer had waited on a model, and a timeout would look like a clean draft.
  */
-export function checkDeterministic(draft: string, answerKey: string, canary: string): GuardVerdict {
+export function checkDeterministic(draft: string, answerKey: string, canary: string, kind: AssignmentKind = "code"): GuardVerdict {
   if (containsCanary(draft, canary)) {
     return hit("The draft contains the canary.");
   }
+  if (kind !== "code") return checkProse(draft, answerKey);
   const draftWords = normalizeDraft(draft);
   const keyWords = normalizeDraft(answerKey);
   if (keyWords.length > 0 && containsSequence(draftWords, keyWords)) {
@@ -81,6 +82,31 @@ export function checkDeterministic(draft: string, answerKey: string, canary: str
     reason: "The draft does not contain the solution.",
     layer: "deterministic",
   };
+}
+
+/**
+ * The string check for a key that is prose or a worked math answer.
+ *
+ * The code check folds every name to `v`, which is right for a program and
+ * wrong for a sentence: an essay key becomes `v v v v v v v v`, and every
+ * eight words of any hint would match it. Here the words are kept as words.
+ *
+ * A hit is eight consecutive words of the key, or the whole key when it is
+ * shorter than that. The short case is the final answer of a math problem,
+ * such as "x = 4" or "42". A one-word key has to stand alone as a word in the
+ * draft, so a key of "4" does not hold a hint that mentions "Lecture 14".
+ * An empty key, which is what a learning topic has, hits nothing.
+ */
+function checkProse(draft: string, answerKey: string): GuardVerdict {
+  const words = (text: string) => canonical(text).toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const draftWords = words(draft);
+  const keyWords = words(answerKey);
+  const clean: GuardVerdict = { leaks: false, severity: "none", reason: "The draft does not contain the solution.", layer: "deterministic" };
+  if (keyWords.length === 0) return clean;
+  if (keyWords.length < WINDOW) {
+    return containsSequence(draftWords, keyWords) ? hit("The draft contains the final answer.") : clean;
+  }
+  return containsWindow(draftWords, keyWords) ? hit("The draft contains an eight-word stretch of the solution.") : clean;
 }
 
 /**
@@ -239,6 +265,17 @@ function keywordThenNumber(token: string): string | null {
  */
 export const FALLBACK_REPLY = "What happens when the list is empty?";
 
+/**
+ * The fallback sentence for an assignment that is not code.
+ * "What happens when the list is empty?" is the level-1 question of the recursion demo, and it means nothing on an essay or an integral. This one is the level-1 question of any problem. Like the other, it is fixed text that no model wrote, so it cannot carry a leak.
+ */
+export const FALLBACK_REPLY_GENERAL = "What is the question asking you to find?";
+
+/** The sentence a held turn shows, by kind of assignment. */
+export function fallbackFor(kind: AssignmentKind = "code"): string {
+  return kind === "code" ? FALLBACK_REPLY : FALLBACK_REPLY_GENERAL;
+}
+
 // One regeneration at a lower level, then one more retry. A third hold spends another tutor call on a draft this layer already refused.
 const MAX_RETRIES = 2;
 
@@ -271,6 +308,8 @@ export type GuardDraftInput = {
   redraft: (level: HintLevel, feedback: string) => Promise<string>;
   /** Test double for completeJson. Production leaves this unset and the judge calls Gemini. */
   generate?: TextGenerator;
+  /** The kind of assignment. It picks the string check and the fallback sentence. Left out, it is code, which is the demo. */
+  kind?: AssignmentKind;
 };
 
 /**
@@ -283,8 +322,9 @@ export async function assessDraft(
   answerKey: string,
   canary: string,
   generate?: TextGenerator,
+  kind: AssignmentKind = "code",
 ): Promise<GuardVerdict> {
-  const deterministic = checkDeterministic(draft, answerKey, canary);
+  const deterministic = checkDeterministic(draft, answerKey, canary, kind);
   if (deterministic.leaks) return deterministic;
   if (draft.trim().length === 0) return unreadable();
 
@@ -315,7 +355,7 @@ export async function guardDraft(input: GuardDraftInput): Promise<GuardedReply> 
 
   for (;;) {
     const verdict = holdReason(
-      forced ?? (draft.trim().length === 0 ? unreadable() : await assessDraft(draft, input.answerKey, input.canary, input.generate)),
+      forced ?? (draft.trim().length === 0 ? unreadable() : await assessDraft(draft, input.answerKey, input.canary, input.generate, input.kind)),
       input.answerKey,
       input.canary,
     );
@@ -325,7 +365,7 @@ export async function guardDraft(input: GuardDraftInput): Promise<GuardedReply> 
     }
     if (retries >= MAX_RETRIES) {
       return {
-        reply: FALLBACK_REPLY,
+        reply: fallbackFor(input.kind),
         level,
         verdict: { ...verdict, leaks: true, layer: "fallback" },
         retries,
@@ -364,6 +404,8 @@ function judgeSystem(): string {
     "- The solution with blanks left to fill in, or the student's own code rewritten into the solution.",
     "- The final answer stated outright: the exact base-case value together with the exact recursive expression, or either one written as code the student can paste.",
     "- A \"worked example\" that is the assigned function under another name.",
+    "- On a written assignment: a model answer, a paragraph the student could hand in, or the thesis and its supporting points stated for them.",
+    "- On a math assignment: the final value, or the worked steps of this exact problem.",
     "- The canary marker, in any spelling.",
     "",
     "These do not leak:",

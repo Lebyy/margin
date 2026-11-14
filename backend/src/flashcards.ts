@@ -136,7 +136,7 @@ export async function studentFlashcards(
   }
 
   const canary = assignment.canary ?? CANARY;
-  const cards = written.cards.filter((card) => !stepLeaks(`${card.front}\n${card.back}`.replace(/\n/g, " "), assignment.answer_key, canary));
+  const cards = written.cards.filter((card) => !stepLeaks(`${card.front}\n${card.back}`.replace(/\n/g, " "), assignment.answer_key ?? "", canary));
   cache.set(key, cards);
   return { ok: true, concept, cards };
 }

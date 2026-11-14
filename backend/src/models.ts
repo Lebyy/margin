@@ -1,6 +1,6 @@
 import mongoose, { Schema, type InferSchemaType, type Types } from "mongoose";
 import { START_LEVEL } from "./policy.ts";
-import type { GuardLayer, GuardSeverity, StruggleType } from "./types.ts";
+import type { AssignmentKind, GuardLayer, GuardSeverity, StruggleType } from "./types.ts";
 
 // The Mongoose models for every collection in `.cursor/rules/project.mdc`
 // under "Data model". Field names are snake_case on purpose: they are the names
@@ -34,6 +34,13 @@ export const STRUGGLE_TYPES = Object.keys({
   careless_error: true,
   none: true,
 } satisfies Record<StruggleType, true>) as StruggleType[];
+/** The kinds of assignment, tied to the shared type the same way as the enums above. */
+export const ASSIGNMENT_KINDS = Object.keys({
+  code: true,
+  written: true,
+  math: true,
+  topic: true,
+} satisfies Record<AssignmentKind, true>) as AssignmentKind[];
 const GUARD_SEVERITIES = Object.keys({
   none: true,
   partial: true,
@@ -83,7 +90,16 @@ const assignmentSchema = new Schema(
     // unless the caller writes `.select("+answer_key")`, and only the guard's
     // loader should ever do that. Removing this flag would put the solution in
     // every `find()` result, including the student view.
-    answer_key: { type: String, required: true, select: false },
+    // A learning topic is the one kind with no key: it is material to teach, and there is no solution to hold back. Every other kind must have one, or the guard would have nothing to check a hint against.
+    answer_key: {
+      type: String,
+      required: function (this: { kind?: string }) {
+        return this.kind !== "topic";
+      },
+      select: false,
+    },
+    // What kind of work this is. Assignments saved before this field existed are code.
+    kind: { type: String, enum: ASSIGNMENT_KINDS, default: "code" },
     // Hidden for the same reason as the key: if a student ever saw the canary,
     // they could paste it back and make the guard flag their own messages.
     canary: { type: String, default: CANARY, select: false },
@@ -99,6 +115,8 @@ const assignmentSchema = new Schema(
       },
     },
     hint_ceiling: { ...hintLevelField, default: 3 },
+    // The class this belongs to. Set when the assignment is saved, from its course name. Null only on a row saved before courses existed, until the course list is next read.
+    course_id: { type: Schema.Types.ObjectId, ref: "Course", default: null },
   },
   {
     collection: "assignments",
@@ -137,6 +155,7 @@ export const STUDENT_ASSIGNMENT_FIELDS = Object.freeze([
   "course_name",
   "title",
   "prompt",
+  "kind",
   "notes",
   "concepts",
   "hint_ceiling",
@@ -148,6 +167,7 @@ export type StudentAssignmentView = {
   course_name: string;
   title: string;
   prompt: string;
+  kind: AssignmentKind;
   notes: string;
   concepts: string[];
   hint_ceiling: number;
@@ -173,6 +193,7 @@ export async function findStudentAssignment(id: string): Promise<StudentAssignme
     course_name: doc.course_name,
     title: doc.title,
     prompt: doc.prompt,
+    kind: (doc.kind ?? "code") as AssignmentKind,
     notes: doc.notes ?? "",
     concepts: doc.concepts ?? [],
     hint_ceiling: doc.hint_ceiling ?? 3,
@@ -344,6 +365,83 @@ professorMessageSchema.index({ assignment_id: 1, created_at: -1 });
 
 export type ProfessorMessageDoc = InferSchemaType<typeof professorMessageSchema>;
 export const ProfessorMessage = mongoose.model("ProfessorMessage", professorMessageSchema);
+
+// ---------------------------------------------------------------------------
+// courses and course_materials
+// ---------------------------------------------------------------------------
+
+// A class: the thing a professor teaches and a student is in. It holds what
+// is shared across every assignment and lesson in it: a description and the
+// professor's classroom notes. A course exists because a professor created
+// it, or saved an assignment under its name.
+const courseSchema = new Schema(
+  {
+    name: { type: String, required: true, trim: true, unique: true },
+    description: { type: String, default: "" },
+    // Who teaches it, as the name that professor typed. There is no login this weekend, so this is a label that sorts a professor's own classes first, not a permission.
+    professor: { type: String, default: "", trim: true },
+    // Notes for the whole class, such as the syllabus or a running summary. The tutor reads these along with an assignment's own notes.
+    notes: { type: String, default: "" },
+  },
+  { collection: "courses", timestamps: { createdAt: "created_at", updatedAt: "updated_at" } as const },
+);
+export const Course = mongoose.model("Course", courseSchema);
+
+// A file the professor added to a class: a handout, slides, a reading. It is
+// stored as text. A text file is stored as written, and a PDF or a photo is
+// read once by the model when it is added, so students and the tutor can
+// search it like any other notes.
+const courseMaterialSchema = new Schema(
+  {
+    course_id: { type: Schema.Types.ObjectId, ref: "Course", required: true },
+    title: { type: String, required: true, trim: true },
+    body: { type: String, required: true },
+  },
+  { collection: "course_materials", timestamps: { createdAt: "created_at", updatedAt: false } as const },
+);
+courseMaterialSchema.index({ course_id: 1, created_at: 1 });
+export const CourseMaterial = mongoose.model("CourseMaterial", courseMaterialSchema);
+
+// A post in a class discussion: a question or a reply, from a student, the
+// professor, or Margin. `parent_id` is null on a question and set on a reply.
+// The author is the name the person typed and their side. A post by Margin is
+// stored with role "margin", so nobody can mistake the tutor's answer for the
+// professor's.
+const postSchema = new Schema(
+  {
+    course_id: { type: Schema.Types.ObjectId, ref: "Course", required: true },
+    parent_id: { type: Schema.Types.ObjectId, ref: "Post", default: null },
+    author: { type: String, required: true, trim: true },
+    role: { type: String, enum: ["student", "prof", "margin"], required: true },
+    body: { type: String, required: true },
+  },
+  { collection: "posts", timestamps: { createdAt: "created_at", updatedAt: false } as const },
+);
+postSchema.index({ course_id: 1, created_at: 1 });
+export const Post = mongoose.model("Post", postSchema);
+
+// ---------------------------------------------------------------------------
+// student_notes
+// ---------------------------------------------------------------------------
+
+// A student's own notes on one assignment or topic: what they typed or pasted
+// from a file. One row per student and assignment. The row exists because
+// that student saved it. The professor's dashboard does not read this
+// collection: these are the student's private study notes, not coursework to
+// be looked over, and showing them would make the tool feel watched.
+const studentNoteSchema = new Schema(
+  {
+    student_id: { type: Schema.Types.ObjectId, ref: "Student", required: true },
+    assignment_id: { type: Schema.Types.ObjectId, ref: "Assignment", required: true },
+    body: { type: String, default: "" },
+  },
+  { collection: "student_notes", timestamps: { createdAt: "created_at", updatedAt: "updated_at" } as const },
+);
+
+// One note per pair. The unique index is what lets a save be an upsert and not a second copy.
+studentNoteSchema.index({ student_id: 1, assignment_id: 1 }, { unique: true });
+
+export const StudentNote = mongoose.model("StudentNote", studentNoteSchema);
 
 /** Reference id type for callers that build documents across collections. */
 export type Id = Types.ObjectId;

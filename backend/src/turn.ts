@@ -4,11 +4,11 @@
 // This file does not import the database. The message route loads the session and writes the result. A query here would hide a read of the answer key inside the turn.
 // The answer key and the canary are arguments of the guard only. They are not fields of the object passed to the tutor. Spreading `state` into that object would put the solution in the prompt.
 
-import { checkDeterministic, FALLBACK_REPLY, guardDraft, type GuardedReply } from "./guard.ts";
+import { checkDeterministic, fallbackFor, guardDraft, type GuardedReply } from "./guard.ts";
 import type { TextGenerator } from "./llm.ts";
 import { nextHintLevel } from "./policy.ts";
 import { draftHint, type DraftHintInput, type TutorRunner, type TutorTurn } from "./tutor.ts";
-import type { HintLevel, ScribeLabel, TurnResult } from "./types.ts";
+import type { AssignmentKind, HintLevel, ScribeLabel, TurnResult } from "./types.ts";
 
 /**
  * What the message route has already loaded.
@@ -25,6 +25,10 @@ export type TurnState = {
   turns: TutorTurn[];
   answerKey: string;
   canary: string;
+  /** The kind of assignment. Left out, it is code. */
+  kind?: AssignmentKind;
+  /** The student's own saved notes for this assignment, if any. */
+  ownNotes?: string;
 };
 
 /**
@@ -37,6 +41,30 @@ export type TurnHooks = {
 };
 
 /**
+ * A hint started before the scribe has answered.
+ * `level` is the rung it was drafted at. `draft` never rejects: a failed early draft resolves to null and the turn drafts again in the normal order.
+ */
+export type EarlyDraft = { level: HintLevel; draft: Promise<string | null> };
+
+/**
+ * Starts the tutor on the session's current rung while the scribe is still labelling the message.
+ *
+ * The scribe and the tutor each take a few seconds, and the student waits on both. Most turns do not climb: no new try, a request for the answer, or the ceiling. For those the policy returns the rung the session is already on, so a draft at that rung is the draft the turn needs, and starting it early removes the scribe's time from the wait.
+ *
+ * This does not let anything choose the level but the policy. The early draft is used only when the policy, run afterward on the real label, returns the same rung. When the policy climbs, the early draft is thrown away unread and the tutor is asked again at the new rung. A thrown-away draft never reaches the guard or the student. The cost is one extra tutor call on a turn that climbs.
+ */
+export function startDraft(state: TurnState, studentText: string, hooks?: TurnHooks): EarlyDraft {
+  const level = nextHintLevel({
+    level: state.level,
+    hintCeiling: state.hintCeiling,
+    // The label that never climbs. The policy returns the current rung, clamped to the ceiling, which is the rung to draft at.
+    label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false },
+  });
+  const draft = draftHint(hintInput(state, studentText, level), hooks?.run).catch(() => null);
+  return { level, draft };
+}
+
+/**
  * The reply, the level, the verdict, and the retry count for one student message.
  * `label` is the scribe's decision. This function does not read the message to decide the level, and it does not relabel the turn.
  */
@@ -45,22 +73,43 @@ export async function runTurn(
   studentText: string,
   label: ScribeLabel,
   hooks?: TurnHooks,
+  early?: EarlyDraft,
 ): Promise<TurnResult> {
+  if (state.kind === "topic") return runLesson(state, studentText, hooks, early);
   const level = nextHintLevel({
     level: state.level,
     hintCeiling: state.hintCeiling,
     label,
   });
-  const draft = await draftHint(hintInput(state, studentText, level), hooks?.run);
+  // The early draft counts only if the policy landed on the rung it was written at.
+  const reused = early && early.level === level ? await early.draft : null;
+  const draft = reused ?? (await draftHint(hintInput(state, studentText, level), hooks?.run));
   const guarded = await guardDraft({
     draft,
     level,
     answerKey: state.answerKey,
     canary: state.canary,
+    kind: state.kind,
     generate: hooks?.generate,
     redraft: (nextLevel, feedback) => draftHint(hintInput(state, studentText, nextLevel, feedback), hooks?.run),
   });
   return forStudent(guarded, state);
+}
+
+/**
+ * One turn on a learning topic.
+ *
+ * A topic has no answer key, so the ladder and the judge have nothing to do here: there is no level to choose and no solution a reply could give away. The level is returned as it was and never moves. The canary check still runs, because that marker must not reach a student on any route, and a reply that carried it is replaced with the general fallback sentence.
+ * The early draft is always usable, since a lesson is the same whatever the scribe's label says.
+ */
+async function runLesson(state: TurnState, studentText: string, hooks?: TurnHooks, early?: EarlyDraft): Promise<TurnResult> {
+  const level = nextHintLevel({ level: state.level, hintCeiling: state.hintCeiling, label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false } });
+  const draft = (early ? await early.draft : null) ?? (await draftHint(hintInput(state, studentText, level), hooks?.run));
+  const verdict = checkDeterministic(draft, "", state.canary, "topic");
+  if (verdict.leaks) {
+    return { reply: fallbackFor("topic"), level, verdict: { ...verdict, reason: "The draft was held.", layer: "fallback" }, retries: 0 };
+  }
+  return { reply: draft, level, verdict: { ...verdict, reason: "A lesson on course material. There is no answer key to check against." }, retries: 0 };
 }
 
 /**
@@ -74,12 +123,12 @@ function forStudent(guarded: GuardedReply, state: TurnState): TurnResult {
   let reason = guarded.verdict.reason;
   let layer = guarded.verdict.layer;
   let leaks = guarded.verdict.leaks;
-  if (exposesSolution(reply, state.answerKey, state.canary)) {
-    reply = FALLBACK_REPLY;
+  if (exposesSolution(reply, state.answerKey, state.canary, state.kind)) {
+    reply = fallbackFor(state.kind);
     layer = "fallback";
     leaks = true;
   }
-  if (exposesSolution(reason, state.answerKey, state.canary)) {
+  if (exposesSolution(reason, state.answerKey, state.canary, state.kind)) {
     reason = "The draft was held.";
   }
   return {
@@ -94,8 +143,8 @@ function forStudent(guarded: GuardedReply, state: TurnState): TurnResult {
  * The same check the guard uses on a draft.
  * The reason is student-facing too, so a line that would hold a draft holds the reason as well.
  */
-function exposesSolution(text: string, answerKey: string, canary: string): boolean {
-  return checkDeterministic(text, answerKey, canary).leaks;
+function exposesSolution(text: string, answerKey: string, canary: string, kind?: AssignmentKind): boolean {
+  return checkDeterministic(text, answerKey, canary, kind).leaks;
 }
 
 /**
@@ -110,6 +159,8 @@ function hintInput(state: TurnState, studentText: string, level: HintLevel, feed
     turns: state.turns,
     studentText,
   };
+  if (state.kind) input.kind = state.kind;
+  if (state.ownNotes) input.ownNotes = state.ownNotes;
   if (feedback && feedback.trim().length > 0) input.feedback = feedback;
   return input;
 }

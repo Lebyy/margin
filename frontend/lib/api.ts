@@ -17,6 +17,9 @@ export const MAX_NOTES_CHARS = 200_000;
 
 export type HintLevel = 1 | 2 | 3;
 
+/** What kind of work an assignment is. A `topic` is material to learn: it has no answer key and Margin teaches it. */
+export type AssignmentKind = "code" | "written" | "math" | "topic";
+
 export type StruggleType = "misconception" | "stuck_starting" | "syntax_or_mechanics" | "careless_error" | "none";
 
 /** The student-safe assignment. The server builds it from an inclusion list. */
@@ -25,12 +28,28 @@ export type Assignment = {
   course_name: string;
   title: string;
   prompt: string;
+  kind: AssignmentKind;
   notes: string;
   concepts: string[];
   hint_ceiling: number;
 };
 
-export type AssignmentListItem = { id: string; course_name: string; title: string };
+export type AssignmentListItem = { id: string; course_name: string; title: string; kind: AssignmentKind; concepts: string[]; course_id: string | null };
+
+/** A class in the list: its name and how much is in it. */
+export type CourseListItem = { id: string; name: string; description: string; professor: string; assignments: number; lessons: number };
+
+/** One post in a class discussion. `parent_id` is null on a question. A post by Margin has role "margin". */
+export type Post = { id: string; parent_id: string | null; author: string; role: "student" | "prof" | "margin"; body: string; created_at: string };
+
+/** One class opened: its classroom notes, the files the professor added (stored as text), and everything to do or learn in it. */
+export type Course = { id: string; name: string; description: string; professor: string; notes: string; materials: { id: string; title: string; body: string }[]; items: AssignmentListItem[] };
+
+/** One self-check question. The right answer is in the response, because the page checks it locally and nothing about a student's answers is stored. */
+export type QuizQuestion = { concept: string; question: string; choices: string[]; answer: number; why: string };
+
+/** What Margin said about a picture on the canvas: one description, and up to five marks with a box each in 0-to-1 units from the picture's top left. */
+export type Annotation = { description: string; marks: { label: string; note: string; box: { x: number; y: number; w: number; h: number } }[] };
 
 export type GuardVerdict = {
   leaks: boolean;
@@ -158,6 +177,12 @@ export type ThursdayCard = {
   practice_problems: string[];
 };
 
+/** One revision card, written from the professor's notes. `source` is the line of the notes it came from. */
+export type StudyCard = { concept: string; question: string; answer: string; source: string };
+
+/** What Margin drew: a kind, a title, and up to six labelled items. The page lays it out. It is never an image and never code. */
+export type Drawing = { kind: "map" | "steps" | "summary"; title: string; items: { label: string; detail: string }[]; /** Names this drawing for the picture route. */ picture_id?: string };
+
 export type ProfessorMessage = { id: string; body: string; created_at: string };
 
 /** What the setup form posts. `answer_key` is left out on an edit to keep the stored key. */
@@ -166,6 +191,7 @@ export type AssignmentForm = {
   course_name: string;
   title: string;
   prompt: string;
+  kind: AssignmentKind;
   answer_key?: string;
   notes: string;
   concepts: string[];
@@ -193,7 +219,7 @@ export class ApiError extends Error {
  * One JSON request.
  * A failed connection becomes `api_unreachable`, so a page can say the API is not running instead of showing a stack trace. `cache: "no-store"` is set because every screen shows live records, and a cached class summary would show yesterday's percent as today's.
  */
-async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(API_BASE + path, {
@@ -227,6 +253,27 @@ export const api = {
   profAssignment: (id: string) => request<Assignment & { has_answer_key: boolean }>("GET", `/api/prof/assignments/${q(id)}`),
   /** The body is sent as JSON. The key is never placed in a URL, where it would land in history and server logs. */
   saveAssignment: (form: AssignmentForm) => request<{ _id: string }>("POST", "/api/prof/assignments", form),
+  study: (id: string) => request<{ cards: StudyCard[] }>("GET", `/api/assignments/${q(id)}/study`),
+  /** 422 `not_drawn` means the guard held the drawing or the model could not answer. The page then draws nothing. */
+  canvas: (id: string, ask: string) => request<Drawing>("POST", `/api/assignments/${q(id)}/canvas`, { ask }),
+  /** The generated picture of a drawing the canvas route just returned. It takes about fifteen seconds. A 404 means there is no picture, and the drawn layout stays. */
+  canvasPicture: (pictureId: string) => request<{ mimeType: string; base64: string }>("GET", `/api/canvas/pictures/${q(pictureId)}`),
+  /** The picture is sent as base64 with no data: prefix. It is not stored. 422 `not_drawn` means nothing safe could be said about it. */
+  annotate: (id: string, image: { mimeType: string; base64: string }, ask: string) =>
+    request<Annotation>("POST", `/api/assignments/${q(id)}/canvas/annotate`, { image, ask }),
+  quiz: (id: string) => request<{ questions: QuizQuestion[] }>("GET", `/api/assignments/${q(id)}/quiz`),
+  /** Speech for a reply already on screen, as a WAV file in base64. */
+  speak: (text: string) => request<{ mimeType: string; base64: string }>("POST", "/api/speak", { text }),
+  courses: () => request<{ courses: CourseListItem[] }>("GET", "/api/courses"),
+  course: (id: string) => request<Course>("GET", `/api/courses/${q(id)}`),
+  posts: (courseId: string) => request<{ posts: Post[] }>("GET", `/api/courses/${q(courseId)}/posts`),
+  addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),
+  /** Asks Margin to answer a question in the discussion. 422 `held` means the answer was checked against the class's answer keys and not posted. */
+  askMarginOnPost: (courseId: string, postId: string) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts/${q(postId)}/margin`),
+  saveCourse: (course: { id?: string; name: string; description: string; notes: string; professor?: string }) => request<{ id: string; name: string }>("POST", "/api/prof/courses", course),
+  /** `text` for a text file, `file` for a PDF or a picture that the server reads into text once. */
+  addMaterial: (courseId: string, material: { title: string; text?: string; file?: { mimeType: string; base64: string } }) =>
+    request<{ id: string; title: string; body: string }>("POST", `/api/prof/courses/${q(courseId)}/materials`, material),
   startSession: (assignmentId: string, who: { student_id: string } | { display_name: string }) =>
     request<SessionStart>("POST", "/api/sessions", { assignment_id: assignmentId, ...who }),
   sessionMessages: (sessionId: string) => request<SessionMessages>("GET", `/api/sessions/${q(sessionId)}/messages`),
@@ -242,6 +289,9 @@ export const api = {
       "GET",
       `/api/students/${q(studentId)}/flashcards?assignment_id=${q(assignmentId)}${concept ? `&concept=${q(concept)}` : ""}`,
     ),
+  ownNotes: (studentId: string, assignmentId: string) => request<{ body: string }>("GET", `/api/students/${q(studentId)}/notes?assignment_id=${q(assignmentId)}`),
+  saveOwnNotes: (studentId: string, assignmentId: string, body: string) =>
+    request<{ body: string }>("PUT", `/api/students/${q(studentId)}/notes?assignment_id=${q(assignmentId)}`, { body }),
   progress: (studentId: string) => request<StudentProgress>("GET", `/api/students/${q(studentId)}/progress`),
   classSummary: (assignmentId: string) => request<ClassSummary>("GET", `/api/prof/class-summary?assignment_id=${q(assignmentId)}`),
   roster: (assignmentId: string) => request<Roster>("GET", `/api/prof/students?assignment_id=${q(assignmentId)}`),
@@ -253,6 +303,22 @@ export const api = {
   profMessages: (assignmentId: string) =>
     request<{ assignment_id: string; messages: ProfessorMessage[] }>("GET", `/api/prof/messages?assignment_id=${q(assignmentId)}`),
 };
+
+/**
+ * The study cards for an assignment, fetched once per page visit.
+ * The Study tab and the concept map on the sketch pad both read them. Sharing one promise means opening both costs one request, and the server's own cache means that request is one model call per assignment.
+ * A failed load is forgotten, so the next open tries again.
+ */
+const studyLoads = new Map<string, Promise<StudyCard[]>>();
+export function loadStudy(assignmentId: string): Promise<StudyCard[]> {
+  let load = studyLoads.get(assignmentId);
+  if (!load) {
+    load = api.study(assignmentId).then((r) => r.cards);
+    load.catch(() => studyLoads.delete(assignmentId));
+    studyLoads.set(assignmentId, load);
+  }
+  return load;
+}
 
 /** `base_case` reads as "base case" on screen. The stored name is unchanged, since it is the scribe's vocabulary. */
 export function conceptLabel(concept: string): string {

@@ -22,7 +22,7 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur">
-      <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+      <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">
         <NextLink href="/" className="flex items-center gap-2 rounded-md outline-offset-4" aria-label="Margin, home">
           <span aria-hidden className="h-6 w-[3px] rounded-full bg-margin-red" />
           <span className="font-serif text-xl font-semibold tracking-tight">Margin</span>
@@ -35,7 +35,8 @@ export function SiteHeader() {
         <nav className="ml-auto flex items-center gap-1" aria-label="Main">
           {side === "prof" ? (
             <>
-              <NavLink href="/prof/setup" current={pathname}>Setup</NavLink>
+              <NavLink href="/prof/courses" current={pathname}>Classes</NavLink>
+              <NavLink href="/prof/setup" current={pathname}>New</NavLink>
               <NavLink href="/prof/dashboard" current={pathname}>Dashboard</NavLink>
               <NavLink href="/prof/messages" current={pathname}>Messages</NavLink>
             </>

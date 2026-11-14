@@ -98,8 +98,8 @@ export default function DashboardPage() {
     } catch (e) {
       setCardNote(
         e instanceof ApiError && e.code === "no_struggles_yet"
-          ? "No student has struggled with a concept yet, so there is nothing to reteach. The card appears after real sessions."
-          : "The card could not be written just now. Nothing was stored. Try again in a moment.",
+          ? "Nobody has struggled yet, so there is nothing to reteach."
+          : "The card was not written. Nothing was stored.",
       );
     } finally {
       setGenerating(false);
@@ -109,7 +109,7 @@ export default function DashboardPage() {
   if (pick.state === "loading" || (assignmentId && !loaded)) {
     return (
       <div className="flex items-center justify-center gap-2 pt-24 text-muted">
-        <Spinner size="sm" /> Opening the dashboard
+        <Spinner aria-label="Opening the dashboard" />
       </div>
     );
   }
@@ -127,7 +127,7 @@ export default function DashboardPage() {
     return (
       <EmptyClass
         title="No assignment yet"
-        text="Create an assignment, then have a student start a session. The dashboard fills in from what they do."
+        text="Create one, then have a student start a session."
         action="Create an assignment"
         onAction={() => router.push("/prof/setup")}
       />
@@ -141,9 +141,10 @@ export default function DashboardPage() {
     return (
       <div className="flex flex-col gap-5">
         <Header title={title ?? ""} onRefresh={refresh} />
+        <Picker pick={pick} />
         <EmptyClass
           title="The class has not studied yet"
-          text="Nobody has started a session on this assignment. Share the student page, and the heatmap and the Thursday card appear here from their real turns."
+          text="Nobody has started a session yet."
           action="Open the student page"
           onAction={() => router.push(`/student/assignment/${assignmentId}`)}
         />
@@ -154,9 +155,10 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-5">
       <Header title={title ?? ""} onRefresh={refresh} />
+        <Picker pick={pick} />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <ThursdayCardPanel card={card} generating={generating} note={cardNote} onGenerate={generate} />
+        <ThursdayCardPanel card={card} classSize={summary.total_students} generating={generating} note={cardNote} onGenerate={generate} />
         <Heatmap summary={summary} />
       </div>
 
@@ -164,10 +166,9 @@ export default function DashboardPage() {
 
       <Card aria-label="Students">
         <Card.Header>
-          <Card.Title>Students who have studied</Card.Title>
+          <Card.Title>Students</Card.Title>
           <Card.Description>
-            In the order they started, not ranked. Three lines each: the concept, the kind of struggle, the last hint
-            level. This is a formative log, not a grade.
+            In the order they started. Not ranked, not graded.
           </Card.Description>
         </Card.Header>
         <Card.Content>
@@ -182,6 +183,23 @@ export default function DashboardPage() {
       </Card>
 
       <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
+    </div>
+  );
+}
+
+/**
+ * Which assignment the dashboard is showing.
+ * One button per saved assignment, with its class. Choosing one re-reads the summary, the students, and the stored card for it. This only switches what is read. It is not a gradebook or a course switcher with settings behind it.
+ */
+function Picker({ pick }: { pick: ReturnType<typeof useAssignment> }) {
+  if (pick.state !== "ready" || pick.assignments.length < 2) return null;
+  return (
+    <div className="-mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Assignment">
+      {pick.assignments.map((a) => (
+        <Button key={a.id} size="sm" variant={a.id === pick.assignmentId ? "secondary" : "ghost"} aria-pressed={a.id === pick.assignmentId} onPress={() => pick.choose(a.id)}>
+          {a.title}
+        </Button>
+      ))}
     </div>
   );
 }
@@ -217,17 +235,20 @@ function Header({ title, onRefresh }: { title: string; onRefresh: () => void }) 
  */
 function ThursdayCardPanel({
   card,
+  classSize,
   generating,
   note,
   onGenerate,
 }: {
   card: ThursdayCard | null;
+  /** Students with a session now, from the class summary. The card keeps the count from when it was generated, and the two can differ. */
+  classSize: number;
   generating: boolean;
   note: string | null;
   onGenerate: () => void;
 }) {
   return (
-    <Paper as="section" plain aria-label="Thursday card" className="flex flex-col">
+    <Paper as="section" aria-label="Thursday card" className="flex flex-col">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">Reteach on Thursday</h2>
         <Button size="sm" variant={card ? "ghost" : "primary"} onPress={onGenerate} isPending={generating} isDisabled={generating}>
@@ -249,6 +270,12 @@ function ThursdayCardPanel({
                 {card.students_struggling} of {card.total_students} students
               </span>
             </p>
+            {/* A stored card is a snapshot. When more students have started since, its percent no longer matches the heatmap beside it, and the page says why instead of showing two numbers that seem to disagree. */}
+            {card.total_students !== classSize ? (
+              <Chip size="sm" variant="soft" color="warning" className="mt-2">
+                {classSize} students now. Generate again to update.
+              </Chip>
+            ) : null}
             <p className="mt-4 font-serif text-lg leading-7">{card.reteach_note}</p>
             <h3 className="mt-4 text-sm font-semibold">Three practice problems</h3>
             <ol className="mt-1 list-decimal space-y-1.5 pl-5 text-sm leading-6">
@@ -257,8 +284,7 @@ function ThursdayCardPanel({
               ))}
             </ol>
             <p className="mt-4 text-xs text-muted">
-              Generated <time dateTime={card.generated_at}>{new Date(card.generated_at).toLocaleString()}</time> from the
-              sessions that existed then. The numbers were counted in code. Also sent to you as a{" "}
+              <time dateTime={card.generated_at}>{new Date(card.generated_at).toLocaleString()}</time>. Numbers counted in code. Also sent as a{" "}
               <NextLink href="/prof/messages" className="underline underline-offset-2">
                 message
               </NextLink>
@@ -267,8 +293,7 @@ function ThursdayCardPanel({
           </motion.div>
         ) : (
           <motion.p key="none" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-3 text-muted">
-            No card yet. Generate one to get the weakest concept, the share of the class stuck on it, and three practice
-            problems for Thursday.
+            No card yet.
           </motion.p>
         )}
       </AnimatePresence>
@@ -305,7 +330,7 @@ function Heatmap({ summary }: { summary: ClassSummary }) {
         <Card.Title>Where the class is stuck</Card.Title>
         <Card.Description>
           {summary.total_students} student{summary.total_students === 1 ? "" : "s"} · {summary.total_turns} turn
-          {summary.total_turns === 1 ? "" : "s"}. A student counts once per concept, however many times they asked.
+          {summary.total_turns === 1 ? "" : "s"}
         </Card.Description>
       </Card.Header>
       <Card.Content>
@@ -397,10 +422,10 @@ function GuardStrip({ roster }: { roster: Roster }) {
         <p className="flex items-center gap-2 text-sm font-medium">
           <ShieldCheck className="size-4 text-margin-green" aria-hidden /> The guard, for this class
         </p>
-        <Stat value={replies} label={`hint${replies === 1 ? "" : "s"} checked before a student saw ${replies === 1 ? "it" : "them"}`} />
-        <Stat value={answer_requests} label={`request${answer_requests === 1 ? "" : "s"} for the answer, answered with a hint`} />
-        <Stat value={drafts_held} label={`repl${drafts_held === 1 ? "y" : "ies"} where a draft was held and rewritten`} />
-        <p className="basis-full text-xs text-muted">Counts for the whole class. Much harder to beat, not impossible.</p>
+        <Stat value={replies} label={`hint${replies === 1 ? "" : "s"} checked`} />
+        <Stat value={answer_requests} label={`request${answer_requests === 1 ? "" : "s"} for the answer`} />
+        <Stat value={drafts_held} label={`draft${drafts_held === 1 ? "" : "s"} held`} />
+        <p className="basis-full text-xs text-muted">Whole class. Harder to beat, not impossible.</p>
       </Card.Content>
     </Card>
   );
@@ -482,7 +507,7 @@ function TranscriptDrawer({
             <Drawer.CloseTrigger />
             <Drawer.Header>
               <Drawer.Heading>{student?.display_name}</Drawer.Heading>
-              <p className="text-xs text-muted">This student&rsquo;s turns on this assignment only. Read from the database.</p>
+              <p className="text-xs text-muted">This assignment only.</p>
             </Drawer.Header>
             <Drawer.Body>
               {!transcript ? (

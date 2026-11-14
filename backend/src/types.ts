@@ -2,6 +2,13 @@
 // David imports these names instead of declaring a second set of fields.
 // A later rename here is the one edit that keeps the HTTP body, the database, and the drawer in agreement.
 
+/**
+ * What kind of work an assignment asks for.
+ * `code` is a program. `written` is prose: a short answer, an explanation, an essay paragraph. `math` is a worked problem with a final answer. `topic` is not graded work at all: it is course material to learn, it has no answer key, and Margin teaches it instead of holding back.
+ * The kind decides how the guard reads the key, which fallback sentence a held turn shows, and what the student's work area looks like. A kind added here has to be handled in all three.
+ */
+export type AssignmentKind = "code" | "written" | "math" | "topic";
+
 /** The professor's ceiling is 1, 2, or 3. A fourth level would be the solution, which this scale does not have. */
 export type HintLevel = 1 | 2 | 3;
 

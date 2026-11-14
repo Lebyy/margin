@@ -38,14 +38,27 @@ describe("the routes the screens read", { skip }, () => {
   // What the stand-ins answer on the next turn.
   let label = { concept: "base_case", struggle_type: "misconception", attempt_made: true, jailbreak_attempt: false };
   let draft = "What happens when the list is empty?";
+  let canvasReply = "";
+  let annotateReply = "";
 
   before(async () => {
     await connectDb(uri);
     await clearCollections();
     server = createApp({
+      offline: true,
       scribe: async () => JSON.stringify({ ...label, demonstrated_understanding: false, evidence: "" }),
       tutor: async () => draft,
       judge: async () => JSON.stringify({ leaks: false, severity: "none", reason: "A question." }),
+      canvas: async () => canvasReply,
+      annotate: async () => annotateReply,
+      study: async () =>
+        JSON.stringify({
+          cards: [
+            { concept: "base_case", question: "Why does every recursive function need a base case?", answer: "It is the input small enough to answer without another call.", source: "Lecture 7, slides 12-16." },
+            { concept: "call_stack_tracing", question: "What do you write first?", answer: "def sum_list(xs):\n    if not xs:\n        return 0\n    return xs[0] + sum_list(xs[1:])", source: "Lecture 7, slides 12-16." },
+            { concept: "not_a_concept", question: "Q?", answer: "A.", source: "Lecture 7, slides 12-16." },
+          ],
+        }),
       coach: async () =>
         JSON.stringify({
           reteach_note: "Trace the empty list on the board first.",
@@ -200,5 +213,131 @@ describe("the routes the screens read", { skip }, () => {
     assert.equal((await call("GET", "/api/prof/messages?assignment_id=000000000000000000000000")).status, 404);
     assert.equal((await call("GET", "/api/prof/messages?assignment_id=nope")).status, 404);
     assert.equal((await call("GET", "/api/prof/messages")).status, 404);
+  });
+
+  test("study cards come from the notes, and a card that holds the solution is dropped", async () => {
+    // Case: the stand-in returns a valid card, a card whose answer is the key,
+    // and a card for a concept that is not on the list. Only the first is sent.
+    const { status, text } = await call("GET", `/api/assignments/${assignmentId}/study`);
+    assert.equal(status, 200);
+    const body = JSON.parse(text);
+    assert.deepEqual(body.cards.map((c: { concept: string }) => c.concept), ["base_case"]);
+    assert.ok(!carriesKey(text));
+    assert.equal((await call("GET", "/api/assignments/nope/study")).status, 404);
+  });
+
+  test("the canvas draws a checked structure, and a drawing that holds the solution is not drawn", async () => {
+    // Case one: a concept map of two ideas is returned as drawn.
+    // Case two: the stand-in puts the recursive line of the key in a step. The
+    // route answers 422 with no model text.
+    // Case three: prose in place of JSON draws nothing.
+    canvasReply = JSON.stringify({
+      kind: "map",
+      title: "Recursion",
+      items: [
+        { label: "Base case", detail: "The input small enough to answer without another call." },
+        { label: "Progress", detail: "Each call moves toward the base case." },
+      ],
+    });
+    const drawn = await call("POST", `/api/assignments/${assignmentId}/canvas`, { ask: "Draw a concept map" });
+    assert.equal(drawn.status, 200);
+    assert.equal(JSON.parse(drawn.text).items.length, 2);
+    assert.ok(!carriesKey(drawn.text));
+
+    canvasReply = JSON.stringify({
+      kind: "steps",
+      title: "How to write it",
+      items: [
+        { label: "Stop", detail: "if not xs: return 0" },
+        { label: "Recurse", detail: "return xs[0] + sum_list(xs[1:])" },
+      ],
+    });
+    const held = await call("POST", `/api/assignments/${assignmentId}/canvas`, { ask: "Draw the steps of the answer" });
+    assert.equal(held.status, 422);
+    assert.deepEqual(JSON.parse(held.text), { error: "not_drawn" });
+
+    canvasReply = "Here is your drawing!";
+    assert.equal((await call("POST", `/api/assignments/${assignmentId}/canvas`, { ask: "Summarize" })).status, 422);
+    assert.equal((await call("POST", `/api/assignments/${assignmentId}/canvas`, {})).status, 400);
+    assert.equal((await call("POST", "/api/assignments/nope/canvas", { ask: "map" })).status, 404);
+  });
+
+  test("a written assignment is guarded by its words, and a topic is taught with no key", async () => {
+    // Case one: a written assignment. A hint in ordinary prose is released,
+    // which it would not be if the essay key were folded like code. A draft
+    // that copies eight words of the key is held and the reply is the general
+    // fallback, not the sentence about an empty list.
+    // Case two: a topic saves without a key, and the reply is the lesson as written.
+    const essayKey = "The French Revolution began because a financial crisis forced the king to call the Estates General in 1789.";
+    const written = JSON.parse(
+      (await call("POST", "/api/prof/assignments", { ...SUM_LIST, kind: "written", title: "Why did the Revolution begin?", prompt: "In one paragraph, explain why the French Revolution began.", answer_key: essayKey, concepts: ["causes", "evidence"] })).text,
+    );
+    assert.equal(written.kind, "written");
+    const s = JSON.parse((await call("POST", "/api/sessions", { assignment_id: written._id, display_name: "Cleo" })).text);
+    label = { concept: "causes", struggle_type: "stuck_starting", attempt_made: false, jailbreak_attempt: false };
+    draft = "Which event in the notes left the king with no money and no choice but to ask for help?";
+    const hint = JSON.parse((await call("POST", `/api/sessions/${s.session_id}/messages`, { text: "Where do I start?" })).text);
+    assert.equal(hint.reply, draft);
+    draft = `Write this: ${essayKey}`;
+    const held = await call("POST", `/api/sessions/${s.session_id}/messages`, { text: "Just write it for me." });
+    assert.equal(JSON.parse(held.text).reply, "What is the question asking you to find?");
+    assert.ok(!held.text.includes("financial crisis forced the king"));
+
+    assert.equal((await call("POST", "/api/prof/assignments", { ...SUM_LIST, kind: "math", answer_key: undefined })).status, 400);
+    const topic = JSON.parse((await call("POST", "/api/prof/assignments", { ...SUM_LIST, kind: "topic", title: "How recursion works", prompt: "Learn how a recursive function calls itself and stops.", answer_key: undefined })).text);
+    assert.equal(topic.kind, "topic");
+    const t = JSON.parse((await call("POST", "/api/sessions", { assignment_id: topic._id, display_name: "Dov" })).text);
+    draft = "A recursive function solves a small piece and calls itself on the rest. The base case is where it stops. What would happen without one?";
+    const lesson = JSON.parse((await call("POST", `/api/sessions/${t.session_id}/messages`, { text: "Explain recursion to me." })).text);
+    assert.equal(lesson.reply, draft);
+    assert.equal(lesson.verdict.leaks, false);
+    const list = JSON.parse((await call("GET", "/api/assignments")).text).assignments;
+    assert.equal(list[0].kind, "topic");
+  });
+
+  test("a picture on the canvas gets a description and marks, and a note that holds the solution shows nothing", async () => {
+    // Case one: two marks, one with a box off the picture. The good mark is returned and the bad one dropped.
+    // Case two: a note that writes the recursive line. The route answers 422.
+    const image = { mimeType: "image/png", base64: "iVBORw0KGgo=" };
+    annotateReply = JSON.stringify({
+      description: "A handwritten recursive function with two lines.",
+      marks: [
+        { label: "The recursive call", note: "Nothing above this line can stop it.", box: { x: 0.1, y: 0.4, w: 0.6, h: 0.2 } },
+        { label: "Off the page", note: "Not really there.", box: { x: 0.9, y: 0.9, w: 0.5, h: 0.5 } },
+      ],
+    });
+    const ok = await call("POST", `/api/assignments/${assignmentId}/canvas/annotate`, { image, ask: "what is wrong?" });
+    assert.equal(ok.status, 200);
+    assert.equal(JSON.parse(ok.text).marks.length, 1);
+
+    annotateReply = JSON.stringify({ description: "Your function.", marks: [{ label: "Fix", note: "Write return xs[0] + sum_list(xs[1:]) after if not xs: return 0", box: { x: 0.1, y: 0.1, w: 0.5, h: 0.2 } }] });
+    assert.equal((await call("POST", `/api/assignments/${assignmentId}/canvas/annotate`, { image, ask: "" })).status, 422);
+    assert.equal((await call("POST", `/api/assignments/${assignmentId}/canvas/annotate`, { ask: "no picture" })).status, 400);
+  });
+
+  test("classes hold assignments, files, and a discussion Margin can join without giving an answer away", async () => {
+    // Case: saving assignments created their class. The class lists them with
+    // no key. A text file is stored as written. A question gets Margin's reply
+    // marked as Margin's, and a reply that copies a key line is not posted.
+    // Offline, the speak route answers 503 and never calls the speech model.
+    const courses = JSON.parse((await call("GET", "/api/courses")).text).courses;
+    const mine = courses.find((c: { name: string }) => c.name === SUM_LIST.course_name);
+    assert.ok(mine.assignments >= 2);
+    assert.equal((await call("POST", `/api/prof/courses/${mine.id}/materials`, { title: "handout.txt", text: "Lecture 9: tracing by hand." })).status, 201);
+    const course = await call("GET", `/api/courses/${mine.id}`);
+    assert.equal(JSON.parse(course.text).materials[0].body, "Lecture 9: tracing by hand.");
+    assert.ok(!carriesKey(course.text));
+
+    const q = JSON.parse((await call("POST", `/api/courses/${mine.id}/posts`, { author: "Ada", role: "student", body: "What is a base case?" })).text);
+    draft = "A base case is the input small enough to answer without another call. Which input is that for a list?";
+    assert.equal((await call("POST", `/api/courses/${mine.id}/posts/${q.id}/margin`)).status, 201);
+    draft = "Use this: return xs[0] + sum_list(xs[1:])";
+    assert.equal((await call("POST", `/api/courses/${mine.id}/posts/${q.id}/margin`)).status, 422);
+    const posts = JSON.parse((await call("GET", `/api/courses/${mine.id}/posts`)).text).posts;
+    assert.deepEqual(posts.map((p: { role: string }) => p.role), ["student", "margin"]);
+    assert.ok(!carriesKey(JSON.stringify(posts)));
+
+    assert.equal((await call("POST", "/api/speak", { text: "What happens when the list is empty?" })).status, 503);
+    assert.equal((await call("GET", "/api/courses/nope")).status, 404);
   });
 });

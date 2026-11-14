@@ -71,6 +71,7 @@ describe("class summary and Thursday card (D-B8)", { skip }, () => {
     await connectDb(uri);
     await clearCollections();
     server = createApp({
+      offline: true,
       scribe: async () =>
         JSON.stringify({
           ...scribeLabel,

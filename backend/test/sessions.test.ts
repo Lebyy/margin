@@ -37,7 +37,7 @@ describe("POST /api/sessions (D-B4)", { skip }, () => {
   before(async () => {
     await connectDb(uri);
     await clearCollections();
-    server = createApp().listen(0);
+    server = createApp({ offline: true }).listen(0);
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     // The assignment comes from the professor route, the same way the product
     // gets it. Nothing is inserted behind the API's back.

@@ -96,6 +96,7 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
     await connectDb(uri);
     await clearCollections();
     server = createApp({
+      offline: true,
       vision: async ({ system, user }) => {
         visionCalls += 1;
         visionSent = `${system}\n${user}`;

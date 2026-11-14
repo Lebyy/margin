@@ -8,26 +8,24 @@ import { cn } from "@/lib/utils";
  * the ruling are the product's one visual idea and no library has them. The
  * things placed on the sheet (buttons, fields, chips) are all HeroUI.
  *
- * `plain` drops the ruling for dense content such as the heatmap. `as` lets a
+ * `as` lets a
  * page make the sheet a <section> or an <article>, so the landmark matches
  * what the sheet holds.
  */
 export function Paper({
   children,
   className,
-  plain = false,
   as: Tag = "section",
   ...rest
 }: {
   children: ReactNode;
   className?: string;
-  plain?: boolean;
   as?: "section" | "article" | "div";
   "aria-label"?: string;
   "aria-labelledby"?: string;
 }) {
   return (
-    <Tag className={cn("paper py-5 pr-4 sm:pr-6", plain && "paper-plain", className)} {...rest}>
+    <Tag className={cn("paper py-5 pr-4 sm:pr-6", className)} {...rest}>
       {children}
     </Tag>
   );

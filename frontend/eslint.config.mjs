@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Animate UI components are copied from its registry as published. They are not ours to restyle to this config, and an edit here would be lost on the next copy.
+    "components/animate-ui/**",
   ]),
 ]);
 

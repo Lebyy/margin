@@ -58,7 +58,7 @@ describe("assignment routes (D-B3)", { skip }, () => {
   before(async () => {
     await connectDb(uri);
     await clearCollections();
-    server = createApp().listen(0);
+    server = createApp({ offline: true }).listen(0);
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 

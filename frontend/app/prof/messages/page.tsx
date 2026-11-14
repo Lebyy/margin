@@ -51,7 +51,7 @@ export default function MessagesPage() {
           <div>
             <h1 className="font-serif text-3xl font-semibold tracking-tight">Messages</h1>
             <p className="mt-1 text-muted">
-              Each Thursday card is also sent to you as a message.{title ? ` These are for “${title}”.` : ""}
+              {title ?? "One for each Thursday card."}
             </p>
           </div>
           <NextLink href="/prof/dashboard" className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm text-muted hover:bg-default hover:text-foreground">
@@ -72,9 +72,9 @@ export default function MessagesPage() {
           </Alert.Content>
         </Alert>
       ) : pick.state === "none" ? (
-        <EmptyMessages text="There is no assignment yet. Create one on the setup page, and have a student start a session." href="/prof/setup" action="Go to setup" />
+        <EmptyMessages text="No assignment yet." href="/prof/setup" action="Go to setup" />
       ) : messages && messages.length === 0 ? (
-        <EmptyMessages text="No message yet. A message is written when you generate a Thursday card on the dashboard." href="/prof/dashboard" action="Go to the dashboard" />
+        <EmptyMessages text="No message yet. One is written with each Thursday card." href="/prof/dashboard" action="Go to the dashboard" />
       ) : (
         <section aria-labelledby="messages-list-heading">
         {/* Each message's title is HeroUI's Card.Title, which is always an h3. This

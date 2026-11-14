@@ -40,7 +40,7 @@ describe("POST /api/prof/assignments (D-B2)", { skip }, () => {
     await connectDb(uri);
     // Start from an empty test database so the counts below mean this run.
     await clearCollections();
-    server = createApp().listen(0);
+    server = createApp({ offline: true }).listen(0);
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 

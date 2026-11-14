@@ -48,8 +48,8 @@ export function useAssignment(): AssignmentPick {
           state: "error",
           message:
             e instanceof ApiError && e.code === "database_unavailable"
-              ? "The API is running without a database. Set MONGODB_URI in .env and restart."
-              : "The API is not answering on localhost:4000. Start it with npm run dev.",
+              ? "The database is not connected."
+              : "Margin is not reachable.",
         });
       });
     return () => {

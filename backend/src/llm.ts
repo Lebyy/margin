@@ -2,7 +2,7 @@
 // Guard, scribe, and coach call completeJson. Vision calls it too, because a photo still has to come back as JSON.
 // The tutor does not. tutor.ts calls createDeepAgent. Importing the SDK from that file would make two model doors, and the identity strip would be optional on one of them.
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { z } from "zod";
 
 /**
@@ -18,6 +18,13 @@ export const STRONG_MODEL = "gemini-4-carbon";
  * The guard runs on every draft, so the Carbon model would put a long pause in front of every hint.
  */
 export const FAST_MODEL = "gemini-3.8-flash";
+
+/**
+ * The tutor's model. It is the fast model.
+ * The student waits on three calls in a row: the scribe, the tutor, and the guard's judge, and nothing can be shown before the judge has read the whole draft. On the strong model the tutor alone took 20 to 45 seconds and sometimes hit the turn timeout, so the student got an error instead of a hint. A hint is at most four sentences, and the guard checks it either way, so the speed is worth more here than the stronger model.
+ * Vision stays on the strong model, because reading a photo of handwriting is where it earns its time.
+ */
+export const TUTOR_MODEL = FAST_MODEL;
 
 /**
  * Where those two models live. Carbon returns 404 from us-central1. That 404 is the region, not a missing model.
@@ -47,10 +54,19 @@ export function agentPlatformRequest(): { baseUrl: string; apiVersion: string } 
 }
 
 /**
+ * How much the model reasons before it answers, per role.
+ * By default the fast model thinks first, and that roughly doubles each call: about 6.5 seconds against 3.2 for the same one-sentence question, measured on 2026-11-14. The student waits on three calls in a row, so the default cost them ten seconds a turn.
+ * The guard's judge keeps a little thinking, because it is the last check before a draft is shown and a paraphrased leak takes a moment's thought to see. The scribe, the coach, the study cards, and the tutor write short structured or four-sentence answers and get none.
+ * Vision is left at the model's default.
+ */
+export const NO_THINKING = { thinkingBudget: 0 } as const;
+const JUDGE_THINKING = { thinkingLevel: ThinkingLevel.LOW } as const;
+
+/**
  * Who is asking. There is no tutor role. Adding one would route the tutor through this file.
  * The coach has its own name so a later change to the scribe's model does not silently move the Thursday card with it.
  */
-export type ModelRole = "guard" | "scribe" | "coach" | "vision";
+export type ModelRole = "guard" | "scribe" | "coach" | "study" | "look" | "vision";
 
 /**
  * How long one model request may take, in milliseconds.
@@ -64,7 +80,6 @@ export const REQUEST_TIMEOUT_MS = 20_000;
  * A later default of the strong model for every role would spend the guard's budget on the slow model, on every turn.
  */
 export function modelFor(role: ModelRole): string {
-  if (role === "vision") return STRONG_MODEL;
   return FAST_MODEL;
 }
 
@@ -126,10 +141,12 @@ export type CompleteJsonInput<T> = {
  * Swallowing the second failure would let a non-JSON draft continue, which is how a parse error becomes a student-facing reply.
  */
 export async function completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
-  const model = input.image ? STRONG_MODEL : modelFor(input.role);
+  // `look` is a picture on the fast model: Margin glancing at something on the student's canvas while they wait. The strong model took over 20 seconds on that and hit the request timeout. `vision` stays on the strong model for snap-your-work, where one mistake has to be found in handwriting.
+  // Every role is on the fast model now, pictures included. The strong model took 20 to 45 seconds and timed out in front of students, and a student who waits that long has stopped reading. STRONG_MODEL stays defined so the id is in one place if a role ever needs it again.
+  const model = modelFor(input.role);
   const system = stripIdentity(input.system);
   const user = stripIdentity(input.user);
-  const generate = input.generate ?? ((request) => generateWithGemini(request, input.schema, input.image));
+  const generate = input.generate ?? ((request) => generateWithGemini(request, input.schema, input.image, input.role));
 
   try {
     return readPayload(await generate({ model, system, user }), input.schema);
@@ -182,6 +199,7 @@ async function generateWithGemini<T>(
   request: { model: string; system: string; user: string },
   schema: z.ZodType<T>,
   image: { mimeType: string; base64: string } | undefined,
+  role: ModelRole,
 ): Promise<string> {
   const apiKey = process.env.LLM_API_KEY;
   if (!apiKey) {
@@ -212,6 +230,7 @@ async function generateWithGemini<T>(
       systemInstruction: request.system,
       responseMimeType: "application/json",
       responseJsonSchema: responseSchema(schema),
+      ...(role === "vision" ? {} : { thinkingConfig: role === "guard" ? JUDGE_THINKING : NO_THINKING }),
     },
   });
 
@@ -226,4 +245,60 @@ function responseSchema(schema: z.ZodType): unknown {
     return rest;
   }
   return json;
+}
+
+/**
+ * The image model. This is the Gemini Flash image model, the one people call Nano Banana.
+ * Verified on this project on 2026-11-14 by calling it on the global path: it returned a PNG. `gemini-3-pro-image` also answered and is slower. Do not swap in an id that has not been called.
+ */
+export const IMAGE_MODEL = "gemini-3.1-flash-image";
+
+/**
+ * The speech model. Verified the same day the same way: it returned audio/wav, which a browser plays as is.
+ * The older TTS ids answer too, but with raw PCM that needs a header written around it before anything can play it.
+ */
+export const TTS_MODEL = "gemini-3.8-flash-tts";
+
+/** Pictures and speech take longer than a JSON label, so they get their own limit. Past this the student has moved on. */
+const MEDIA_TIMEOUT_MS = 45_000;
+
+type MediaPart = { mimeType: string; base64: string };
+
+/**
+ * One request that returns a file: a picture or a clip of speech.
+ * It is here, beside completeJson, so the identity strip and the Agent Platform path stay in the one file that talks to Gemini. Any failure returns null, and the caller shows what it had without the file.
+ */
+async function generateMedia(model: string, text: string, generationConfig: Record<string, unknown>): Promise<MediaPart | null> {
+  const apiKey = process.env.LLM_API_KEY;
+  if (!apiKey) return null;
+  const { baseUrl, apiVersion } = agentPlatformRequest();
+  try {
+    const res = await fetch(`${baseUrl}/${apiVersion}/models/${model}:generateContent`, {
+      method: "POST",
+      // The key goes in a header, not the URL, so it cannot end up in a logged request line.
+      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: stripIdentity(text) }] }], generationConfig }),
+      signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { candidates?: { content?: { parts?: { inlineData?: { mimeType: string; data: string } }[] } }[] };
+    const part = body.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData;
+    return part ? { mimeType: part.mimeType, base64: part.data } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A picture drawn from a text description, or null. */
+export function generateImage(description: string): Promise<MediaPart | null> {
+  return generateMedia(IMAGE_MODEL, description, { responseModalities: ["TEXT", "IMAGE"] });
+}
+
+/** Text read aloud in one warm voice, as a WAV file, or null. */
+export function generateSpeech(text: string): Promise<MediaPart | null> {
+  // Only the words to speak are sent. A styling sentence in front of them was read aloud along with the reply, since the speech model speaks whatever text it is given.
+  return generateMedia(TTS_MODEL, text, {
+    responseModalities: ["AUDIO"],
+    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
+  });
 }

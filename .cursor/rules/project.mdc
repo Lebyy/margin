@@ -103,7 +103,7 @@ The tutor is a LangChain deepagent. The guard, the scribe, and the coach are fun
 5. Guard checks the draft and retries or falls back as above.
 6. Persist the message, final level, guard verdict, retries, and scribe labels. Return the reply plus a debug payload (level, guard verdict, retries) for the demo-only debug drawer.
 
-No streaming, because the guard needs the full draft before anything is shown.
+No streaming from the model, because the guard needs the full draft before anything is shown. The page may reveal a reply that has already passed the guard with a typing effect.
 
 ## Guard design (the most important component, test it hardest)
 
@@ -174,7 +174,7 @@ These are Mongoose models. Reference fields use ObjectId. `answer_key` is a fiel
 - Run both with `npm run dev`. Web is on http://localhost:3000, API health on http://localhost:4000/health. Secrets live in `.env` (gitignored), with `.env.example` committed. Never commit keys.
 - LLM provider: Google Agent Platform API (`aiplatform.googleapis.com`, the Vertex express endpoint), because it serves the Google models, handles images, and is the only path the team's $300 free-trial credit pays for. This packet has no MLH or Gemini prize, so do not enter one. Guard and scribe call the model only through `completeJson` in `backend/src/llm.ts`. The tutor calls the model only through `createDeepAgent` in `tutor.ts`, using `LLM_API_KEY`.
 - Agent Platform wiring: `LLM_API_KEY` is an express-mode key (it starts with `AQ.`), restricted to the Agent Platform and Gemini APIs on the shared Google Cloud project `project-9f1acacd-fa08-4a3e-9e0`. It must be sent to the Agent Platform endpoint. With `@google/genai`, construct the client as `new GoogleGenAI({ vertexai: true, apiKey })`. The AI Studio endpoint (`generativelanguage.googleapis.com`) rejects this key with 402 "prepayment credits depleted", because the credit does not cover it. Never point a client at AI Studio. Any LangChain wrapper the tutor uses must also be the Vertex variant, not the AI Studio one (`@langchain/google-genai` defaults to AI Studio), and must call the same Agent Platform endpoint with this key. Express keys cannot list models, so confirm a model id by calling it.
-- Models: the strong model for the tutor and for vision is `gemini-4-carbon`. The fast model for the guard and the scribe is `gemini-3.8-flash`. Both were verified returning text on this project on 2026-11-14, and only from the `global` location. A `us-central1` path returns 404 for `gemini-4-carbon` ("not found or your project does not have access"), and that 404 is the location, not a missing model. Use the global path: `POST https://aiplatform.googleapis.com/v1/projects/project-9f1acacd-fa08-4a3e-9e0/locations/global/publishers/google/models/<model>:generateContent?key=$LLM_API_KEY`. In the SDK, set the location to `global`. Keep the model ids and the location in one place in code. Do not call a 2.5 model. Those ids are deprecated and return 404. Never invent a model id. Test it with curl first, and when a model 404s, retry it on `global` before deciding it does not exist.
+- Models: every role is on the fast model, `gemini-3.8-flash`, vision included. `gemini-4-carbon` is no longer called. The tutor moved to the fast model because the strong one took 20 to 45 seconds a hint and timed out in front of students. Both were verified returning text on this project on 2026-11-14, and only from the `global` location. A `us-central1` path returns 404 for `gemini-4-carbon` ("not found or your project does not have access"), and that 404 is the location, not a missing model. Use the global path: `POST https://aiplatform.googleapis.com/v1/projects/project-9f1acacd-fa08-4a3e-9e0/locations/global/publishers/google/models/<model>:generateContent?key=$LLM_API_KEY`. In the SDK, set the location to `global`. Keep the model ids and the location in one place in code. Do not call a 2.5 model. Those ids are deprecated and return 404. Never invent a model id. Test it with curl first, and when a model 404s, retry it on `global` before deciding it does not exist.
 - Credit and key handling: all of the team's usage draws on one $300 credit that expires 13 February 2027, so do not loop model calls in tests or red-team runs without a cap, and report how many calls a suite makes. Share `LLM_API_KEY` with Lebyy privately, never in the repo, a log line, an issue, a commit, or a screenshot. If it leaks, rotate it in Google Cloud console, APIs and services, Credentials. The env names are `LLM_API_KEY` and `MONGODB_URI`. Do not add `GEMINI_API_KEY`.
 - Structured LLM outputs use JSON schema mode, validated (for example with zod). On parse failure retry once, then fall back safely.
 - Database: MongoDB through Mongoose. The connection string is `MONGODB_URI` in `.env`, with an empty placeholder in `.env.example`. The database name is `margin`: the URI path must end in `/margin` (for Atlas, `mongodb+srv://<user>:<password>@<host>/margin`). Without a path, MongoDB writes to a database called `test`, and two laptops with different endings would not see each other's assignments. Tests use their own `margin_test*` databases and never touch `margin`. Do not add SQLite, a SQL schema file, or Supabase. Keep the app runnable at every commit and deployable to a free host. A local MongoDB or MongoDB Atlas both qualify. Never commit the connection string.
@@ -218,11 +218,37 @@ Build these in M3, after the core loop is real:
 - Typed-work highlight: mark the missing base case in a pasted `sum_list` and do not rewrite the line. The tutor asks one question about the empty list. This is the demo path.
 - Snap-your-work: a photo in, `{ step, box }` out, with the box in 0-to-1 units from the top left. `step` names the mistake and does not contain the fixed code. A failure is 501 `{ "error": "vision_unavailable" }` and the page draws nothing. It is not the demo path.
 - Level-2 citation by searching the professor's pasted notes. Keyword match is enough. No new search service.
+- The canvas: the student asks Margin to draw a concept map, the steps of an idea, or a summary, and Margin draws it from the professor's notes. The student draws over it. It never draws code or a step of the assignment's solution, and the guard checks every drawing before it is shown. This is MindPad's canvas, without the camera.
 - Flashcards for that student's weakest concept, drawn from the notes, with no solution lines. MindPad's revise loop, without the answer.
 - A pasted-notes field on professor setup. No file upload this weekend.
 - Accessibility of the two screens: contrast, focus order, and usable at 200% zoom. No camera and no gesture control.
 
-Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a clinical HIPAA pipeline, clinical-trial IP detection, a Python or FastAPI backend. The small strip of email, phone, and id numbers before a model call is required. It is not that pipeline. Voice is not in the build. The Photon entry is the professor message, not voice. The LangChain entry is the tutor deepagent, not a second backend.
+Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a clinical HIPAA pipeline, clinical-trial IP detection, a Python or FastAPI backend. The small strip of email, phone, and id numbers before a model call is required. It is not that pipeline. Voice on the student page is allowed, and only through the browser's own speech recognition and speech synthesis: the student can dictate a message and have Margin's reply read aloud. Do not add a voice SDK or upload the student's audio. Dictated text is a student message like any other, and it goes through the scribe, the policy, and the guard. The Photon entry is the professor message, not voice, and the Photon voice prize is not entered. The LangChain entry is the tutor deepagent, not a second backend.
+
+## Assignment kinds and learning
+
+Margin is for assignments and for learning. An assignment has a `kind`: `code`, `written`, `math`, or `topic`.
+
+- `code`, `written`, and `math` are graded work. Each has an answer key, the hint ladder applies, and the guard checks every reply. The guard reads a code key with names folded, and a written or math key as words: eight consecutive words of the key, or the whole key when it is shorter, is a hit. A held turn on a written or math assignment shows exactly: "What is the question asking you to find?" The recursion demo keeps "What happens when the list is empty?"
+- `topic` is course material to learn. It has no answer key and no ladder, and Margin teaches it openly from the professor's notes. The canary check still runs on every reply.
+- The demo is still `sum_list`. Its tutor wording, its fallback sentence, and its four concepts do not change.
+- The setup form offers examples that fill the form. An example saves nothing. A professor still presses save, so every assignment in the database is one a person saved. Do not add a script, a route, or a boot step that writes assignments, students, sessions, or turns.
+- A student can keep their own notes on an assignment, typed or loaded from a text file. They are stored for that student, the tutor reads them as the student's material, and no professor screen shows them.
+- On the canvas, a student can add a picture and ask Margin about it. Margin describes it and marks up to five parts with a red ellipse. The picture goes to the vision model without the student's name and is not stored. The guard checks the words, and a note never contains the fix.
+
+## Classes, and the models for pictures and speech
+
+Margin is organized as classes, the way an LMS is, with the tutor on top of everything in a class.
+
+- A class (`courses`) has a name, the professor's name, a description, classroom notes, and files. A class is created by a professor, or by saving an assignment under a new course name. The professor's name is a label, not a login.
+- A file added to a class is stored as text (`course_materials`). A text file is stored as written. A PDF or a picture is read into text by the model once, when it is added. The file itself is not kept.
+- The tutor, the study cards, the quiz, and the canvas read an assignment's notes together with its class's notes and files.
+- A class has a discussion (`posts`). Students and the professor post under the name they typed. Margin replies only when someone asks it to, its reply is marked as the AI tutor's, and it is checked against the answer key of every assignment in the class before it is posted.
+- A quiz is practice written from the notes. The page checks answers on the student's machine. No quiz result is stored or shown to a professor.
+- Every model call is on `gemini-3.8-flash`, pictures included. The image model is `gemini-3.1-flash-image` and the speech model is `gemini-3.8-flash-tts`. Both were verified on this project on 2026-11-14 on the global path.
+- A generated picture cannot be read by the guard. So the image model is given only the title and items of a drawing the guard has already released, never the assignment, the notes, the student's request, or the key.
+- Read-aloud uses the speech model through `POST /api/speak`, and speaks only a reply already on screen. Dictation is still the browser's.
+- `npm test` and `npm run redteam` still make zero live calls. Tests build the app with `offline: true`, which keeps the picture and speech routes off the live models.
 
 ## Out of scope this weekend (put on a Roadmap slide)
 
@@ -294,7 +320,7 @@ Do not enter CoStar (their building data), either Arlequin track (forensics, soc
 
 ## Working rules for agents
 
-- Follow DESIGN.md for UI once it exists. The work list is `docs/BOARD.md`, not a second TODO. This file and the board name the same use cases. Do not reopen voice, Best Rookie, a study percentage, or the photo as the demo. The tutor is the LangChain entry.
+- Follow DESIGN.md for UI once it exists. The work list is `docs/BOARD.md`, not a second TODO. This file and the board name the same use cases. Do not reopen the Photon voice prize, Best Rookie, a study percentage, or the photo as the demo. The tutor is the LangChain entry.
 - The real-MVP and comment rules above override any older line about a seed script, synthetic students, or a simulated label. If the board still says to invent a class, do not. Comment every function. Do not ship a generic one-line comment that only repeats the code.
 - Commit after each milestone with a clear message. Do not push or deploy unless asked.
 - At the end of a work session, report what works, how to run it, the red-team pass rate, known issues, and the 3 most important next tasks.

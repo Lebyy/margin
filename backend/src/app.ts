@@ -15,7 +15,7 @@ export function createApp(deps: RouteDeps = {}): express.Express {
 
   // Only the Next.js dev server may call the API from a browser. Widening this
   // to "*" would let any page a professor has open read class data.
-  app.use(cors({ origin: "http://localhost:3000" }));
+  app.use(cors({ origin: "http://localhost:3000", methods: ["GET", "POST", "PUT"] }));
 
   // A phone photo sent as base64 for snap-your-work is a few MB. 10 MB fits it
   // and still refuses an accidental upload of something much larger. A body

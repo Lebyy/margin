@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { z } from "zod";
-import { FAST_MODEL, STRONG_MODEL, completeJson, stripIdentity } from "../src/llm.ts";
+import { FAST_MODEL, completeJson, stripIdentity } from "../src/llm.ts";
 
 const okSchema = z.object({ ok: z.boolean() });
 
@@ -38,7 +38,7 @@ describe("completeJson", () => {
         return '{"ok":true}';
       },
     });
-    assert.equal(visionModel, STRONG_MODEL);
+    assert.equal(visionModel, FAST_MODEL);
   });
 
   // Case: prose is not a verdict. The generator is called a second time, then the call throws.

@@ -1,95 +1,63 @@
 "use client";
 
-import { Card, Chip } from "@heroui/react";
+import { Tooltip } from "@heroui/react";
 import { Lock } from "lucide-react";
 import { motion } from "motion/react";
 import { LEVEL_HELP, LEVEL_NAME, type HintLevel } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /**
- * The hint ladder: three rungs, the current one marked, and the professor's ceiling.
+ * The hint ladder as one row: three rungs, the current one marked, locked past the ceiling.
  *
- * It is always on screen and never inside a menu, because a judge has two
- * minutes and the level moving is the thing to watch.
+ * It sits in the workspace header so it is always in view and never in a
+ * menu. A judge watches this move.
  *
  * `level` is the number in the last message response, or the session's stored
- * level after a reload. This component has no way to change it. There is no
- * click handler on a rung and no "next hint" button. The server's policy is
- * the only switch. A rung that looked pressable would promise an escalation
- * the client cannot give.
+ * level after a reload. Nothing here can change it. A rung is not a button.
+ * The server's policy is the only switch, and a rung that looked pressable
+ * would promise an escalation the client cannot give.
  *
- * A rung above the ceiling is drawn locked and described as not offered on
- * this assignment, so a ceiling of 1 never shows level 2 as something the
- * student could reach.
+ * A rung above the ceiling is drawn locked, so a ceiling of 1 never shows
+ * level 2 as reachable. The words that used to sit under each rung are in a
+ * tooltip now. The row itself carries only the names.
  *
- * The red marker is one element that moves between rungs with a shared
- * layoutId. The student sees it travel to the new rung when a reply raises
- * the level.
+ * The red marker is one element that slides between rungs with a shared
+ * layoutId, so the student sees it travel when a reply raises the level.
  */
 export function HintLadder({ level, ceiling }: { level: HintLevel; ceiling: number }) {
   const rungs: HintLevel[] = [1, 2, 3];
   return (
-    <Card aria-label="Hint level">
-      <Card.Header>
-        <div className="flex items-center justify-between gap-2">
-          <Card.Title>Hint level</Card.Title>
-          <Chip size="sm" variant="soft">
-            ceiling {ceiling} of 3
-          </Chip>
-        </div>
-        <Card.Description>Set by the server after each message. A further hint needs a new try.</Card.Description>
-      </Card.Header>
-      <Card.Content>
-        <ol className="flex flex-col gap-1.5" aria-label={`Current level ${level}, ceiling ${ceiling}`}>
-          {rungs.map((rung) => {
-            const current = rung === level;
-            const locked = rung > ceiling;
-            const passed = rung < level;
-            return (
-              <li
-                key={rung}
-                aria-current={current ? "step" : undefined}
-                className={cn(
-                  "relative flex items-start gap-3 rounded-lg px-3 py-2.5",
-                  locked && "opacity-55",
-                )}
-              >
-                {current ? (
-                  <motion.span
-                    layoutId="hint-ladder-current"
-                    className="absolute inset-0 rounded-lg border border-margin-red bg-margin-red-soft"
-                    transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                  />
-                ) : null}
+    <ol className="flex items-center gap-1" aria-label={`Hint level ${level} of ${ceiling}`}>
+      {rungs.map((rung) => {
+        const current = rung === level;
+        const locked = rung > ceiling;
+        return (
+          <li key={rung} aria-current={current ? "step" : undefined}>
+            <Tooltip delay={200}>
+              <Tooltip.Trigger>
                 <span
                   className={cn(
-                    "relative mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
-                    current
-                      ? "border-margin-red bg-margin-red text-background"
-                      : passed
-                        ? "border-border bg-default text-foreground"
-                        : "border-border text-muted",
+                    "relative flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm",
+                    locked ? "text-muted opacity-50" : current ? "font-medium text-margin-red" : rung < level ? "text-foreground" : "text-muted",
                   )}
                 >
-                  {locked ? <Lock className="size-3" aria-hidden /> : rung}
+                  {current ? (
+                    <motion.span
+                      layoutId="hint-ladder-current"
+                      className="absolute inset-0 rounded-full border border-margin-red bg-margin-red-soft"
+                      transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                    />
+                  ) : null}
+                  <span className="relative tabular-nums">{locked ? <Lock className="size-3.5" aria-hidden /> : rung}</span>
+                  <span className="relative">{LEVEL_NAME[rung]}</span>
+                  {current ? <span className="sr-only"> (current)</span> : null}
                 </span>
-                <span className="relative min-w-0">
-                  <span className="block text-sm font-medium">
-                    {LEVEL_NAME[rung]}
-                    {current ? <span className="sr-only"> (current level)</span> : null}
-                  </span>
-                  <span className="block text-xs text-muted">
-                    {locked ? "Not offered on this assignment." : LEVEL_HELP[rung]}
-                  </span>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-        <p className="mt-3 border-t border-border pt-3 text-xs text-muted">
-          There is no level 4. Margin never writes the solution, a line of it, or the final answer.
-        </p>
-      </Card.Content>
-    </Card>
+              </Tooltip.Trigger>
+              <Tooltip.Content>{locked ? "Not offered on this assignment" : LEVEL_HELP[rung]}</Tooltip.Content>
+            </Tooltip>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

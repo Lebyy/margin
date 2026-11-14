@@ -166,3 +166,34 @@ describe("turn module", () => {
     assert.equal(/from ["']\.\/(models|db)["']/.test(source), false);
   });
 });
+
+describe("the early draft", () => {
+  // Case: the tutor is started at the current rung before the label is known.
+  // A turn that does not climb uses that draft and calls the tutor once. A turn
+  // that climbs ignores it, asks again at the new rung, and the reply is the
+  // second draft, so a hint written at the wrong rung is never shown.
+  it("is used when the level holds and thrown away when it climbs", async () => {
+    const { startDraft } = await import("../src/turn.ts");
+    const state = { level: 1 as const, hintCeiling: 3 as const, prompt: "Write sum_list(xs) recursively.", notes: "Lecture 7, slides 12-16.", turns: [], answerKey: "def sum_list(xs):\n    if not xs:\n        return 0\n    return xs[0] + sum_list(xs[1:])", canary: CANARY };
+    const clean = async () => JSON.stringify({ leaks: false, severity: "none", reason: "A question." });
+    const label = { concept: "base_case", struggle_type: "stuck_starting" as const, attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false, evidence: "" };
+
+    let calls: string[] = [];
+    const run = async (call: { systemPrompt: string }) => {
+      const level = /The hint level is (\d)/.exec(call.systemPrompt)?.[1] ?? "?";
+      calls.push(level);
+      return `A hint written at level ${level}?`;
+    };
+    const held = await runTurn(state, "help", label, { run, generate: clean }, startDraft(state, "help", { run }));
+    assert.deepEqual(calls, ["1"]);
+    assert.equal(held.level, 1);
+    assert.equal(held.reply, "A hint written at level 1?");
+
+    calls = [];
+    const climbed = await runTurn(state, "my try", { ...label, attempt_made: true }, { run, generate: clean }, startDraft(state, "my try", { run }));
+    assert.deepEqual(calls, ["1", "2"]);
+    assert.equal(climbed.level, 2);
+    assert.equal(climbed.reply, "A hint written at level 2?");
+  });
+});
+
