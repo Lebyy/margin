@@ -1,0 +1,28 @@
+---
+description: Product, stack, and HackPrinceton Fall 2026 rules for Margin
+alwaysApply: true
+---
+
+Margin is an AI tutor a university endorses instead of banning other tools. The policy line is: if you use an AI, use Margin. Harvard CS50 is the precedent.
+
+Students never receive the solution. Help is a hint ladder. Level 1 is one guiding question. Level 2 is a pointer to the professor's materials. Level 3 is a worked example of a different but related problem.
+
+A leak guard checks every draft against the hidden answer key before the student sees it. A scribe labels each turn with the concept, the struggle type, and the hint level. The professor sees class-level patterns first and a "reteach this" card, not a grade.
+
+The default demo subject, until Dr. Lund's real course is confirmed, is intro CS, Python recursion, sum_list.
+
+Four roles come later: Tutor, Guard, Scribe, and Coach. Out of scope this weekend: LMS integration, real auth, multiple courses, essays, and mobile.
+
+The stack for this repo is a Next.js frontend and an Express backend. Do not switch the backend to Python.
+
+This is HackPrinceton Fall 2026. The hard submit deadline is 8:00 AM America/New_York on Sunday, November 15, 2026. The in-person demo is required and capped at 2 minutes. Submit the public GitHub repo only. It was created during the event. Judging criteria are Creativity, Utility, Charity, and Avidity.
+
+Enter exactly one main track: Education. The packet describes Education as projects that make learning more interactive, accessible, or personalized.
+
+Best Overall is automatic, not an entry. Track winners cannot also win Best Overall.
+
+Enter these sub tracks. Amazon, Best Practical AI Innovation: Education is in scope, and the entry needs a working demo, a clear user, and basic docs. Peri, Forward Deployed Challenge: it requires a real client consulted during the weekend, and a student org counts. Include their name, role, and evidence. Do not claim a pilot that is not confirmed. LangChain, Best use of deepagents: enter only if a deepagent is actually in the build. The backend is Express, so do not add this unless asked. Photon messaging agent: enter only if students can message the tutor or the professor gets the log as a message. The voice prize applies only if voice exists. ChatOverflow leaderboard: connect the coding agent while building. That needs no product change and no extra Devpost submission.
+
+Enter Best Rookie only if every team member's first hackathon.
+
+Do not enter CoStar, because it needs their building data. Do not enter Arlequin forensics, Arlequin social-media analysis, Capital One Nessie, Physical AI, or Best Hardware. Salesforce and Scale AI are career-fair only. This packet has no MLH or Gemini prize.

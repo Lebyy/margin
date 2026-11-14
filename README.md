@@ -1,2 +1,41 @@
-# margin
-Margin: the AI tutor a professor approves of. Guided help on an assignment, never the solution.
+# Margin
+
+The AI tutor your professor approves of.
+
+This repository was created during HackPrinceton Fall 2026.
+
+## Install
+
+From the repository root:
+
+```bash
+npm install
+npm install --prefix frontend
+npm install --prefix backend
+```
+
+The API listens on port 4000 without a local env file. Copy the example if you want to change that port or set a model key:
+
+```bash
+cp .env.example .env
+```
+
+`.env` stays untracked. Do not commit secrets.
+
+## Run
+
+Both apps:
+
+```bash
+npm run dev
+```
+
+One at a time:
+
+```bash
+npm run dev:web
+npm run dev:api
+```
+
+- Web: http://localhost:3000
+- API health: http://localhost:4000/health
