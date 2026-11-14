@@ -1,4 +1,5 @@
 import mongoose, { Schema, type InferSchemaType, type Types } from "mongoose";
+import { START_LEVEL } from "./policy.ts";
 import type { GuardLayer, GuardSeverity, StruggleType } from "./types.ts";
 
 // The Mongoose models for every collection in `.cursor/rules/project.mdc`
@@ -195,11 +196,17 @@ export const Student = mongoose.model("Student", studentSchema);
 // One student working on one assignment. `current_level` is the rung of the
 // hint ladder the deterministic policy last chose. It is stored so a reload or
 // an API restart does not drop the student back to level 1.
+//
+// There is deliberately no answer-key field here. The message route loads the
+// key from the assignment only for the guard; copying it onto every session
+// would multiply the places a careless query could return it.
 const sessionSchema = new Schema(
   {
     student_id: { type: Schema.Types.ObjectId, ref: "Student", required: true },
     assignment_id: { type: Schema.Types.ObjectId, ref: "Assignment", required: true },
-    current_level: { ...hintLevelField, default: 1 },
+    // START_LEVEL comes from policy.ts so the schema and the ladder cannot
+    // disagree about where a new student begins.
+    current_level: { ...hintLevelField, default: START_LEVEL },
   },
   { collection: "sessions", timestamps: { createdAt: "created_at", updatedAt: false } },
 );

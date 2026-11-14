@@ -2,7 +2,8 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
-import { Assignment, CANARY, findStudentAssignment } from "./models.ts";
+import { Assignment, CANARY, Session, Student, findStudentAssignment } from "./models.ts";
+import { START_LEVEL } from "./policy.ts";
 
 // The HTTP routes David owns (board contract: routes.ts). Every record the
 // product shows exists because a request here created it. There is no seed
@@ -61,6 +62,29 @@ const assignmentUpdate = assignmentInput.extend({
   answer_key: z.string().trim().min(1).optional(),
 });
 
+/** A string that Mongoose can cast to an ObjectId, checked before any query. */
+const objectId = z.string().refine((s) => mongoose.isValidObjectId(s), "not a valid id");
+
+/**
+ * What the student screen sends to start working on an assignment.
+ *
+ * A returning student sends their `student_id`. A first visit sends a
+ * `display_name` instead, and this route creates the student. That is the only
+ * place a student document is ever created, which is why the students
+ * collection stays empty until someone actually starts a session. Exactly one
+ * of the two is required, so a typo cannot create a second copy of a student
+ * who already has an id.
+ */
+const sessionInput = z
+  .object({
+    assignment_id: objectId,
+    student_id: objectId.optional(),
+    display_name: z.string().trim().min(1).max(80).optional(),
+  })
+  .refine((b) => (b.student_id === undefined) !== (b.display_name === undefined), {
+    message: "send either student_id or display_name, not both",
+  });
+
 /** Answers a zod failure with field paths only, never the submitted values. */
 function rejectInvalid(res: Response, error: z.ZodError): void {
   // zod issues name the path and the rule, not the value, so a rejected
@@ -114,6 +138,58 @@ export function createRouter(): Router {
     if (answer_key !== undefined) doc.set("answer_key", answer_key);
     const saved = await doc.save();
     res.status(200).json(saved.toJSON());
+  });
+
+  /**
+   * POST /api/sessions: a student starts work on one assignment.
+   *
+   * Every call makes a new session, even for a pair that already has one, so a
+   * fresh start begins again at START_LEVEL instead of inheriting yesterday's
+   * rung. The level is written explicitly from policy.ts rather than left to
+   * the schema default, so the stored row is the exact number the policy reads
+   * on the first message. The session carries ids only, never the answer key.
+   * Unknown assignment or student ids are 404s and create nothing, not even
+   * the student.
+   */
+  router.post("/api/sessions", async (req, res) => {
+    const parsed = sessionInput.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_session",
+        issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+      });
+      return;
+    }
+    const { assignment_id, student_id, display_name } = parsed.data;
+
+    // Checked before the student is created, so a bad assignment link does not
+    // leave a student behind with no session.
+    if (!(await Assignment.exists({ _id: assignment_id }))) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+
+    let studentId = student_id;
+    if (studentId === undefined) {
+      const student = await new Student({ display_name }).save();
+      studentId = String(student._id);
+    } else if (!(await Student.exists({ _id: studentId }))) {
+      res.status(404).json({ error: "student_not_found" });
+      return;
+    }
+
+    const session = await new Session({
+      student_id: studentId,
+      assignment_id,
+      current_level: START_LEVEL,
+    }).save();
+
+    res.status(201).json({
+      session_id: String(session._id),
+      student_id: studentId,
+      assignment_id,
+      level: session.current_level,
+    });
   });
 
   /**
