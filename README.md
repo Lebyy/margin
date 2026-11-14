@@ -42,13 +42,22 @@ npm run dev:api
 
 ## Screens
 
-- `/` picks a side. The two sign-ins are the words `student` and `prof`. There is no password.
+- `/` is My courses: Due soon across the student's classes, their classes as cards, and every other class to open and join. The two sign-ins are the words `student` and `prof`. There is no password.
+- `/course/:id` is a class: Overview, Lecture slides (the browser's own PDF viewer, opened at `?lecture=&page=`), Assignments by due date with the student's status, and Discussion.
 - `/prof/setup` saves the assignment. The answer key is sent once, in the request body, and is never sent back.
 - `/student/assignment/:id` is the chat on paper: the hint level always in view, a separate "what I tried" box, and a red mark in the margin beside the student's own line. `Ctrl` + `.` opens the demo-only debug drawer, which shows the scribe, policy, tutor, and guard steps for each turn.
 - `/prof/dashboard` shows the Thursday card and the concept heatmap first, then three lines per student and a transcript drill-down. Every number is the one the API returned.
 - `/prof/messages` lists the professor message written with each Thursday card.
+- `/prof/courses` lists the classes with each one's weakest concept from its newest Thursday card. `/prof/courses/:id` has Overview, Slides (upload a lecture PDF), Assignments (Edit and Dashboard per assignment), Dashboard, and Discussion.
 
-The UI is HeroUI v3, Animate UI, and shadcn only, in dark and light. The rule is `.cursor/rules/ui.mdc`.
+## Courses and slides
+
+- **Classes and joining.** A class exists because a professor created it or saved an assignment under its name. A student joins a class with a button, or by starting work on one of its assignments. Nothing is seeded, so a fresh database has no classes until a professor makes one.
+- **Assignments.** Each assignment has a due date and a Margin switch, set on `/prof/setup`. With Margin off, the student sees the work and the due date, and every tutor route answers 403 before any model call.
+- **Uploading slides.** A lecture PDF goes up on the class's Slides tab. It is checked by its first bytes (`%PDF-`), whatever its name says, and must be at most 20 MB. The file is stored in MongoDB GridFS under a random id. Nothing is written to disk, so a redeploy cannot lose it and there is nothing to reseed. Its text is read page by page with pdf.js. A page with no text layer is flagged to the professor, and there is no OCR.
+- **Citing slides.** On `/prof/setup`, "Lectures this assignment covers" picks which slides the level-2 hint searches. Margin then writes `[Lecture n, slide p]`, and the student page turns that into a link that opens the slide viewer at page p.
+
+The UI is HeroUI v3, Animate UI, and shadcn only. The rule is `.cursor/rules/ui.mdc`.
 
 ## Guard
 
