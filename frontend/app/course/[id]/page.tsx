@@ -12,11 +12,11 @@ import { api, type Course } from "@/lib/api";
 /**
  * One class, as a student opens it.
  *
- * Lessons come first, then assignments, then what the professor has handed
- * out. That is the order a week runs in: learn it, do the work, look things
- * up. Everything here was saved by a professor. The files are shown as the
- * text that was stored for them, which is the same text Margin searches when
- * it points a student to the notes.
+ * Assignments come first, because that is the work a student opened the class
+ * to do. Lessons follow, then what the professor has handed out. Everything
+ * here was saved by a professor. The files are shown as the text that was
+ * stored for them, which is the same text Margin searches when it points a
+ * student to the notes.
  */
 export default function CoursePage() {
   const { id } = useParams<{ id: string }>();
@@ -61,15 +61,16 @@ export default function CoursePage() {
         <h1 className="font-serif text-5xl font-semibold tracking-tight">{course.name}</h1>
         {course.professor ? <p className="mt-2 text-muted">Taught by {course.professor}</p> : null}
         {course.description ? <p className="mt-3 max-w-3xl text-xl leading-8 text-muted">{course.description}</p> : null}
+        <p className="mt-4 max-w-2xl text-muted">Open an assignment, write your attempt, and ask. Margin reads what you wrote and will not write it for you.</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Chip variant="soft" color="success">{lessons.length} to learn</Chip>
-          <Chip variant="soft" color="accent">{work.length} to do</Chip>
-          <Chip variant="soft">{course.materials.length} handouts</Chip>
+          {work.length > 0 ? <Chip variant="soft" color="accent">{work.length} {work.length === 1 ? "assignment" : "assignments"}</Chip> : null}
+          {lessons.length > 0 ? <Chip variant="soft" color="success">{lessons.length} {lessons.length === 1 ? "lesson" : "lessons"}</Chip> : null}
+          {course.materials.length > 0 ? <Chip variant="soft">{course.materials.length} {course.materials.length === 1 ? "handout" : "handouts"}</Chip> : null}
         </div>
       </header>
 
-      <Shelf title="Learn" items={lessons} />
       <Shelf title="Assignments" items={work} />
+      <Shelf title="Learn" items={lessons} />
       {course.items.length === 0 ? <p className="text-lg text-muted">Nothing has been posted in this class yet.</p> : null}
 
       {course.notes || course.materials.length > 0 ? (

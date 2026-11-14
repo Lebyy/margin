@@ -1,25 +1,25 @@
 "use client";
 
-import { Button, Card, Chip, Spinner } from "@heroui/react";
-import { ArrowRight, GraduationCap } from "lucide-react";
+import { Card, Spinner } from "@heroui/react";
+import { ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
-import { useRouter } from "next/navigation";
+import NextLink from "next/link";
 import { useEffect, useState } from "react";
-import { HighlightText } from "@/components/animate-ui/primitives/texts/highlight";
 import { api, ApiError, type CourseListItem } from "@/lib/api";
 
 /**
- * The home page: what Margin is, then everything a student can open.
+ * The student's front door.
  *
- * Choosing a card is the whole sign-in. The two hard-coded logins are the
- * words `student` and `prof`, there is no password, and nothing is typed.
+ * The classes are the page. A card is one link, and opening it is the whole
+ * sign-in: the two hard-coded logins are the words `student` and `prof`,
+ * there is no password, and nothing is typed here. Teaching is a separate
+ * link, because this screen is for the person doing the work.
  *
  * The cards are the classes professors have created, read from the API on
- * load. A class opens to its lessons, its assignments, and its handouts. If
- * there are none, the page says so. It does not create one to fill the gap.
+ * load. A class opens to its assignments and its lessons. If there are none,
+ * the page says so. It does not create one to fill the gap.
  */
 export default function Home() {
-  const router = useRouter();
   const [items, setItems] = useState<CourseListItem[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -39,64 +39,59 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-12 pt-8 sm:pt-14">
-      <section className="mx-auto max-w-3xl text-center" aria-label="What Margin is">
-        <Chip variant="soft" color="danger" className="mb-5">
-          The AI tutor your professor approves of
-        </Chip>
-        <h1 className="font-serif text-6xl font-semibold tracking-tight sm:text-7xl">
-          Use AI.{" "}
-          <HighlightText text="Do your own work." className="rounded-lg bg-linear-to-r from-margin-red-soft to-margin-red-soft px-2 text-margin-red" transition={{ duration: 0.9, ease: "easeInOut" }} delay={250} />
-        </h1>
-        <p className="mx-auto mt-6 max-w-2xl text-xl leading-8 text-muted">
-          Paste the attempt, find the mistake, never get the answer. And your professor sees what the class does not understand.
-        </p>
-        <div className="mt-7 flex flex-wrap justify-center gap-2">
-          <Button size="lg" variant="secondary" onPress={() => router.push("/prof/courses")}>
-            <GraduationCap className="size-5" aria-hidden /> I teach
-          </Button>
-          {items && items.length > 0 ? (
-            <Button size="lg" variant="ghost" onPress={() => router.push("/prof/dashboard")}>
-              Class dashboard <ArrowRight className="size-4" aria-hidden />
-            </Button>
-          ) : null}
+    <div className="flex flex-col gap-8 pt-2">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-sm font-medium text-margin-red">The AI tutor your professor approves of</p>
+          <h1 className="mt-2 font-serif text-4xl font-semibold tracking-tight sm:text-5xl">Your classes</h1>
+          <p className="mt-3 text-lg leading-7 text-muted">Open a class and start the assignment. Write your own attempt, then ask. Margin will not give you the answer.</p>
         </div>
-      </section>
+        <NextLink href="/prof/courses" className="shrink-0 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">
+          I teach
+        </NextLink>
+      </header>
 
       {items === null ? (
         <div className="flex justify-center py-10">
           <Spinner aria-label="Loading" />
         </div>
       ) : items.length === 0 ? (
-        <p className="text-center text-lg text-muted">{problem ?? "Nothing has been posted yet."}</p>
+        <p className="text-lg text-muted">{problem ?? "Nothing has been posted yet."}</p>
       ) : (
-        <section aria-label="Your classes">
-          <h2 className="mb-4 font-serif text-3xl font-semibold tracking-tight">Your classes</h2>
-          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((c, i) => (
-              <motion.li key={c.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 8) * 0.05, duration: 0.25 }} whileHover={{ y: -4 }}>
-                <Card className="h-full">
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map((c, i) => (
+            <motion.li key={c.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 8) * 0.05, duration: 0.25 }}>
+              <NextLink href={`/course/${c.id}`} className="group block h-full rounded-2xl outline-offset-4">
+                <Card className="h-full transition-transform group-hover:-translate-y-1">
                   <Card.Header>
                     <Card.Title className="font-serif text-2xl leading-8">{c.name}</Card.Title>
+                    {c.professor ? <p className="text-sm text-muted">{c.professor}</p> : null}
                     {c.description ? <Card.Description>{c.description}</Card.Description> : null}
                   </Card.Header>
-                  <Card.Content className="flex gap-2">
-                    <Chip size="sm" variant="soft" color="success">{c.lessons} to learn</Chip>
-                    <Chip size="sm" variant="soft" color="accent">{c.assignments} to do</Chip>
+                  <Card.Content>
+                    <p className="text-sm text-muted">{workLine(c.assignments, c.lessons)}</p>
                   </Card.Content>
                   <Card.Footer>
-                    <Button variant="primary" onPress={() => router.push(`/course/${c.id}`)}>
-                      Enter <ArrowRight className="size-4" aria-hidden />
-                    </Button>
+                    <span className="inline-flex items-center gap-1 text-sm font-medium">
+                      Open <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+                    </span>
                   </Card.Footer>
                 </Card>
-              </motion.li>
-            ))}
-          </ul>
-        </section>
+              </NextLink>
+            </motion.li>
+          ))}
+        </ul>
       )}
 
-      <p className="text-center text-sm text-muted">CS50&rsquo;s rule is, if you use AI, use ours. Margin is that rule for every course.</p>
+      <p className="text-sm text-muted">CS50&rsquo;s rule is, if you use AI, use ours. Margin is that rule for every course.</p>
     </div>
   );
+}
+
+/** The line under a class name. Zero of a kind is left off, so a class with one assignment does not also say it has no lessons. */
+function workLine(assignments: number, lessons: number): string {
+  const parts: string[] = [];
+  if (assignments > 0) parts.push(`${assignments} ${assignments === 1 ? "assignment" : "assignments"}`);
+  if (lessons > 0) parts.push(`${lessons} ${lessons === 1 ? "lesson" : "lessons"}`);
+  return parts.length > 0 ? parts.join(" · ") : "Nothing posted yet";
 }

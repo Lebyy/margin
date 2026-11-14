@@ -25,6 +25,7 @@ export type StruggleType = "misconception" | "stuck_starting" | "syntax_or_mecha
 /** The student-safe assignment. The server builds it from an inclusion list. */
 export type Assignment = {
   id: string;
+  course_id: string | null;
   course_name: string;
   title: string;
   prompt: string;

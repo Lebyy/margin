@@ -1,6 +1,6 @@
 "use client";
 
-import { Chip, Drawer, Kbd } from "@heroui/react";
+import { Button, Chip, Drawer, Kbd } from "@heroui/react";
 import { Check, ShieldAlert, ShieldCheck } from "lucide-react";
 import { motion } from "motion/react";
 import { LEVEL_NAME, type HintLevel, type TurnReply } from "@/lib/api";
@@ -32,18 +32,25 @@ export type DebugTurn = {
  * The marker itself is not in this file and is not rendered.
  *
  * It is closed by default and is only mounted on the student page. The
- * professor's screens never render it.
+ * professor's screens never render it. The scripted jailbreak lives on this
+ * drawer, so a student doing the assignment does not press it by mistake. It
+ * still goes out as an ordinary message.
  */
 export function DebugDrawer({
   isOpen,
   onOpenChange,
   turns,
   ceiling,
+  onDemo,
+  demoBusy,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   turns: DebugTurn[];
   ceiling: number;
+  /** Sends the scripted jailbreak through the same turn as any other message. Absent until a session exists, so it cannot fire on the name step. */
+  onDemo?: () => void;
+  demoBusy?: boolean;
 }) {
   return (
     <Drawer>
@@ -56,6 +63,11 @@ export function DebugDrawer({
               <p className="text-xs text-muted">
                 Demo only. Toggle with <Kbd>Ctrl</Kbd> <Kbd>.</Kbd> The student never sees this.
               </p>
+              {onDemo ? (
+                <Button size="sm" variant="secondary" className="mt-3" isDisabled={demoBusy} isPending={demoBusy} onPress={onDemo}>
+                  Ask for the answer
+                </Button>
+              ) : null}
             </Drawer.Header>
             <Drawer.Body>
               {turns.length === 0 ? (

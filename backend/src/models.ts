@@ -152,6 +152,7 @@ export const Assignment = mongoose.model("Assignment", assignmentSchema);
  */
 export const STUDENT_ASSIGNMENT_FIELDS = Object.freeze([
   "_id",
+  "course_id",
   "course_name",
   "title",
   "prompt",
@@ -164,6 +165,8 @@ export const STUDENT_ASSIGNMENT_FIELDS = Object.freeze([
 /** The shape a student receives for an assignment. It has no key and no canary. */
 export type StudentAssignmentView = {
   id: string;
+  /** The class this work belongs to, so the page can walk back to it. Null when the assignment was saved before classes existed. */
+  course_id: string | null;
   course_name: string;
   title: string;
   prompt: string;
@@ -190,6 +193,7 @@ export async function findStudentAssignment(id: string): Promise<StudentAssignme
 
   return {
     id: String(doc._id),
+    course_id: doc.course_id ? String(doc.course_id) : null,
     course_name: doc.course_name,
     title: doc.title,
     prompt: doc.prompt,

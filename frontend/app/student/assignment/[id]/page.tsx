@@ -3,6 +3,7 @@
 import { Alert, Button, Card, Chip, Description, Input, Label, Spinner, Tabs, TextArea, TextField, Tooltip } from "@heroui/react";
 import { ArrowUp, Bug, Camera, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import NextLink from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Paper } from "@/components/paper";
@@ -434,13 +435,20 @@ export default function StudentAssignmentPage() {
   const first = assignment.concepts[0] ? conceptLabel(assignment.concepts[0]) : "this";
   const starters = ["Concept map", "Summarize the notes", `How ${first} works`];
   const codeIsNew = code.trim().length > 0 && code.trim() !== sentCode.trim();
+  const canSend = question.trim().length > 0 || (!isTopic && codeIsNew);
   const removed = lastReply?.sent.redactions ?? 0;
 
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
-          <p className="text-sm text-muted">{assignment.course_name}</p>
+          {assignment.course_id ? (
+            <NextLink href={`/course/${assignment.course_id}`} className="text-sm text-muted underline-offset-4 hover:underline">
+              {assignment.course_name}
+            </NextLink>
+          ) : (
+            <p className="text-sm text-muted">{assignment.course_name}</p>
+          )}
           <h1 className="font-serif text-4xl font-semibold tracking-tight">{assignment.title}</h1>
         </div>
         <div className="flex items-center gap-1">
@@ -454,12 +462,14 @@ export default function StudentAssignmentPage() {
             <Button isIconOnly size="sm" variant="ghost" aria-label="Show what the server did" onPress={() => setDrawerOpen(true)}>
               <Bug className="size-4" />
             </Button>
-            <Tooltip.Content>Ctrl .</Tooltip.Content>
+            <Tooltip.Content>Demo tools. Ctrl .</Tooltip.Content>
           </Tooltip>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_28rem]">
+      {!sessionId ? <StartCard returning={studentId !== null} name={name} onName={setName} onStart={start} starting={starting} error={sendError} /> : null}
+
+      <div className={sessionId ? "grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_28rem]" : "flex flex-col gap-5"}>
         <div className="flex min-w-0 flex-col gap-5">
           <Paper as="article" aria-label="Brief">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">Brief</h2>
@@ -479,7 +489,7 @@ export default function StudentAssignmentPage() {
           {sessionId ? (
             <Paper as="section" aria-label="Understand it">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{isTopic ? "Explain it back" : "Understand it"}</h2>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{isTopic ? "Explain it back" : "1. Say what this is asking"}</h2>
                 <span className="flex items-center gap-1">
                   {/* Saying it out loud is the point of this step, so it can be dictated. The words land in the field first and are sent only when the student presses the button. */}
                   <MicButton
@@ -490,7 +500,7 @@ export default function StudentAssignmentPage() {
                     isDisabled={sending}
                   />
                 <Button size="sm" variant="secondary" isDisabled={sending || plan.trim().length === 0} onPress={() => void send(isTopic ? `Here is my explanation, in my own words. Tell me what I have right and what I am missing:\n${plan.trim()}` : `Here is how I understand the problem, before I start:\n${plan.trim()}`, false)}>
-                  Talk it through
+                  Ask about this
                 </Button>
                 </span>
               </div>
@@ -514,7 +524,7 @@ export default function StudentAssignmentPage() {
           {isTopic ? null : (
             <Paper as="section" aria-label="Your work" className="pb-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{KIND[kind].work}</h2>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{sessionId && !isTopic ? `2. ${KIND[kind].work}` : KIND[kind].work}</h2>
                 {sessionId ? (
                   <Button size="sm" variant="primary" isDisabled={sending || !codeIsNew} isPending={sending} onPress={() => void send(question || CHECK_MY_WORK)}>
                     Check my work
@@ -532,10 +542,8 @@ export default function StudentAssignmentPage() {
           )}
         </div>
 
+        {sessionId ? (
         <aside className="lg:sticky lg:top-20 lg:self-start" aria-label="Margin">
-          {!sessionId ? (
-            <StartCard returning={studentId !== null} name={name} onName={setName} onStart={start} starting={starting} error={sendError} />
-          ) : (
             <Card>
               <Card.Content>
                 <Tabs selectedKey={tab} onSelectionChange={(key) => setTab(String(key))} variant="secondary">
@@ -551,9 +559,9 @@ export default function StudentAssignmentPage() {
                   </Tabs.ListContainer>
 
                   <Tabs.Panel id="margin" className="flex flex-col gap-3 pt-3">
-                    <div ref={threadRef} className="flex max-h-[26rem] min-h-40 flex-col gap-4 overflow-y-auto pr-1" aria-live="polite">
+                    <div ref={threadRef} className="flex h-[min(36rem,calc(100dvh-18rem))] min-h-56 flex-col gap-4 overflow-y-auto pr-1" aria-live="polite">
                       {turns.length === 0 && !sending ? (
-                        <p className="my-auto text-center font-serif text-xl text-muted">{isTopic ? "Ask anything about this topic." : "Write a first try, then ask."}</p>
+                        <p className="my-auto px-4 text-center font-serif text-lg leading-7 text-muted">{isTopic ? "Ask anything about this topic." : "Write your attempt on the left. Then ask here, or press Check my work."}</p>
                       ) : (
                         <AnimatePresence initial={false}>
                           {turns.map((turn) => (
@@ -574,18 +582,20 @@ export default function StudentAssignmentPage() {
                       className="flex flex-col gap-2"
                       onSubmit={(e) => {
                         e.preventDefault();
-                        void send(question);
+                        if (!canSend) return;
+                        void send(question.trim() || CHECK_MY_WORK);
                       }}
                     >
                       <TextField value={question} onChange={setQuestion} isDisabled={sending} fullWidth aria-label="Ask Margin">
                         <TextArea
                           rows={2}
-                          placeholder="Ask Margin"
+                          placeholder={isTopic ? "Ask about this topic" : "Ask about your attempt"}
                           onKeyDown={(e) => {
                             // Enter sends, Shift+Enter makes a new line.
                             if (e.key === "Enter" && !e.shiftKey) {
                               e.preventDefault();
-                              void send(question);
+                              if (!canSend) return;
+                              void send(question.trim() || CHECK_MY_WORK);
                             }
                           }}
                         />
@@ -644,8 +654,8 @@ export default function StudentAssignmentPage() {
                             <Tooltip.Content>Sends your code too</Tooltip.Content>
                           </Tooltip>
                         ) : null}
-                        <Button type="submit" isIconOnly size="sm" variant="primary" aria-label="Send" isDisabled={sending || question.trim().length === 0}>
-                          <ArrowUp className="size-4" />
+                        <Button type="submit" size="sm" variant="primary" aria-label="Send" isDisabled={sending || !canSend}>
+                          Send <ArrowUp className="size-4" />
                         </Button>
                       </div>
                       <div className="-ml-2 flex flex-wrap items-center gap-1">
@@ -656,17 +666,9 @@ export default function StudentAssignmentPage() {
                             </Button>
                           ))
                         ) : (
-                          <>
-                        <Button size="sm" variant="ghost" isDisabled={sending || assignment.hint_ceiling < 3} onPress={() => void smallerProblem()}>
-                          Try a smaller problem
-                        </Button>
-                        <Tooltip delay={300}>
-                          <Button size="sm" variant="ghost" isDisabled={sending} onPress={() => void send(DEMO_ATTACK, false)}>
-                            Ask for the answer
+                          <Button size="sm" variant="ghost" isDisabled={sending || assignment.hint_ceiling < 3} onPress={() => void smallerProblem()}>
+                            Try a smaller problem
                           </Button>
-                          <Tooltip.Content>&ldquo;{DEMO_ATTACK}&rdquo;</Tooltip.Content>
-                        </Tooltip>
-                          </>
                         )}
                       </div>
                     </form>
@@ -688,11 +690,11 @@ export default function StudentAssignmentPage() {
                 </Tabs>
               </Card.Content>
             </Card>
-          )}
         </aside>
+        ) : null}
       </div>
 
-      <DebugDrawer isOpen={drawerOpen} onOpenChange={setDrawerOpen} turns={debug} ceiling={assignment.hint_ceiling} />
+      <DebugDrawer isOpen={drawerOpen} onOpenChange={setDrawerOpen} turns={debug} ceiling={assignment.hint_ceiling} onDemo={sessionId ? () => void send(DEMO_ATTACK, false) : undefined} demoBusy={sending} />
     </div>
   );
 }
@@ -723,14 +725,20 @@ function StartCard({
   return (
     <Card>
       <Card.Content>
+        <h2 className="font-serif text-2xl font-semibold tracking-tight">Start</h2>
+        <ol className="list-decimal space-y-1 pl-5 text-sm leading-6 text-muted">
+          <li>Your name, so your professor can see where you get stuck. The model never sees it.</li>
+          <li>Write your attempt below.</li>
+          <li>Ask Margin. It points at the mistake and does not write the solution.</li>
+        </ol>
         <form
-          className="flex flex-col gap-3"
+          className="mt-1 flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
             onStart();
           }}
         >
-          {returning ? null : (
+          {returning ? <p className="text-sm text-muted">This browser already has your name. Continue into the assignment.</p> : (
             <TextField value={name} onChange={onName} isRequired name="display_name" autoFocus fullWidth>
               <Label>Your name</Label>
               <Input maxLength={80} autoComplete="given-name" />
