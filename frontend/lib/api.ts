@@ -380,7 +380,7 @@ export const api = {
   addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),
   /** Asks Margin to answer a question in the discussion. 422 `held` means the answer was checked against the class's answer keys and not posted. */
   askMarginOnPost: (courseId: string, postId: string) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts/${q(postId)}/margin`),
-  saveCourse: (course: { id?: string; name: string; description: string; notes: string; professor?: string }) => request<{ id: string; name: string }>("POST", "/api/prof/courses", course),
+  saveCourse: (course: { id?: string; name: string; description: string; notes: string; professor?: string; code?: string; term?: string; accent?: CourseAccent }) => request<{ id: string; name: string }>("POST", "/api/prof/courses", course),
   /** `text` for a text file, `file` for a PDF or a picture that the server reads into text once. */
   addMaterial: (courseId: string, material: { title: string; text?: string; file?: { mimeType: string; base64: string } }) =>
     request<{ id: string; title: string; body: string }>("POST", `/api/prof/courses/${q(courseId)}/materials`, material),

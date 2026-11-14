@@ -108,7 +108,8 @@ export default function SetupPage() {
   // Reload the assignment this browser last saved, without its key.
   useEffect(() => {
     let live = true;
-    const stored = browser.profAssignmentId();
+    // ?assignment= (the Edit link on a class page) opens that assignment; otherwise the one this browser last saved.
+    const stored = new URLSearchParams(window.location.search).get("assignment") ?? browser.profAssignmentId();
     // With nothing stored this resolves to null at once, and the form opens empty.
     // Arriving from a class page with ?course= starts a new item in that class, so the stored assignment is not reloaded.
     const forCourse = new URLSearchParams(window.location.search).get("course");

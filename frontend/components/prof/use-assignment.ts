@@ -14,8 +14,9 @@ export type AssignmentPick =
  * Which assignment a professor page is showing.
  *
  * The dashboard and the messages page both need one assignment id. It is the
- * one this browser last saved or chose, if the server still has it, and the
- * newest one otherwise. There is no course switcher behind this: it only
+ * one named by `?assignment=` in the URL (a class page links here that way),
+ * else the one this browser last saved or chose, if the server still has it,
+ * and the newest one otherwise. There is no course switcher behind this: it only
  * settles which of the saved assignments to read.
  *
  * `none` means no assignment exists at all. The page then tells the professor
@@ -34,7 +35,10 @@ export function useAssignment(): AssignmentPick {
           setPick({ state: "none" });
           return;
         }
-        const stored = browser.profAssignmentId();
+        // A link from a class page names the assignment with ?assignment=; it wins over what this browser last chose, and becomes the new choice.
+        const asked = new URLSearchParams(window.location.search).get("assignment");
+        const stored = asked && assignments.some((a) => a.id === asked) ? asked : browser.profAssignmentId();
+        if (asked && stored === asked) browser.setProfAssignmentId(asked);
         const initial = assignments.some((a) => a.id === stored) ? (stored as string) : assignments[0].id;
         const choose = (id: string) => {
           browser.setProfAssignmentId(id);

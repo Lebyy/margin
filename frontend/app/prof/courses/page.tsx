@@ -1,10 +1,11 @@
 "use client";
 
-import { Button, Card, Chip, Input, Label, Spinner, TextField } from "@heroui/react";
-import { ArrowRight, Plus } from "lucide-react";
+import { Button, Card, Input, Label, Spinner, TextField } from "@heroui/react";
+import { Plus, TrendingDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, type CourseListItem } from "@/lib/api";
+import { CourseCardLink } from "@/components/course-card";
+import { api, conceptLabel, type ProfCourseCard } from "@/lib/api";
 import { browser } from "@/lib/browser";
 
 /**
@@ -13,10 +14,15 @@ import { browser } from "@/lib/browser";
  * A class also comes into being when an assignment is saved under a new
  * course name, so this page is not a required first step. It is where a
  * professor goes to see all of them and to add notes and files to one.
+ *
+ * Each card carries the class's weakest concept from its newest Thursday
+ * card, with the percent stored on that card (counted in code when it was
+ * made). A class with no card says there is no Margin data yet; nothing is
+ * estimated to fill the space.
  */
 export default function CoursesPage() {
   const router = useRouter();
-  const [courses, setCourses] = useState<CourseListItem[] | null>(null);
+  const [courses, setCourses] = useState<ProfCourseCard[] | null>(null);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   /** The name this professor teaches under. A new class is saved with it, and their classes are listed first. It is a label, not a login. */
@@ -25,7 +31,7 @@ export default function CoursesPage() {
   useEffect(() => {
     let live = true;
     api
-      .courses()
+      .profCourses()
       .then((r) => {
         if (!live) return;
         setCourses(r.courses);
@@ -55,13 +61,13 @@ export default function CoursesPage() {
       <Card>
         <Card.Content>
           <form
-            className="flex items-end gap-2"
+            className="flex flex-col gap-2 sm:flex-row sm:items-end"
             onSubmit={(e) => {
               e.preventDefault();
               void create();
             }}
           >
-            <TextField value={me} onChange={setMe} className="w-56">
+            <TextField value={me} onChange={setMe} className="sm:w-56">
               <Label>Your name</Label>
               <Input maxLength={80} />
             </TextField>
@@ -82,27 +88,28 @@ export default function CoursesPage() {
       ) : courses.length === 0 ? (
         <p className="text-lg text-muted">No classes yet.</p>
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2">
-          {[...courses].sort((a, b) => Number(b.professor === me && me !== "") - Number(a.professor === me && me !== "")).map((c) => (
-            <li key={c.id}>
-              <Card className="h-full">
-                <Card.Header>
-                  <Card.Title className="font-serif text-2xl">{c.name}</Card.Title>
-                  {c.professor ? <p className="text-sm text-muted">{c.professor === me ? "You teach this" : c.professor}</p> : null}
-                  {c.description ? <Card.Description>{c.description}</Card.Description> : null}
-                </Card.Header>
-                <Card.Content className="flex gap-2">
-                  <Chip size="sm" variant="soft" color="success">{c.lessons} lessons</Chip>
-                  <Chip size="sm" variant="soft" color="accent">{c.assignments} assignments</Chip>
-                </Card.Content>
-                <Card.Footer>
-                  <Button variant="secondary" onPress={() => router.push(`/prof/courses/${c.id}`)}>
-                    Manage <ArrowRight className="size-4" aria-hidden />
-                  </Button>
-                </Card.Footer>
-              </Card>
-            </li>
-          ))}
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[...courses]
+            .sort((a, b) => Number(b.professor === me && me !== "") - Number(a.professor === me && me !== ""))
+            .map((c, i) => (
+              <CourseCardLink key={c.id} course={{ ...c, professor: c.professor === me && me !== "" ? "You teach this" : c.professor }} href={`/prof/courses/${c.id}`} index={i}>
+                <p className="text-sm text-muted">
+                  {c.assignments} {c.assignments === 1 ? "assignment" : "assignments"} · {c.lessons} {c.lessons === 1 ? "lesson" : "lessons"}
+                </p>
+                {c.weakest ? (
+                  <p className="mt-1 flex items-start gap-1.5 text-sm">
+                    <TrendingDown className="mt-0.5 size-4 shrink-0 text-margin-red" aria-hidden />
+                    <span>
+                      Weakest: <span className="font-medium">{conceptLabel(c.weakest.concept)}</span>
+                      {c.weakest.percent_struggling !== null ? `, ${c.weakest.percent_struggling}% struggling` : ""}
+                      <span className="text-muted"> · {c.weakest.assignment_title}</span>
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-muted">No Margin data yet</p>
+                )}
+              </CourseCardLink>
+            ))}
         </ul>
       )}
     </div>
