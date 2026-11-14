@@ -115,6 +115,15 @@ const assignmentSchema = new Schema(
       },
     },
     hint_ceiling: { ...hintLevelField, default: 3 },
+    // Questions 2 and on. `prompt` and `answer_key` above are question 1, so an
+    // assignment saved before questions existed is simply a one-question
+    // assignment and runs exactly as before. Each later question's prompt is
+    // student-visible here, and its key sits in `question_keys` at the same
+    // index, hidden by `select: false` like `answer_key`. They are two arrays,
+    // not one array of {prompt, key}, because `select: false` cannot hide one
+    // field of a subdocument while a student query projects the other.
+    questions: { type: [{ prompt: { type: String, required: true }, _id: false }], default: [] },
+    question_keys: { type: [String], default: [], select: false },
     // The class this belongs to. Set when the assignment is saved, from its course name. Null only on a row saved before courses existed, until the course list is next read.
     course_id: { type: Schema.Types.ObjectId, ref: "Course", default: null },
   },
@@ -132,6 +141,7 @@ const assignmentSchema = new Schema(
       transform: (_doc, ret: Record<string, unknown>) => {
         delete ret.answer_key;
         delete ret.canary;
+        delete ret.question_keys;
         return ret;
       },
     },
@@ -160,6 +170,7 @@ export const STUDENT_ASSIGNMENT_FIELDS = Object.freeze([
   "notes",
   "concepts",
   "hint_ceiling",
+  "questions",
 ] as const);
 
 /** The shape a student receives for an assignment. It has no key and no canary. */
@@ -174,6 +185,8 @@ export type StudentAssignmentView = {
   notes: string;
   concepts: string[];
   hint_ceiling: number;
+  /** Every question's prompt in order. Item 0 is `prompt`. Never a key. */
+  questions: string[];
 };
 
 /**
@@ -201,6 +214,7 @@ export async function findStudentAssignment(id: string): Promise<StudentAssignme
     notes: doc.notes ?? "",
     concepts: doc.concepts ?? [],
     hint_ceiling: doc.hint_ceiling ?? 3,
+    questions: [doc.prompt, ...(doc.questions ?? []).map((q) => q.prompt)],
   };
 }
 
@@ -239,6 +253,35 @@ const sessionSchema = new Schema(
     // START_LEVEL comes from policy.ts so the schema and the ladder cannot
     // disagree about where a new student begins.
     current_level: { ...hintLevelField, default: START_LEVEL },
+    // Which question the student is on, 0-based. It only moves forward, when
+    // the student presses Next or Finish, and the tutor and the guard read the
+    // prompt and key at this index.
+    current_question: { type: Number, default: 0, min: 0 },
+    // The per-question clock the professor sees. One entry opens when a
+    // question starts and closes when the student presses Next or Finish. The
+    // times are the server's, so the page cannot edit them, and no student
+    // route returns this field. The student page shows no clock; the start card
+    // tells the student their time per question is shared with the professor.
+    question_times: {
+      type: [{ index: { type: Number, required: true }, started_at: { type: Date, required: true }, finished_at: { type: Date, default: null }, _id: false }],
+      default: [],
+    },
+    // Set when the student finishes the last question. Null while working.
+    completed_at: { type: Date, default: null },
+    // The two questions written for the student after the last question, and
+    // their answers. Formative: the professor reads them, nothing grades them.
+    reflection: {
+      type: new Schema(
+        {
+          why: { type: String, required: true },
+          what_if: { type: String, required: true },
+          what_if_index: { type: Number, required: true },
+          answers: { why: { type: String, default: "" }, what_if: { type: String, default: "" } },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
   },
   { collection: "sessions", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );

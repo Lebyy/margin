@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiNumber } from "@/components/api-number";
 import { Paper } from "@/components/paper";
+import { TimingsPanel } from "@/components/prof/timings-panel";
 import { useAssignment } from "@/components/prof/use-assignment";
 import {
   api,
@@ -181,6 +182,8 @@ export default function DashboardPage() {
           </ul>
         </Card.Content>
       </Card>
+
+      <TimingsPanel assignmentId={assignmentId} version={version} />
 
       <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
     </div>

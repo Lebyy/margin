@@ -12,6 +12,9 @@
 /** Where the Express API listens. The dev server is on 3000 and the API on 4000, and the API's CORS allows only that origin. */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
 
+/** The most questions one assignment may have, question 1 included. Must equal MAX_QUESTIONS in backend/src/routes.ts. */
+export const MAX_QUESTIONS = 10;
+
 /** The longest notes paste the server saves. Must equal MAX_NOTES_CHARS in backend/src/routes.ts, or the form would allow a paste the save refuses. */
 export const MAX_NOTES_CHARS = 200_000;
 
@@ -33,6 +36,8 @@ export type Assignment = {
   notes: string;
   concepts: string[];
   hint_ceiling: number;
+  /** Every question's prompt in order. Item 0 is `prompt`. Older servers leave it out, and the page then treats `prompt` as the only question. */
+  questions?: string[];
 };
 
 export type AssignmentListItem = { id: string; course_name: string; title: string; kind: AssignmentKind; concepts: string[]; course_id: string | null };
@@ -94,13 +99,37 @@ export type PhotoReply = { step: string; box: PhotoBox; question: string; level:
  */
 export type Flashcards = { concept: string | null; cards: { front: string; back: string }[] };
 
-export type SessionStart = { session_id: string; student_id: string; assignment_id: string; level: HintLevel };
+export type SessionStart = { session_id: string; student_id: string; assignment_id: string; level: HintLevel; current_question?: number };
+
+/** The two questions asked after the last question, with the student's answers so far. `what_if_index` is 0-based. */
+export type Reflection = { why: string; what_if: string; what_if_index: number; answers: { why: string; what_if: string } };
+
+/** Next or Finish. `done` false moves to `current_question`, with the ladder back at `level`. `done` true carries the reflection. No time is ever in it. */
+export type FinishQuestion = { done: false; current_question: number; level: HintLevel } | { done: true; reflection: Reflection };
+
+/** One student's session as the professor's timing table shows it. A null second count is a question still open or never reached. */
+export type SessionTiming = {
+  session_id: string;
+  student_id: string;
+  display_name: string;
+  started_at: string;
+  completed_at: string | null;
+  current_question: number;
+  seconds: (number | null)[];
+  total_seconds: number | null;
+  reflection: Reflection | null;
+};
+
+export type Timings = { questions: string[]; sessions: SessionTiming[] };
 
 export type SessionMessages = {
   session_id: string;
   student_id: string;
   assignment_id: string;
   level: HintLevel;
+  current_question?: number;
+  completed?: boolean;
+  reflection?: Reflection | null;
   messages: { role: "student" | "tutor"; content: string; hint_level: number | null }[];
 };
 
@@ -197,6 +226,8 @@ export type AssignmentForm = {
   notes: string;
   concepts: string[];
   hint_ceiling: number;
+  /** Questions 2 and on. On an edit, `from` is the 1-based place a question had when the form loaded, and no `answer_key` keeps its stored key. */
+  questions: { prompt: string; answer_key?: string; from?: number }[];
 };
 
 /**
@@ -280,6 +311,10 @@ export const api = {
   /** The "Try a smaller problem" control. `level` is the level of the example, 3 unless the guard held it. `session_level` is where the ladder still is. 409 means this assignment does not offer it. */
   smallerProblem: (sessionId: string) =>
     request<{ reply: string; level: HintLevel; session_level: HintLevel; verdict: GuardVerdict; retries: number }>("POST", `/api/sessions/${q(sessionId)}/smaller`),
+  /** The student pressed Next or Finish. The server stops that question's clock; the page never sees a time. */
+  finishQuestion: (sessionId: string) => request<FinishQuestion>("POST", `/api/sessions/${q(sessionId)}/finish-question`),
+  saveReflection: (sessionId: string, answers: { why: string; what_if: string }) =>
+    request<{ reflection: Reflection }>("PUT", `/api/sessions/${q(sessionId)}/reflection`, answers),
   sessionMessages: (sessionId: string) => request<SessionMessages>("GET", `/api/sessions/${q(sessionId)}/messages`),
   /** `attempt` is sent only when the student wrote one. There is no flag that claims an attempt. The server's scribe reads the words. */
   sendTurn: (sessionId: string, text: string, attempt?: string) =>
@@ -301,6 +336,8 @@ export const api = {
   roster: (assignmentId: string) => request<Roster>("GET", `/api/prof/students?assignment_id=${q(assignmentId)}`),
   transcript: (studentId: string, assignmentId: string) =>
     request<Transcript>("GET", `/api/prof/students/${q(studentId)}/transcript?assignment_id=${q(assignmentId)}`),
+  /** Time per question for every session on an assignment. A professor route; the student page never calls it. */
+  timings: (assignmentId: string) => request<Timings>("GET", `/api/prof/timings?assignment_id=${q(assignmentId)}`),
   thursdayCard: (assignmentId: string) => request<ThursdayCard>("GET", `/api/prof/thursday-card?assignment_id=${q(assignmentId)}`),
   generateThursdayCard: (assignmentId: string) =>
     request<ThursdayCard>("POST", `/api/prof/thursday-card?assignment_id=${q(assignmentId)}`),

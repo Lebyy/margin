@@ -1,11 +1,11 @@
 "use client";
 
 import { Alert, Button, Card, Chip, Description, Input, Label, Radio, RadioGroup, Spinner, TextArea, TextField } from "@heroui/react";
-import { ArrowRight, Check, FilePlus2, Lock } from "lucide-react";
+import { ArrowRight, Check, FilePlus2, Lock, Plus, Trash2 } from "lucide-react";
 import NextLink from "next/link";
 import { useEffect, useState } from "react";
 import { Paper } from "@/components/paper";
-import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, type AssignmentKind, type HintLevel } from "@/lib/api";
+import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, MAX_QUESTIONS, type AssignmentKind, type HintLevel } from "@/lib/api";
 import { EXAMPLES } from "@/lib/examples";
 import { KIND } from "@/lib/kinds";
 import { cn } from "@/lib/utils";
@@ -21,9 +21,23 @@ type Form = {
   notes: string;
   concepts: string;
   hint_ceiling: string;
+  /** Questions 2 and on. The prompt and key above are question 1. */
+  more: MoreQuestion[];
 };
 
-const EMPTY: Form = { kind: "code", course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3" };
+/**
+ * One question after the first, as the form holds it.
+ * `from` is the place it had when the form loaded a saved assignment (1-based
+ * among the later questions). The server uses it to keep that question's
+ * stored key when the key field is left empty, so removing question 2 does not
+ * hand question 3 the wrong key. A question added on this visit has no `from`
+ * and must have its key typed. `uid` is only React's list key.
+ */
+type MoreQuestion = { uid: number; prompt: string; answer_key: string; from?: number };
+
+let nextUid = 1;
+
+const EMPTY: Form = { kind: "code", course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3", more: [] };
 
 /**
  * The professor's setup form: the one way an assignment enters the product.
@@ -73,6 +87,8 @@ export default function SetupPage() {
           notes: a.notes,
           concepts: a.concepts.join("\n"),
           hint_ceiling: String(a.hint_ceiling),
+          // Later questions come back with their prompts and never their keys; `from` keeps each stored key on save.
+          more: (a.questions ?? []).slice(1).map((prompt, i) => ({ uid: nextUid++, prompt, answer_key: "", from: i + 1 })),
         });
       })
       .catch(() => undefined)
@@ -82,8 +98,14 @@ export default function SetupPage() {
     };
   }, []);
 
-  const set = (field: keyof Form) => (value: string) => {
+  const set = (field: Exclude<keyof Form, "more">) => (value: string) => {
     setForm((f) => ({ ...f, [field]: value }));
+    setSaved(null);
+  };
+
+  /** Changes one field of one later question. */
+  const setMore = (uid: number, field: "prompt" | "answer_key") => (value: string) => {
+    setForm((f) => ({ ...f, more: f.more.map((m) => (m.uid === uid ? { ...m, [field]: value } : m)) }));
     setSaved(null);
   };
 
@@ -101,6 +123,11 @@ export default function SetupPage() {
     if (!editingId && form.kind !== "topic" && !form.answer_key.trim()) missing.answer_key = "The guard needs the answer key to check hints against.";
     if (concepts.length === 0) missing.concepts = "List at least one concept.";
     if (new Set(concepts).size !== concepts.length) missing.concepts = "Each concept can appear once.";
+    form.more.forEach((m, i) => {
+      if (!m.prompt.trim()) missing[`more.${m.uid}`] = `Write question ${i + 2}, or remove it.`;
+      // A question with a stored key (`from`) may leave the field empty to keep it.
+      else if (form.kind !== "topic" && !m.answer_key.trim() && m.from === undefined) missing[`more.${m.uid}`] = `Question ${i + 2} needs its answer key.`;
+    });
     setIssues(missing);
     if (Object.keys(missing).length > 0) return;
 
@@ -117,11 +144,16 @@ export default function SetupPage() {
         notes: form.notes,
         concepts,
         hint_ceiling: Number(form.hint_ceiling),
+        questions: form.more.map((m) => ({
+          prompt: m.prompt.trim(),
+          ...(m.answer_key.trim() ? { answer_key: m.answer_key.trim() } : m.from !== undefined ? { from: m.from } : {}),
+        })),
       });
       browser.setProfAssignmentId(result._id);
       setEditingId(result._id);
       // The key leaves the page's memory here. It is on the server now, and nothing sends it back.
-      setForm((f) => ({ ...f, answer_key: "" }));
+      // Every question's key is cleared, and each question now has a stored key at its current place.
+      setForm((f) => ({ ...f, answer_key: "", more: f.more.map((m, i) => ({ ...m, answer_key: "", from: i + 1 })) }));
       setSaved(result._id);
     } catch (e) {
       if (e instanceof ApiError && e.issues.length > 0) {
@@ -218,7 +250,7 @@ export default function SetupPage() {
                     size="sm"
                     variant="ghost"
                     onPress={() => {
-                      setForm({ kind: e.kind, course_name: e.course_name, title: e.title, prompt: e.prompt, answer_key: e.answer_key, notes: e.notes, concepts: e.concepts.join("\n"), hint_ceiling: String(e.hint_ceiling) });
+                      setForm({ kind: e.kind, course_name: e.course_name, title: e.title, prompt: e.prompt, answer_key: e.answer_key, notes: e.notes, concepts: e.concepts.join("\n"), hint_ceiling: String(e.hint_ceiling), more: [] });
                       setIssues({});
                     }}
                   >
@@ -242,7 +274,7 @@ export default function SetupPage() {
             </div>
 
             <TextField value={form.prompt} onChange={set("prompt")} isRequired isInvalid={!!issues.prompt} fullWidth name="prompt">
-              <Label>Prompt</Label>
+              <Label>{form.more.length > 0 ? "Question 1" : "Prompt"}</Label>
               <TextArea rows={3} />
                             {issues.prompt ? <FieldNote>{issues.prompt}</FieldNote> : null}
             </TextField>
@@ -279,6 +311,59 @@ export default function SetupPage() {
 
               </>
             )}
+
+            {/*
+              Questions 2 and on. Each has its own prompt and its own key, and the
+              student moves through them in order with Next. The time each one took
+              is shown on the dashboard; students are told that, and see no clock.
+            */}
+            {form.more.map((m, i) => (
+              <section key={m.uid} aria-label={`Question ${i + 2}`} className="flex flex-col gap-3 rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium">Question {i + 2}</h2>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove question ${i + 2}`}
+                    onPress={() => {
+                      setForm((f) => ({ ...f, more: f.more.filter((x) => x.uid !== m.uid) }));
+                      setSaved(null);
+                    }}
+                  >
+                    <Trash2 className="size-4" aria-hidden /> Remove
+                  </Button>
+                </div>
+                <TextField value={m.prompt} onChange={setMore(m.uid, "prompt")} isRequired fullWidth name={`question_${i + 2}_prompt`}>
+                  <Label>Prompt</Label>
+                  <TextArea rows={3} />
+                </TextField>
+                {form.kind === "topic" ? null : (
+                  <TextField value={m.answer_key} onChange={setMore(m.uid, "answer_key")} isRequired={m.from === undefined} fullWidth name={`question_${i + 2}_key`}>
+                    <Label>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Lock className="size-3.5" aria-hidden /> Answer key
+                      </span>
+                    </Label>
+                    <TextArea rows={4} className="font-mono text-[13px]" spellCheck={false} autoComplete="off" placeholder={m.from !== undefined ? "Leave empty to keep the stored key." : "Your solution"} />
+                  </TextField>
+                )}
+                {issues[`more.${m.uid}`] ? <FieldNote>{issues[`more.${m.uid}`]}</FieldNote> : null}
+              </section>
+            ))}
+            {form.more.length + 1 < MAX_QUESTIONS ? (
+              <div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => {
+                    setForm((f) => ({ ...f, more: [...f.more, { uid: nextUid++, prompt: "", answer_key: "" }] }));
+                    setSaved(null);
+                  }}
+                >
+                  <Plus className="size-4" aria-hidden /> Add question
+                </Button>
+              </div>
+            ) : null}
 
             {/* A whole lecture can be pasted here (D-R5). The server caps notes at
                 MAX_NOTES_CHARS (routes.ts); maxLength stops the paste at the same

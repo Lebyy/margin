@@ -1,7 +1,7 @@
 "use client";
 
 import { Alert, Button, Card, Chip, Description, Input, Label, Spinner, Tabs, TextArea, TextField, Tooltip } from "@heroui/react";
-import { ArrowUp, Bug, Camera, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
+import { ArrowRight, ArrowUp, Bug, Camera, Check, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import NextLink from "next/link";
 import { useParams } from "next/navigation";
@@ -16,7 +16,8 @@ import { PhotoMark } from "@/components/student/photo-mark";
 import { SketchPad, type CanvasImage, type Stroke } from "@/components/student/sketch-pad";
 import { Quiz } from "@/components/student/quiz";
 import { StudyPanel } from "@/components/student/study-panel";
-import { api, ApiError, conceptLabel, STRUGGLE_LABEL, type Assignment, type Drawing, type HintLevel, type PhotoBox, type StudentProgress, type TurnReply } from "@/lib/api";
+import { ReflectionCard } from "@/components/student/reflection-card";
+import { api, ApiError, conceptLabel, STRUGGLE_LABEL, type Assignment, type Drawing, type HintLevel, type PhotoBox, type Reflection, type StudentProgress, type TurnReply } from "@/lib/api";
 import { PHOTO_ACCEPT, preparePhoto } from "@/lib/photo";
 import { splitTurn } from "@/lib/attempt";
 import { browser } from "@/lib/browser";
@@ -85,6 +86,12 @@ export default function StudentAssignmentPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [studentId, setStudentId] = useState<string | null>(null);
   const [level, setLevel] = useState<HintLevel>(1);
+  // Which question the student is on (0-based), and the two reflection
+  // questions once the last one is finished. Both come from the server; the
+  // page holds no clock, and the time each question took is never sent here.
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [reflection, setReflection] = useState<Reflection | null>(null);
+  const [finishing, setFinishing] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [debug, setDebug] = useState<DebugTurn[]>([]);
   const [progress, setProgress] = useState<StudentProgress | null>(null);
@@ -156,6 +163,8 @@ export default function StudentAssignmentPage() {
           setSessionId(s.session_id);
           setStudentId(s.student_id);
           setLevel(s.level);
+          setQuestionIndex(s.current_question ?? 0);
+          setReflection(s.completed ? (s.reflection ?? null) : null);
           setTurns(
             s.messages.map((m, i) => {
               const parts = splitTurn(m.content);
@@ -212,6 +221,35 @@ export default function StudentAssignmentPage() {
   function editCode(next: string) {
     setCode(next);
     browser.setCode(assignmentId, next);
+  }
+
+  /**
+   * Next question, or Finish on the last one.
+   * The server stops this question's clock and starts the next. On Next the
+   * ladder starts again at the level the server returns, and the editor is
+   * cleared because the work in it was for the question just finished. On
+   * Finish the server returns the two reflection questions.
+   */
+  async function finishQuestion() {
+    if (!sessionId || finishing) return;
+    setFinishing(true);
+    setSendError(null);
+    try {
+      const result = await api.finishQuestion(sessionId);
+      if (result.done) {
+        setReflection(result.reflection);
+      } else {
+        setQuestionIndex(result.current_question);
+        setLevel(result.level);
+        setLastReply(null);
+        editCode("");
+        setSentCode("");
+      }
+    } catch {
+      setSendError("Could not move on. Try again.");
+    } finally {
+      setFinishing(false);
+    }
   }
 
   /**
@@ -353,6 +391,8 @@ export default function StudentAssignmentPage() {
       setStudentId(s.student_id);
       setSessionId(s.session_id);
       setLevel(s.level);
+      setQuestionIndex(0);
+      setReflection(null);
       setTurns([]);
       setDebug([]);
       setLastReply(null);
@@ -437,6 +477,10 @@ export default function StudentAssignmentPage() {
   const codeIsNew = code.trim().length > 0 && code.trim() !== sentCode.trim();
   const canSend = question.trim().length > 0 || (!isTopic && codeIsNew);
   const removed = lastReply?.sent.redactions ?? 0;
+  // An older server sends no list, and its single prompt is the only question.
+  const prompts = assignment.questions?.length ? assignment.questions : [assignment.prompt];
+  const current = Math.min(questionIndex, prompts.length - 1);
+  const isLast = current === prompts.length - 1;
 
   return (
     <div className="flex flex-col gap-5">
@@ -472,8 +516,10 @@ export default function StudentAssignmentPage() {
       <div className={sessionId ? "grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_28rem]" : "flex flex-col gap-5"}>
         <div className="flex min-w-0 flex-col gap-5">
           <Paper as="article" aria-label="Brief">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">Brief</h2>
-            <p className="mt-1.5 whitespace-pre-wrap font-serif text-lg leading-7">{assignment.prompt}</p>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">
+              {prompts.length > 1 ? `Question ${current + 1} of ${prompts.length}` : "Brief"}
+            </h2>
+            <p className="mt-1.5 whitespace-pre-wrap font-serif text-lg leading-7">{prompts[current]}</p>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {assignment.concepts.map((c) => (
                 <Chip key={c} size="sm" variant="soft">
@@ -481,7 +527,32 @@ export default function StudentAssignmentPage() {
                 </Chip>
               ))}
             </div>
+            {/*
+              Moving on. Next closes this question and opens the next; Finish closes the
+              last one and brings the two reflection questions. The time each question took
+              goes to the professor's dashboard. There is no clock on this page, and the
+              line below says so plainly, because a timer the student was not told about
+              would make the dashboard the surveillance tool Margin says it is not.
+            */}
+            {sessionId && !reflection ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+                <p className="text-sm text-muted">Your professor sees how long each question took. It is feedback, not a grade.</p>
+                <Button size="sm" variant={isLast ? "primary" : "secondary"} isPending={finishing} isDisabled={finishing} onPress={finishQuestion}>
+                  {isLast ? (
+                    <>
+                      <Check className="size-4" aria-hidden /> Finish assignment
+                    </>
+                  ) : (
+                    <>
+                      Next question <ArrowRight className="size-4" aria-hidden />
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : null}
           </Paper>
+
+          {sessionId && reflection ? <ReflectionCard sessionId={sessionId} reflection={reflection} questionCount={prompts.length} /> : null}
 
           {/*
             Understand it first. This is the comprehension step: before any code, the student says in their own words what the function should do and what input could break it, and Margin responds to that reasoning. It is sent as the student's message through the same turn route, so the scribe labels it and a real explanation counts as a try. Nothing is checked or scored on this page.
@@ -566,7 +637,7 @@ export default function StudentAssignmentPage() {
                         <AnimatePresence initial={false}>
                           {turns.map((turn) => (
                             <motion.div key={turn.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: "easeOut" }}>
-                              <Turn turn={turn} isDemo={/sum_list/.test(assignment.prompt)} />
+                              <Turn turn={turn} isDemo={/sum_list/.test(prompts[current])} />
                             </motion.div>
                           ))}
                         </AnimatePresence>

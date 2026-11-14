@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
-import { FALLBACK_REPLY, textHasCanary } from "./guard.ts";
+import { FALLBACK_REPLY, fallbackFor, textHasCanary } from "./guard.ts";
 import { completeJson, countIdentity, generateSpeech, type TextGenerator } from "./llm.ts";
 import {
   ASSIGNMENT_KINDS,
@@ -31,6 +31,8 @@ import { draftHint } from "./tutor.ts";
 import { checkDeterministic } from "./guard.ts";
 import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
 import { studentFlashcards } from "./flashcards.ts";
+import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
+import { reflectOn, type Reflection } from "./reflect.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { AssignmentKind, GuardVerdict, HintLevel } from "./types.ts";
 
@@ -53,6 +55,27 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
     return;
   }
   next();
+}
+
+/** The most questions one assignment may have, question 1 included. Exported so the form and the tests use the same number. */
+export const MAX_QUESTIONS = 10;
+
+/**
+ * The stored `questions` and `question_keys` for a saved form.
+ *
+ * `previousKeys` are the keys of questions 2 and on as stored before this
+ * save, in order. A question that sent a key uses it; one that sent `from`
+ * keeps the key it had; anything else has no key, and the caller refuses the
+ * save unless the assignment is a topic. Returns null in that refused case.
+ */
+function laterQuestions(
+  questions: { prompt: string; answer_key?: string; from?: number }[],
+  previousKeys: string[],
+  kind: AssignmentKind,
+): { questions: { prompt: string }[]; question_keys: string[] } | null {
+  const keys = questions.map((q) => q.answer_key ?? (q.from !== undefined ? (previousKeys[q.from - 1] ?? "") : ""));
+  if (kind !== "topic" && keys.some((k) => k.trim().length === 0)) return null;
+  return { questions: questions.map((q) => ({ prompt: q.prompt })), question_keys: kind === "topic" ? keys.map(() => "") : keys };
 }
 
 /** The longest notes paste the setup form may save. Exported so the form and the tests use the same number. */
@@ -85,6 +108,23 @@ const assignmentFields = z.object({
     .min(1)
     .refine((list) => new Set(list).size === list.length, "concepts must not repeat"),
   hint_ceiling: z.number().int().min(1).max(3).default(3),
+  // Questions 2 and on; `prompt` and `answer_key` above are question 1. Each
+  // later question has its own key, which only the guard reads. On an edit a
+  // question may leave its key out and send `from`, the index (1-based within
+  // this list) it had when the form loaded, to keep that question's stored
+  // key. Matching by `from` rather than by position is what keeps a key with
+  // its question when the professor removes or reorders one. Ten questions in
+  // all is far more than one sitting needs, and bounds the work per save.
+  questions: z
+    .array(
+      z.object({
+        prompt: z.string().trim().min(1),
+        answer_key: z.string().trim().min(1).optional(),
+        from: z.number().int().min(1).optional(),
+      }),
+    )
+    .max(MAX_QUESTIONS - 1)
+    .default([]),
 });
 
 /**
@@ -96,10 +136,15 @@ const assignmentFields = z.object({
  * Requiring it would force the professor to retype the solution on every edit.
  */
 /** A new assignment. Every kind but a topic needs its key, because the guard checks hints against it. */
-const assignmentInput = assignmentFields.refine((a) => a.kind === "topic" || a.answer_key !== undefined, {
-  message: "an answer key is required",
-  path: ["answer_key"],
-});
+const assignmentInput = assignmentFields
+  .refine((a) => a.kind === "topic" || a.answer_key !== undefined, {
+    message: "an answer key is required",
+    path: ["answer_key"],
+  })
+  .refine((a) => a.kind === "topic" || a.questions.every((q) => q.answer_key !== undefined), {
+    message: "every question needs an answer key",
+    path: ["questions"],
+  });
 
 const assignmentUpdate = assignmentFields.extend({
   id: z.string().refine((s) => mongoose.isValidObjectId(s), "id is not an assignment id"),
@@ -246,6 +291,8 @@ export type RouteDeps = {
   vision?: TextGenerator;
   /** Revision cards written from the notes. */
   flashcards?: TextGenerator;
+  /** The two reflection questions after the last question. */
+  reflect?: TextGenerator;
 };
 
 /** Answers a zod failure with field paths only, never the submitted values. */
@@ -279,27 +326,33 @@ function rejectInvalid(res: Response, error: z.ZodError): void {
  */
 async function answerPhoto(
   res: Response,
-  session: { _id: mongoose.Types.ObjectId; student_id: mongoose.Types.ObjectId; assignment_id: mongoose.Types.ObjectId },
+  session: { _id: mongoose.Types.ObjectId; student_id: mongoose.Types.ObjectId; assignment_id: mongoose.Types.ObjectId; current_question?: number | null },
   image: { mimeType: string; base64: string },
   vision: TextGenerator | undefined,
   judge: TextGenerator | undefined,
   level: number,
 ): Promise<void> {
-  const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean();
+  const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary +question_keys").lean();
   if (!assignment) {
     res.status(404).json({ error: "assignment_not_found" });
     return;
   }
   const concepts = assignment.concepts ?? [];
+  // The photo is read against the question the student is on.
+  const current = questionAt(assignment, session.current_question ?? 0);
+  const canary = assignment.canary ?? CANARY;
+  const kind = (assignment.kind ?? "code") as AssignmentKind;
   const marked = await findStep({
-    prompt: assignment.prompt,
+    prompt: current.prompt,
     concepts,
     image,
-    answerKey: assignment.answer_key ?? "",
-    canary: assignment.canary ?? CANARY,
+    answerKey: current.answerKey,
+    canary,
     generate: vision,
   });
-  if (!marked) {
+  // A step naming another question's solution is treated like any step that
+  // leaks: no mark, nothing stored, the fixed 501.
+  if (!marked || leaksAnotherQuestion(marked.step, current.otherKeys, canary, kind)) {
     res.status(501).json({ error: "vision_unavailable" });
     return;
   }
@@ -326,7 +379,10 @@ async function answerPhoto(
     concepts,
   });
 
-  const asked = await guardQuestion(marked.question, assignment.answer_key ?? "", assignment.canary ?? CANARY, judge);
+  let asked = await guardQuestion(marked.question, current.answerKey, canary, judge);
+  if (leaksAnotherQuestion(asked.question, current.otherKeys, canary, kind)) {
+    asked = { question: fallbackFor(kind), verdict: HELD_FOR_ANOTHER_QUESTION };
+  }
   // Stored like a tutor reply, at the level the session is already on, so the
   // professor's transcript and the student's log pair the photo with the
   // question that answered it.
@@ -340,6 +396,19 @@ async function answerPhoto(
   }).save();
 
   res.json({ step: marked.step, box: marked.box, question: asked.question, level });
+}
+
+/**
+ * The verdict on a reply held because it contains another question's
+ * solution. The reason is empty: it would name which question's key matched,
+ * and a student does not need to learn that.
+ */
+const HELD_FOR_ANOTHER_QUESTION: GuardVerdict = { leaks: true, severity: "full", reason: "", layer: "fallback" };
+
+/** The two reflection questions as a student or professor reads them, with the student's answers. */
+function publicReflection(r: { why: string; what_if: string; what_if_index: number; answers?: { why?: string | null; what_if?: string | null } | null } | null | undefined): (Reflection & { answers: { why: string; what_if: string } }) | null {
+  if (!r) return null;
+  return { why: r.why, what_if: r.what_if, what_if_index: r.what_if_index, answers: { why: r.answers?.why ?? "", what_if: r.answers?.what_if ?? "" } };
 }
 
 /**
@@ -400,7 +469,10 @@ export function createRouter(deps: RouteDeps = {}): Router {
 
       // `new` + `save` rather than `Assignment.create`: Mongoose 9's typings for
       // `create` reject a string array field, while the constructor accepts it.
-      const saved = await new Assignment({ ...parsed.data, canary: CANARY, course_id: await courseIdFor(parsed.data.course_name) }).save();
+      const { questions, ...first } = parsed.data;
+      const later = laterQuestions(questions, [], first.kind);
+      // The refine above already required every key, so `later` is only null for a topic, which this never is.
+      const saved = await new Assignment({ ...first, ...(later ?? { questions: [], question_keys: [] }), canary: CANARY, course_id: await courseIdFor(first.course_name) }).save();
       res.status(201).json(saved.toJSON());
       return;
     }
@@ -408,8 +480,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
     const parsed = assignmentUpdate.safeParse(req.body);
     if (!parsed.success) return rejectInvalid(res, parsed.error);
 
-    const { id, answer_key, ...fields } = parsed.data;
-    const doc = await Assignment.findById(id);
+    const { id, answer_key, questions, ...fields } = parsed.data;
+    const doc = await Assignment.findById(id).select("+question_keys");
     if (!doc) {
       res.status(404).json({ error: "assignment_not_found" });
       return;
@@ -420,6 +492,13 @@ export function createRouter(deps: RouteDeps = {}): Router {
     doc.set(fields);
     doc.set("course_id", await courseIdFor(fields.course_name));
     if (answer_key !== undefined) doc.set("answer_key", answer_key);
+    const later = laterQuestions(questions, doc.question_keys ?? [], fields.kind);
+    if (!later) {
+      res.status(400).json({ error: "invalid_assignment", issues: [{ path: "questions", message: "every question needs an answer key" }] });
+      return;
+    }
+    doc.set("questions", later.questions);
+    doc.set("question_keys", later.question_keys);
     const saved = await doc.save();
     res.status(200).json(saved.toJSON());
   });
@@ -466,6 +545,9 @@ export function createRouter(deps: RouteDeps = {}): Router {
       student_id: studentId,
       assignment_id,
       current_level: START_LEVEL,
+      // Question 1's clock starts with the session.
+      current_question: 0,
+      question_times: [{ index: 0, started_at: new Date(), finished_at: null }],
     }).save();
 
     res.status(201).json({
@@ -473,6 +555,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
       student_id: studentId,
       assignment_id,
       level: session.current_level,
+      current_question: 0,
     });
   });
 
@@ -528,13 +611,16 @@ export function createRouter(deps: RouteDeps = {}): Router {
     // The key and canary are selected here and passed only to the scribe's
     // local evidence scrub and to runTurn's guard. They never go into a
     // response, and runTurn keeps them out of the tutor's prompt.
-    const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean();
+    const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary +question_keys").lean();
     if (!assignment) {
       res.status(404).json({ error: "assignment_not_found" });
       return;
     }
+    // The question this session is on. Its key is the guard's; the other
+    // questions' keys are checked after the turn (see leaksAnotherQuestion).
     // A learning topic has no key. An empty key hits nothing in the guard's string check.
-    const answerKey = assignment.answer_key ?? "";
+    const question = questionAt(assignment, session.current_question ?? 0);
+    const answerKey = question.answerKey;
     const canary = assignment.canary ?? CANARY;
     const concepts = assignment.concepts ?? [];
 
@@ -553,7 +639,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
     const turnState: TurnState = {
       level: session.current_level as HintLevel,
       hintCeiling: assignment.hint_ceiling as HintLevel,
-      prompt: assignment.prompt,
+      prompt: question.prompt,
       notes: await classNotes(assignment),
       turns: history.map((m) => ({ role: m.role, text: m.content })),
       answerKey,
@@ -566,7 +652,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
     const early = startDraft(turnState, text, hooks);
 
     const label = await labelTurn({
-      prompt: assignment.prompt,
+      prompt: question.prompt,
       concepts,
       studentText: text,
       recentTurns: history,
@@ -598,7 +684,13 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
 
-    const released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary);
+    let released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary);
+    // The guard checked this question's key. A reply that holds another
+    // question's solution is held the same way, with the same fallback.
+    const kind = (assignment.kind ?? "code") as AssignmentKind;
+    if (leaksAnotherQuestion(released.reply, question.otherKeys, canary, kind)) {
+      released = studentRelease(fallbackFor(kind), HELD_FOR_ANOTHER_QUESTION, canary);
+    }
     // The stored tutor message is the text the student was allowed to see.
     // A reload reads this content, so the marker cannot live only in the response.
     await new Message({
@@ -663,7 +755,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
    */
   router.post("/api/sessions/:id/smaller", async (req, res) => {
     const session = mongoose.isValidObjectId(req.params.id) ? await Session.findById(req.params.id).lean() : null;
-    const assignment = session ? await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean() : null;
+    const assignment = session ? await Assignment.findById(session.assignment_id).select("+answer_key +canary +question_keys").lean() : null;
     if (!session || !assignment) {
       res.status(404).json({ error: "session_not_found" });
       return;
@@ -672,7 +764,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
       res.status(409).json({ error: "not_offered" });
       return;
     }
-    const answerKey = assignment.answer_key ?? "";
+    const question = questionAt(assignment, session.current_question ?? 0);
+    const answerKey = question.answerKey;
     const canary = assignment.canary ?? CANARY;
     let result;
     try {
@@ -680,7 +773,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
         {
           level: session.current_level as HintLevel,
           hintCeiling: 3,
-          prompt: assignment.prompt,
+          prompt: question.prompt,
           notes: await classNotes(assignment),
           turns: [],
           answerKey,
@@ -693,6 +786,10 @@ export function createRouter(deps: RouteDeps = {}): Router {
       console.error("smaller problem failed:", (error as Error).name);
       res.status(503).json({ error: "tutor_unavailable" });
       return;
+    }
+    // The same cross-question check as a typed turn.
+    if (leaksAnotherQuestion(result.reply, question.otherKeys, canary, (assignment.kind ?? "code") as AssignmentKind)) {
+      result = { ...result, reply: fallbackFor((assignment.kind ?? "code") as AssignmentKind), verdict: HELD_FOR_ANOTHER_QUESTION };
     }
     await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK }).save();
     await new Message({ session_id: session._id, role: "tutor", content: result.reply, hint_level: result.level, guard_verdict: result.verdict, retries: result.retries }).save();
@@ -724,8 +821,103 @@ export function createRouter(deps: RouteDeps = {}): Router {
       student_id: String(session.student_id),
       assignment_id: String(session.assignment_id),
       level: session.current_level,
+      // Where the student is, so a reload returns to the same question and,
+      // once finished, to the reflection. `question_times` is deliberately not
+      // here: the clock is the professor's view, and the student page shows none.
+      current_question: session.current_question ?? 0,
+      completed: session.completed_at != null,
+      reflection: session.reflection ?? null,
       messages: messages.map((m) => ({ role: m.role, content: m.content, hint_level: m.hint_level ?? null })),
     });
+  });
+
+  /**
+   * POST /api/sessions/:id/finish-question: the student pressed Next or Finish.
+   *
+   * It closes the clock on the current question with the server's time. If
+   * another question follows, its clock opens and the session moves to it;
+   * the hint ladder starts again at START_LEVEL there, because the policy's
+   * "a new attempt since the last hint" is about one question, and a student
+   * who reached level 3 on question 1 has not earned level 3 on question 2.
+   *
+   * On the last question the session is marked complete and the two
+   * reflection questions are written (reflect.ts), stored, and returned. A
+   * second call on a finished session returns the stored reflection and calls
+   * no model, so a double click or a reload cannot spend the credit twice or
+   * restart a clock. The response never carries a time.
+   */
+  router.post("/api/sessions/:id/finish-question", async (req, res) => {
+    const session = mongoose.isValidObjectId(req.params.id) ? await Session.findById(req.params.id) : null;
+    if (!session) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    if (session.completed_at && session.reflection) {
+      res.json({ done: true, reflection: publicReflection(session.reflection) });
+      return;
+    }
+    const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary +question_keys").lean();
+    if (!assignment) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    const now = new Date();
+    const count = questionCount(assignment);
+    const index = Math.min(session.current_question ?? 0, count - 1);
+    const times = session.question_times;
+    const open = times.find((t) => t.index === index && !t.finished_at);
+    // A session started before the clock existed has no open entry. Its time
+    // is unknown, so it is recorded as unfinished rather than as zero seconds.
+    if (open) open.finished_at = now;
+
+    if (index + 1 < count) {
+      session.current_question = index + 1;
+      session.current_level = START_LEVEL;
+      times.push({ index: index + 1, started_at: now, finished_at: null });
+      await session.save();
+      res.json({ done: false, current_question: index + 1, level: START_LEVEL });
+      return;
+    }
+
+    // The last question. The student's own words go to the model, never the tutor's or the key.
+    const studentTurns = (await Message.find({ session_id: session._id, role: "student" }).sort({ created_at: 1, _id: 1 }).select("content").lean()).map((m) => m.content);
+    const written = await reflectOn({
+      prompts: questionPrompts(assignment),
+      studentTurns,
+      keys: questionKeys(assignment),
+      canary: assignment.canary ?? CANARY,
+      kind: (assignment.kind ?? "code") as AssignmentKind,
+      generate: deps.reflect,
+    });
+    session.completed_at = now;
+    session.set("reflection", { ...written, answers: { why: "", what_if: "" } });
+    await session.save();
+    res.json({ done: true, reflection: publicReflection(session.reflection) });
+  });
+
+  /**
+   * PUT /api/sessions/:id/reflection: the student's answers to the two questions.
+   * Saved as typed, replacing any earlier answer, so the student can revise.
+   * Only a finished session has questions to answer, so anything else is 409.
+   */
+  router.put("/api/sessions/:id/reflection", async (req, res) => {
+    const body = z.object({ why: z.string().max(2000), what_if: z.string().max(2000) }).safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "invalid_reflection" });
+      return;
+    }
+    const session = mongoose.isValidObjectId(req.params.id) ? await Session.findById(req.params.id) : null;
+    if (!session) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    if (!session.reflection) {
+      res.status(409).json({ error: "not_finished" });
+      return;
+    }
+    session.set("reflection.answers", { why: body.data.why, what_if: body.data.what_if });
+    await session.save();
+    res.json({ reflection: publicReflection(session.reflection) });
   });
 
   /**
@@ -889,6 +1081,46 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
     res.json(result);
+  });
+
+  /**
+   * GET /api/prof/timings?assignment_id=: time per question for every session.
+   *
+   * One row per session, newest first, with the seconds each question took
+   * from the server's clock, whether it is finished, and the reflection the
+   * student answered. Read from the database only; no model is called. A
+   * question still open, or never reached, is `null`, never a running total,
+   * so every number shown is one the student finished. This is the only route
+   * that returns the clock, and it is a professor route.
+   */
+  router.get("/api/prof/timings", async (req, res) => {
+    const id = String(req.query.assignment_id ?? "");
+    const assignment = mongoose.isValidObjectId(id) ? await Assignment.findById(id).select("prompt questions").lean() : null;
+    if (!assignment) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    const prompts = questionPrompts(assignment);
+    const sessions = await Session.find({ assignment_id: id }).sort({ created_at: -1, _id: -1 }).lean();
+    const students = await Student.find({ _id: { $in: sessions.map((s) => s.student_id) } }).select("display_name").lean();
+    const names = new Map(students.map((s) => [String(s._id), s.display_name]));
+    res.json({
+      questions: prompts,
+      sessions: sessions.map((s) => {
+        const seconds = secondsPerQuestion((s.question_times ?? []) as QuestionTime[], prompts.length);
+        return {
+          session_id: String(s._id),
+          student_id: String(s.student_id),
+          display_name: names.get(String(s.student_id)) ?? "",
+          started_at: new Date(s.created_at as Date).toISOString(),
+          completed_at: s.completed_at ? new Date(s.completed_at).toISOString() : null,
+          current_question: s.current_question ?? 0,
+          seconds,
+          total_seconds: s.completed_at && seconds.every((n) => n !== null) ? seconds.reduce((a: number, n) => a + (n ?? 0), 0) : null,
+          reflection: s.reflection ? { ...publicReflection(s.reflection), answers: s.reflection.answers ?? { why: "", what_if: "" } } : null,
+        };
+      }),
+    });
   });
 
   /**
