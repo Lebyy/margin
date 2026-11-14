@@ -1,0 +1,116 @@
+/*
+ * The one stylesheet. Tailwind comes first because HeroUI's styles are written
+ * against its layers, and the order of these two imports is the order HeroUI's
+ * quick start requires.
+ */
+@import "tailwindcss";
+@import "@heroui/styles";
+
+/*
+ * `dark:` follows the attribute next-themes writes on <html>, not the system
+ * setting alone. Without this line the header toggle would change HeroUI's
+ * tokens while every `dark:` utility kept following the operating system.
+ */
+@custom-variant dark (&:is(.dark *, [data-theme="dark"] *));
+
+/*
+ * Margin's own tokens. Everything else on screen uses HeroUI's tokens
+ * (background, surface, muted, border, accent, danger).
+ *
+ * --margin-red is the professor's red pen: the margin line, the mark beside a
+ * student's line, and the current rung of the hint ladder. --paper is the
+ * sheet the work sits on, and --paper-line its ruling.
+ *
+ * Each token has a light and a dark value. A component reads the token and
+ * never a hex color, which is what keeps a screen readable in both themes.
+ */
+:root,
+[data-theme="light"] {
+  --margin-red: oklch(0.56 0.21 25);
+  --margin-red-soft: oklch(0.56 0.21 25 / 0.1);
+  --margin-green: oklch(0.55 0.14 150);
+  --margin-green-soft: oklch(0.55 0.14 150 / 0.12);
+  --paper: oklch(0.992 0.006 85);
+  --paper-line: oklch(0.6 0.03 250 / 0.14);
+  --paper-shadow: 0 1px 2px oklch(0.2 0.02 60 / 0.06), 0 12px 32px -12px oklch(0.2 0.02 60 / 0.18);
+}
+
+.dark,
+[data-theme="dark"] {
+  --margin-red: oklch(0.7 0.19 25);
+  --margin-red-soft: oklch(0.7 0.19 25 / 0.14);
+  --margin-green: oklch(0.74 0.15 150);
+  --margin-green-soft: oklch(0.74 0.15 150 / 0.14);
+  --paper: oklch(0.225 0.008 260);
+  --paper-line: oklch(0.85 0.02 250 / 0.07);
+  --paper-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 16px 40px -16px oklch(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --color-margin-red: var(--margin-red);
+  --color-margin-red-soft: var(--margin-red-soft);
+  --color-margin-green: var(--margin-green);
+  --color-margin-green-soft: var(--margin-green-soft);
+  --color-paper: var(--paper);
+  --color-paper-line: var(--paper-line);
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/*
+ * The sheet of paper both screens are built on.
+ *
+ * The red line down the left is the margin the product is named for. It is a
+ * background gradient and not an element, so it cannot take focus, cannot be
+ * read by a screen reader as content, and stays in place when the sheet
+ * scrolls. The ruling is a second gradient at the line height of body text.
+ *
+ * --paper-gutter is where the red line sits. Content is padded past it, and a
+ * margin mark is placed inside it, so the mark lands in the margin and the
+ * text never does.
+ */
+.paper {
+  --paper-gutter: 2.75rem;
+  position: relative;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(to right, transparent calc(var(--paper-gutter) - 1px), var(--margin-red) calc(var(--paper-gutter) - 1px), var(--margin-red) calc(var(--paper-gutter) + 1px), transparent calc(var(--paper-gutter) + 1px)),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 1.74rem, var(--paper-line) 1.74rem, var(--paper-line) 1.75rem);
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  box-shadow: var(--paper-shadow);
+  padding-left: calc(var(--paper-gutter) + 1rem);
+}
+
+@media (max-width: 640px) {
+  .paper {
+    --paper-gutter: 1.5rem;
+    padding-left: calc(var(--paper-gutter) + 0.75rem);
+  }
+}
+
+/* A sheet with no ruling, for dense content such as the heatmap, where lines behind a grid would fight the grid. */
+.paper-plain {
+  background-image: linear-gradient(to right, transparent calc(var(--paper-gutter) - 1px), var(--margin-red) calc(var(--paper-gutter) - 1px), var(--margin-red) calc(var(--paper-gutter) + 1px), transparent calc(var(--paper-gutter) + 1px));
+}
+
+/*
+ * With reduced motion set, things appear without moving. The Animate UI
+ * components are driven from JavaScript and check the same setting through
+ * MotionConfig in providers.tsx. This rule covers the CSS transitions.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

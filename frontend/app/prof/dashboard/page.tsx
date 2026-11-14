@@ -1,0 +1,541 @@
+"use client";
+
+import { Alert, Button, Card, Chip, Drawer, Label, Meter, Spinner } from "@heroui/react";
+import { ArrowRight, MessageSquareText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import NextLink from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { ApiNumber } from "@/components/api-number";
+import { Paper } from "@/components/paper";
+import { useAssignment } from "@/components/prof/use-assignment";
+import {
+  api,
+  ApiError,
+  conceptLabel,
+  STRUGGLE_LABEL,
+  type ClassSummary,
+  type ConceptSummary,
+  type Roster,
+  type StruggleType,
+  type StudentSummary,
+  type ThursdayCard,
+  type Transcript,
+} from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+/** The struggle types the heatmap has a column for. `none` is not a struggle, so it has no column. */
+const STRUGGLE_COLUMNS: Exclude<StruggleType, "none">[] = ["misconception", "stuck_starting", "syntax_or_mechanics", "careless_error"];
+
+/**
+ * The professor's dashboard.
+ *
+ * The order on the page is the order of the job: what to reteach, then which
+ * concepts the class is stuck on, then, only below that, individual students.
+ * A stranger should be able to point at the reteach card without being told.
+ *
+ * Every number comes from the API as shown. This page formats numbers and
+ * does not compute them: the percent in a heatmap row is
+ * `percent_struggling` from the class summary, and the percent on the card is
+ * the one stored with the card. The animated counter only counts up to that
+ * value.
+ *
+ * Opening the page calls no model. The summary and the roster are counts from
+ * our database, and the card is the stored one. The model runs once, when the
+ * professor presses generate.
+ */
+export default function DashboardPage() {
+  const router = useRouter();
+  const pick = useAssignment();
+  const assignmentId = pick.state === "ready" ? pick.assignmentId : null;
+
+  const [summary, setSummary] = useState<ClassSummary | null>(null);
+  const [roster, setRoster] = useState<Roster | null>(null);
+  const [card, setCard] = useState<ThursdayCard | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [cardNote, setCardNote] = useState<string | null>(null);
+  const [openStudent, setOpenStudent] = useState<StudentSummary | null>(null);
+
+  // Bumped by the refresh button. The effect below re-reads the three routes whenever it changes.
+  const [version, setVersion] = useState(0);
+  const refresh = () => setVersion((v) => v + 1);
+
+  useEffect(() => {
+    if (!assignmentId) return;
+    let live = true;
+    Promise.all([
+      api.classSummary(assignmentId),
+      api.roster(assignmentId),
+      // 404 `no_card_yet` is the ordinary state before the first generate, not an error.
+      api.thursdayCard(assignmentId).catch(() => null),
+    ])
+      .then(([s, r, c]) => {
+        if (!live) return;
+        setFailed(false);
+        setSummary(s);
+        setRoster(r);
+        setCard(c);
+      })
+      .catch(() => live && setFailed(true))
+      .finally(() => live && setLoaded(true));
+    return () => {
+      live = false;
+    };
+  }, [assignmentId, version]);
+
+  /**
+   * Runs the generate endpoint, once, on a press.
+   * A 409 means nobody has struggled yet, so there is nothing true to put on a card. The page says that and stores nothing. It is never called on load or on an empty class.
+   */
+  async function generate() {
+    if (!assignmentId) return;
+    setGenerating(true);
+    setCardNote(null);
+    try {
+      setCard(await api.generateThursdayCard(assignmentId));
+    } catch (e) {
+      setCardNote(
+        e instanceof ApiError && e.code === "no_struggles_yet"
+          ? "No student has struggled with a concept yet, so there is nothing to reteach. The card appears after real sessions."
+          : "The card could not be written just now. Nothing was stored. Try again in a moment.",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  if (pick.state === "loading" || (assignmentId && !loaded)) {
+    return (
+      <div className="flex items-center justify-center gap-2 pt-24 text-muted">
+        <Spinner size="sm" /> Opening the dashboard
+      </div>
+    );
+  }
+  if (pick.state === "error" || failed) {
+    return (
+      <Alert status="danger" className="mx-auto mt-10 max-w-xl">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Description>{pick.state === "error" ? pick.message : "The dashboard could not be loaded."}</Alert.Description>
+        </Alert.Content>
+      </Alert>
+    );
+  }
+  if (pick.state === "none" || !summary || !roster || !assignmentId) {
+    return (
+      <EmptyClass
+        title="No assignment yet"
+        text="Create an assignment, then have a student start a session. The dashboard fills in from what they do."
+        action="Create an assignment"
+        onAction={() => router.push("/prof/setup")}
+      />
+    );
+  }
+
+  const title = pick.state === "ready" ? pick.assignments.find((a) => a.id === assignmentId)?.title : "";
+
+  // Nobody has started a session. The heatmap would be a grid of zeros that reads as broken, so the page says what has not happened yet instead.
+  if (summary.total_students === 0) {
+    return (
+      <div className="flex flex-col gap-5">
+        <Header title={title ?? ""} onRefresh={refresh} />
+        <EmptyClass
+          title="The class has not studied yet"
+          text="Nobody has started a session on this assignment. Share the student page, and the heatmap and the Thursday card appear here from their real turns."
+          action="Open the student page"
+          onAction={() => router.push(`/student/assignment/${assignmentId}`)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Header title={title ?? ""} onRefresh={refresh} />
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        <ThursdayCardPanel card={card} generating={generating} note={cardNote} onGenerate={generate} />
+        <Heatmap summary={summary} />
+      </div>
+
+      <GuardStrip roster={roster} />
+
+      <Card aria-label="Students">
+        <Card.Header>
+          <Card.Title>Students who have studied</Card.Title>
+          <Card.Description>
+            In the order they started, not ranked. Three lines each: the concept, the kind of struggle, the last hint
+            level. This is a formative log, not a grade.
+          </Card.Description>
+        </Card.Header>
+        <Card.Content>
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {roster.students.map((s) => (
+              <li key={s.student_id}>
+                <StudentLines student={s} onOpen={() => setOpenStudent(s)} />
+              </li>
+            ))}
+          </ul>
+        </Card.Content>
+      </Card>
+
+      <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
+    </div>
+  );
+}
+
+function Header({ title, onRefresh }: { title: string; onRefresh: () => void }) {
+  return (
+    <Paper as="div" aria-label="Dashboard">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted">Class view · formative, never a grade</p>
+          <h1 className="mt-1 truncate font-serif text-3xl font-semibold tracking-tight">{title}</h1>
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onPress={onRefresh}>
+            <RefreshCw className="size-4" aria-hidden /> Refresh
+          </Button>
+          <NextLink href="/prof/messages" className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm text-muted hover:bg-default hover:text-foreground">
+            <MessageSquareText className="size-4" aria-hidden /> Messages
+          </NextLink>
+        </div>
+      </div>
+    </Paper>
+  );
+}
+
+/**
+ * The Thursday card: what to reteach, with the percent that code counted.
+ *
+ * The big number is `percent_struggling` from the stored card, the same value
+ * the class summary reports for that concept at the time it was generated.
+ * The prose and the three problems are the model's. The numbers are not.
+ * After a reload this shows the same stored card, with the time it was made.
+ */
+function ThursdayCardPanel({
+  card,
+  generating,
+  note,
+  onGenerate,
+}: {
+  card: ThursdayCard | null;
+  generating: boolean;
+  note: string | null;
+  onGenerate: () => void;
+}) {
+  return (
+    <Paper as="section" plain aria-label="Thursday card" className="flex flex-col">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">Reteach on Thursday</h2>
+        <Button size="sm" variant={card ? "ghost" : "primary"} onPress={onGenerate} isPending={generating} isDisabled={generating}>
+          <Sparkles className="size-4" aria-hidden /> {card ? "Generate again" : "Generate the card"}
+        </Button>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {card ? (
+          <motion.div key={card.card_id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
+            <p className="mt-3 font-serif text-3xl font-semibold tracking-tight">{conceptLabel(card.concept)}</p>
+            <p className="mt-1 flex items-baseline gap-2">
+              <span className="font-serif text-6xl font-semibold tabular-nums text-margin-red">
+                <ApiNumber value={card.percent_struggling} suffix="%" />
+              </span>
+              <span className="text-sm text-muted">
+                of the class struggled with it
+                <br />
+                {card.students_struggling} of {card.total_students} students
+              </span>
+            </p>
+            <p className="mt-4 font-serif text-lg leading-7">{card.reteach_note}</p>
+            <h3 className="mt-4 text-sm font-semibold">Three practice problems</h3>
+            <ol className="mt-1 list-decimal space-y-1.5 pl-5 text-sm leading-6">
+              {card.practice_problems.map((p, i) => (
+                <li key={i}>{p}</li>
+              ))}
+            </ol>
+            <p className="mt-4 text-xs text-muted">
+              Generated <time dateTime={card.generated_at}>{new Date(card.generated_at).toLocaleString()}</time> from the
+              sessions that existed then. The numbers were counted in code. Also sent to you as a{" "}
+              <NextLink href="/prof/messages" className="underline underline-offset-2">
+                message
+              </NextLink>
+              .
+            </p>
+          </motion.div>
+        ) : (
+          <motion.p key="none" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-3 text-muted">
+            No card yet. Generate one to get the weakest concept, the share of the class stuck on it, and three practice
+            problems for Thursday.
+          </motion.p>
+        )}
+      </AnimatePresence>
+
+      {note ? (
+        <Alert status="warning" className="mt-4">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Description>{note}</Alert.Description>
+          </Alert.Content>
+        </Alert>
+      ) : null}
+    </Paper>
+  );
+}
+
+/**
+ * Concepts against struggle rate. A CSS grid, with no chart library.
+ *
+ * One row per concept, in the professor's own order, so rows never reshuffle
+ * between visits. The bar and the percent are `percent_struggling` from the
+ * API. The four small cells are turn counts per kind of struggle. Their tint
+ * is only a way to see the larger count at a glance. The count itself is
+ * always printed in the cell, so the tint carries no information on its own.
+ */
+function Heatmap({ summary }: { summary: ClassSummary }) {
+  const worst = summary.concepts.reduce<ConceptSummary | null>(
+    (best, c) => (c.students_struggling > 0 && (!best || c.percent_struggling > best.percent_struggling) ? c : best),
+    null,
+  );
+  return (
+    <Card aria-label="Concepts against struggle rate">
+      <Card.Header>
+        <Card.Title>Where the class is stuck</Card.Title>
+        <Card.Description>
+          {summary.total_students} student{summary.total_students === 1 ? "" : "s"} · {summary.total_turns} turn
+          {summary.total_turns === 1 ? "" : "s"}. A student counts once per concept, however many times they asked.
+        </Card.Description>
+      </Card.Header>
+      <Card.Content>
+        <div className="flex flex-col gap-4">
+          {summary.concepts.map((c) => (
+            <ConceptRow key={c.concept} concept={c} total={summary.total_students} isWorst={worst?.concept === c.concept} />
+          ))}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted">
+          <span>Small cells are turns by kind:</span>
+          {STRUGGLE_COLUMNS.map((t, i) => (
+            <span key={t}>
+              {i + 1}. {STRUGGLE_LABEL[t]}
+            </span>
+          ))}
+        </div>
+      </Card.Content>
+    </Card>
+  );
+}
+
+function ConceptRow({ concept, total, isWorst }: { concept: ConceptSummary; total: number; isWorst: boolean }) {
+  const most = Math.max(1, ...STRUGGLE_COLUMNS.map((t) => concept.struggle_types[t]));
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5">
+      <Meter
+        value={concept.percent_struggling}
+        color={isWorst ? "danger" : concept.percent_struggling > 0 ? "warning" : "default"}
+        aria-label={`${conceptLabel(concept.concept)}: ${concept.percent_struggling} percent struggling`}
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <Label className="flex items-center gap-2">
+            {conceptLabel(concept.concept)}
+            {isWorst ? (
+              <Chip size="sm" variant="soft" color="danger">
+                weakest
+              </Chip>
+            ) : null}
+          </Label>
+          <span className="text-sm tabular-nums">
+            <span className={cn("font-semibold", isWorst && "text-margin-red")}>
+              <ApiNumber value={concept.percent_struggling} suffix="%" />
+            </span>{" "}
+            <span className="text-muted">
+              · {concept.students_struggling} of {total}
+            </span>
+          </span>
+        </div>
+        <Meter.Track>
+          <Meter.Fill />
+        </Meter.Track>
+      </Meter>
+      <div className="flex gap-1" role="group" aria-label={`Turns by kind of struggle for ${conceptLabel(concept.concept)}`}>
+        {STRUGGLE_COLUMNS.map((t, i) => {
+          const n = concept.struggle_types[t];
+          return (
+            <span
+              key={t}
+              title={`${STRUGGLE_LABEL[t]}: ${n} turn${n === 1 ? "" : "s"}`}
+              aria-label={`${STRUGGLE_LABEL[t]}: ${n} turn${n === 1 ? "" : "s"}`}
+              className="relative flex size-8 items-center justify-center overflow-hidden rounded-md border border-border text-xs tabular-nums"
+            >
+              <span aria-hidden className="absolute inset-0 bg-margin-red" style={{ opacity: n === 0 ? 0 : 0.12 + 0.38 * (n / most) }} />
+              <span className="relative">
+                <span className="sr-only">{i + 1}. </span>
+                {n}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What the guard did for this class, as three counts from the roster route.
+ *
+ * It answers "can students jailbreak it" with this class's own record. The
+ * counts are for the class as a whole. There is no per-student version, on
+ * purpose: an integrity count beside a name would turn the dashboard into the
+ * surveillance tool it says it is not.
+ */
+function GuardStrip({ roster }: { roster: Roster }) {
+  const { answer_requests, drafts_held, replies } = roster.guard;
+  return (
+    <Card aria-label="What the guard did">
+      <Card.Content className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <ShieldCheck className="size-4 text-margin-green" aria-hidden /> The guard, for this class
+        </p>
+        <Stat value={replies} label={`hint${replies === 1 ? "" : "s"} checked before a student saw ${replies === 1 ? "it" : "them"}`} />
+        <Stat value={answer_requests} label={`request${answer_requests === 1 ? "" : "s"} for the answer, answered with a hint`} />
+        <Stat value={drafts_held} label={`repl${drafts_held === 1 ? "y" : "ies"} where a draft was held and rewritten`} />
+        <p className="basis-full text-xs text-muted">Counts for the whole class. Much harder to beat, not impossible.</p>
+      </Card.Content>
+    </Card>
+  );
+}
+
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <p className="flex items-baseline gap-2">
+      <span className="font-serif text-2xl font-semibold tabular-nums">
+        <ApiNumber value={value} />
+      </span>
+      <span className="max-w-[14rem] text-xs leading-4 text-muted">{label}</span>
+    </p>
+  );
+}
+
+/**
+ * One student's three lines, and the button that opens their transcript.
+ * The whole summary is plain text and the action is a separate HeroUI button, so the card is not one large click target that a screen reader would announce as a single unlabeled control.
+ */
+function StudentLines({ student, onOpen }: { student: StudentSummary; onOpen: () => void }) {
+  return (
+    <div className="flex h-full flex-col gap-2 rounded-lg border border-border px-3.5 py-3">
+      <p className="font-medium">{student.display_name}</p>
+      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-y-1 text-sm">
+        <dt className="text-muted">Concept</dt>
+        <dd>{student.concept ? conceptLabel(student.concept) : "no turns yet"}</dd>
+        <dt className="text-muted">Struggle</dt>
+        <dd>{student.concept ? STRUGGLE_LABEL[student.struggle_type] : "no turns yet"}</dd>
+        <dt className="text-muted">Last hint</dt>
+        <dd>{student.last_hint_level ? `level ${student.last_hint_level}` : "none yet"}</dd>
+      </dl>
+      <Button size="sm" variant="ghost" className="mt-auto self-start" onPress={onOpen} isDisabled={student.turns === 0}>
+        Open transcript <ArrowRight className="size-3.5" aria-hidden />
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * One student's turns, read from our database when the drawer opens.
+ *
+ * No model is called to show this, so a drill-down is not a second send of
+ * the student's work. The guard's outcome on a reply is shown as severity and
+ * layer. Its reason is not in the response, because a reason can describe the
+ * solution.
+ */
+function TranscriptDrawer({
+  student,
+  assignmentId,
+  onClose,
+}: {
+  student: StudentSummary | null;
+  assignmentId: string;
+  onClose: () => void;
+}) {
+  // The loaded transcript is kept with the id it was loaded for. A transcript whose id is not the open student's is treated as not loaded, so opening a second student can never show the first student's turns for a moment while the request is out.
+  const [loadedTranscript, setLoadedTranscript] = useState<Transcript | null>(null);
+  const studentId = student?.student_id ?? null;
+  const transcript = loadedTranscript && loadedTranscript.student_id === studentId ? loadedTranscript : null;
+
+  useEffect(() => {
+    if (!studentId) return;
+    let live = true;
+    api
+      .transcript(studentId, assignmentId)
+      .then((t) => live && setLoadedTranscript(t))
+      .catch(() => live && setLoadedTranscript({ student_id: studentId, display_name: "", turns: [] }));
+    return () => {
+      live = false;
+    };
+  }, [studentId, assignmentId]);
+
+  return (
+    <Drawer>
+      <Drawer.Backdrop isOpen={student !== null} onOpenChange={(open) => !open && onClose()} variant="blur">
+        <Drawer.Content placement="right">
+          <Drawer.Dialog className="w-full sm:max-w-lg" aria-label="Student transcript">
+            <Drawer.CloseTrigger />
+            <Drawer.Header>
+              <Drawer.Heading>{student?.display_name}</Drawer.Heading>
+              <p className="text-xs text-muted">This student&rsquo;s turns on this assignment only. Read from the database.</p>
+            </Drawer.Header>
+            <Drawer.Body>
+              {!transcript ? (
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Spinner size="sm" /> Loading turns
+                </div>
+              ) : transcript.turns.length === 0 ? (
+                <p className="text-sm text-muted">No turns to show.</p>
+              ) : (
+                <ol className="flex flex-col gap-4">
+                  {transcript.turns.map((t, i) => (
+                    <li key={i} className={cn("rounded-lg border px-3 py-2.5", t.role === "tutor" ? "border-margin-red/40 bg-margin-red-soft" : "border-border")}>
+                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-semibold uppercase tracking-wide">{t.role === "tutor" ? "Margin" : "Student"}</span>
+                        {t.role === "tutor" && t.hint_level ? (
+                          <Chip size="sm" variant="soft">level {t.hint_level}</Chip>
+                        ) : null}
+                        {t.label ? (
+                          <>
+                            <Chip size="sm" variant="soft" color="accent">{conceptLabel(t.label.concept)}</Chip>
+                            <Chip size="sm" variant="soft" color={t.label.struggle_type === "none" ? "default" : "warning"}>
+                              {STRUGGLE_LABEL[t.label.struggle_type]}
+                            </Chip>
+                          </>
+                        ) : null}
+                        {t.guard && (t.guard.leaks || t.retries > 0) ? (
+                          <Chip size="sm" variant="soft" color="danger">
+                            draft held · {t.guard.severity}
+                          </Chip>
+                        ) : null}
+                      </div>
+                      <p className={cn("whitespace-pre-wrap text-sm leading-6", t.role === "tutor" && "font-serif text-base")}>{t.content}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </Drawer.Body>
+          </Drawer.Dialog>
+        </Drawer.Content>
+      </Drawer.Backdrop>
+    </Drawer>
+  );
+}
+
+/** The state before there is anything true to draw: one sentence, and the one step that changes it. There is no button here that fills in a class. */
+function EmptyClass({ title, text, action, onAction }: { title: string; text: string; action: string; onAction: () => void }) {
+  return (
+    <Paper as="div" className="mx-auto w-full max-w-2xl py-10" aria-label={title}>
+      <h2 className="font-serif text-2xl font-semibold tracking-tight">{title}</h2>
+      <p className="mt-2 max-w-prose text-muted">{text}</p>
+      <Button variant="primary" className="mt-5" onPress={onAction}>
+        {action} <ArrowRight className="size-4" aria-hidden />
+      </Button>
+    </Paper>
+  );
+}

@@ -40,6 +40,16 @@ npm run dev:api
 - Web: http://localhost:3000
 - API health: http://localhost:4000/health
 
+## Screens
+
+- `/` picks a side. The two sign-ins are the words `student` and `prof`. There is no password.
+- `/prof/setup` saves the assignment. The answer key is sent once, in the request body, and is never sent back.
+- `/student/assignment/:id` is the chat on paper: the hint level always in view, a separate "what I tried" box, and a red mark in the margin beside the student's own line. `Ctrl` + `.` opens the demo-only debug drawer, which shows the scribe, policy, tutor, and guard steps for each turn.
+- `/prof/dashboard` shows the Thursday card and the concept heatmap first, then three lines per student and a transcript drill-down. Every number is the one the API returned.
+- `/prof/messages` lists the professor message written with each Thursday card.
+
+The UI is HeroUI v3, Animate UI, and shadcn only, in dark and light. The rule is `.cursor/rules/ui.mdc`.
+
 ## Guard
 
 Fifteen attacks and five benign controls, printed pass or fail by class:
