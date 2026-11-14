@@ -67,9 +67,9 @@ Do not write a comment, a log line, a UI label, or a commit message that apologi
 
 ## Four roles (agents)
 
-Implement each as a function with a typed interface. Do not use LangChain deepagents (USE_DEEPAGENTS is no).
+The tutor is a LangChain deepagent. The guard, the scribe, and the coach are functions. `USE_DEEPAGENTS` is yes for the tutor only.
 
-1. Tutor: writes the reply to the student at the current hint level. At most 4 sentences. Prefers one good question over an explanation. Warm, never preachy. Declines answer-seeking in one friendly sentence and gives a hint instead.
+1. Tutor: `backend/src/tutor.ts` calls `createDeepAgent` from the `deepagents` package after `policy.ts` has already chosen the level. Level 1 is built with no tools. Level 2 gets one tool, `cite_notes`, which searches the professor's pasted notes. Level 3 is built with no tools and the prompt requires a worked example of `count_list`. At most 4 sentences. Prefers one good question over an explanation. Warm, never preachy. Declines answer-seeking in one friendly sentence and gives a hint instead. The agent does not choose the hint level, and it never receives the answer key.
 2. Guard: checks every draft against the hidden answer key before the student sees it. If it leaks, regenerate at a lower level with the guard's reason as feedback, at most 2 retries, then send exactly: "What happens when the list is empty?"
 3. Scribe: labels each turn as structured JSON: `concept` (controlled vocabulary only), `struggle_type` (`misconception | stuck_starting | syntax_or_mechanics | careless_error | none`), `attempt_made`, `jailbreak_attempt`, `demonstrated_understanding`, and `evidence` (one short quote from the student).
 4. Coach: turns aggregated scribe data into the Thursday card. Compute every number in code from scribe events (percent of students struggling per concept, counts). The LLM only writes prose and suggests 3 practice problems for the weakest concept. The LLM must never produce or alter a statistic.
@@ -79,7 +79,7 @@ Implement each as a function with a typed interface. Do not use LangChain deepag
 1. Load session state (assignment, current level, recent history).
 2. Scribe pre-pass classifies the student message (attempt made, jailbreak attempt, concept).
 3. Deterministic hint-level policy picks the level.
-4. Tutor drafts at that level.
+4. Tutor drafts at that level by invoking the deepagent. The agent does not choose the level.
 5. Guard checks the draft and retries or falls back as above.
 6. Persist the message, final level, guard verdict, retries, and scribe labels. Return the reply plus a debug payload (level, guard verdict, retries) for the demo-only debug drawer.
 
@@ -152,10 +152,10 @@ These are Mongoose models. Reference fields use ObjectId. `answer_key` is a fiel
 
 - Frontend: Next.js. Backend: Express (Node). Do not switch the backend to Python. This overrides any earlier plan for FastAPI.
 - Run both with `npm run dev`. Web is on http://localhost:3000, API health on http://localhost:4000/health. Secrets live in `.env` (gitignored), with `.env.example` committed. Never commit keys.
-- LLM provider: Google Gemini API, because it handles images. This packet has no MLH or Gemini prize, so do not enter one. All model calls go through `completeJson` in `backend/src/llm.ts`. Check the provider's current docs for model IDs and SDK usage, do not guess. Use a strong model for the tutor and vision, and a fast cheap model for the guard and scribe. The env names are `LLM_API_KEY` and `MONGODB_URI`. Do not add `GEMINI_API_KEY`.
+- LLM provider: Google Gemini API, because it handles images. This packet has no MLH or Gemini prize, so do not enter one. Guard and scribe call the model only through `completeJson` in `backend/src/llm.ts`. The tutor calls the model only through `createDeepAgent` in `tutor.ts`, using `ChatGoogleGenerativeAI` from `@langchain/google-genai` and `LLM_API_KEY`. Check the provider's current docs for model IDs and SDK usage, do not guess. Use a strong model for the tutor and vision, and a fast cheap model for the guard and scribe. The env names are `LLM_API_KEY` and `MONGODB_URI`. Do not add `GEMINI_API_KEY`.
 - Structured LLM outputs use JSON schema mode, validated (for example with zod). On parse failure retry once, then fall back safely.
 - Database: MongoDB through Mongoose. The connection string is `MONGODB_URI` in `.env`, with an empty placeholder in `.env.example`. Do not add SQLite, a SQL schema file, or Supabase. Keep the app runnable at every commit and deployable to a free host. A local MongoDB or MongoDB Atlas both qualify. Never commit the connection string.
-- Do not add deepagents, a vector database, SQLite, Supabase, or a Python backend. If something blocks, leave the task unfinished on the board and move to the next task in the same row. Do not open a second TODO file.
+- The `deepagents` package is allowed in `backend`, and only `tutor.ts` imports it. Do not add a vector database, SQLite, Supabase, or a Python backend. If something blocks, leave the task unfinished on the board and move to the next task in the same row. Do not open a second TODO file.
 
 ## Tests required before calling the guard done
 
@@ -169,12 +169,12 @@ These are Mongoose models. Reference fields use ObjectId. `answer_key` is a fiel
 Do these rows in order. The equal split inside each row is on the board.
 
 - M0, done: scaffold, one-command run, README, `.env.example`.
-- M1, backend, all of it: Lebyy owns the provider, hint policy, tutor, guard, `runTurn`, and the red-team suite. David owns the Mongoose models, including `ProfessorMessage`, routes, scribe, progress, class summary, and the Thursday card. There is no seed script. David's message route calls Lebyy's `runTurn`.
+- M1, backend, all of it: Lebyy owns the provider, hint policy, the tutor deepagent, guard, `runTurn`, and the red-team suite. David owns the Mongoose models, including `ProfessorMessage`, routes, scribe, progress, class summary, and the Thursday card. There is no seed script. David's message route calls Lebyy's `runTurn`.
 - M2, frontend, after M1: Lebyy owns the student chat, hint indicator, attempt box, typed-line highlight, debug drawer, and the demo jailbreak. David owns professor setup, the heatmap, the three-line summaries, the transcript, the Thursday card on screen, and `/prof/messages`.
 - M3, richer demo, after the core path works: the typed highlight is the demo. The photo ellipse, `count_list` card, notes search, and flashcards are listed below. Still before prize paperwork.
 - M4, prize tracks, after the demo path works on localhost. The entries are already decided in the prize section.
 - M5, judge pamphlet: one sheet, `docs/pamphlet.html`. Lebyy writes the student half. David writes the professor half. Use the sentences in the pamphlet section.
-- M6, ship: Lebyy deploys and rehearses the student minute. David submits Devpost with Education, Amazon, Peri, Photon, and ChatOverflow, and rehearses the professor minute through `/prof/messages`. After the receipt, do not push again before 8:00 AM.
+- M6, ship: Lebyy deploys and rehearses the student minute. David submits Devpost with Education, Amazon, Peri, Photon, ChatOverflow, and LangChain, and rehearses the professor minute through `/prof/messages`. After the receipt, do not push again before 8:00 AM.
 
 ## Team and roles
 
@@ -199,7 +199,7 @@ Build these in M3, after the core loop is real:
 - A pasted-notes field on professor setup. No file upload this weekend.
 - Accessibility of the two screens: contrast, focus order, and usable at 200% zoom. No camera and no gesture control.
 
-Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a clinical HIPAA pipeline, clinical-trial IP detection, a Python or FastAPI backend, and LangChain deepagents. The small strip of email, phone, and id numbers before a model call is required. It is not that pipeline. Voice is not in the build. The Photon entry is the professor message, not voice.
+Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a clinical HIPAA pipeline, clinical-trial IP detection, a Python or FastAPI backend. The small strip of email, phone, and id numbers before a model call is required. It is not that pipeline. Voice is not in the build. The Photon entry is the professor message, not voice. The LangChain entry is the tutor deepagent, not a second backend.
 
 ## Out of scope this weekend (put on a Roadmap slide)
 
@@ -240,8 +240,8 @@ One printed page, `docs/pamphlet.html`.
 - Education sentence, on the pamphlet and on Devpost: "Margin is the Education entry: a student gets a hint that changes after a real attempt, a professor sees who is stuck on which concept, and the tutor never writes the solution."
 - Future line: "Next, one intro CS course would use Margin on one recursion assignment." No university name. No pilot sentence. Dr. Lund stays off the sheet.
 - Photon line: "Entering Photon. The professor gets the Thursday card as a message."
-- LangChain line: "Not entering LangChain. The hint level is code, not an agent."
-- The back lists Education, Amazon, Peri, Photon, and ChatOverflow. Then one line of what is not entered: LangChain, Best Rookie, Best Overall, CoStar, both Arlequin tracks, Capital One Nessie, Physical AI, Best Hardware, and no MLH or Gemini prize.
+- LangChain line: "Entering LangChain. The tutor is one deepagent. The hint level is chosen in code, and the guard checks the draft after."
+- The back lists Education, Amazon, Peri, Photon, ChatOverflow, and LangChain. Then one line of what is not entered: Best Rookie, Best Overall, CoStar, both Arlequin tracks, Capital One Nessie, Physical AI, Best Hardware, and no MLH or Gemini prize.
 - The Thursday card on the sheet uses a percent the API returned from a real session.
 
 ## Prize entries
@@ -254,7 +254,7 @@ Company tracks are judged once in round 1. Each extra one is another demo visit.
 
 - Amazon, Best Practical AI Innovation. The use case is the hint ladder on `sum_list`: a question, then a pointer to Lecture 7 slides 12-16 after a real attempt, then the guard on the jailbreak. Scored equally on creativity, usefulness, technical quality, and UX. Prize is $125, $75, and $50 per person. The README headings are User, Run, Demo, How the hint changes, and Guard.
 - Peri, Forward Deployed Challenge. The client is one officer of a student tutoring club or a CS club, not Dr. Lund. David shows the level-1 refusal and the Thursday card, asks what intro-recursion students get stuck on first, and asks whether they would send students to a tool that never gives the code. The answers go in `docs/peri.md` as Org, Person, Role, When, and Quote. The four concepts stay `base_case`, `recursive_call_progress`, `return_value_propagation`, and `call_stack_tracing`. The prize is intros to Peri partners. Do not invent the quote. Do not claim a pilot.
-- LangChain, Best use of deepagents. Not entered. The use case that would qualify is one deepagent whose tools are Tutor, Guard, Scribe, and Coach. That would let the model choose the hint level and the tool order. The hint level stays in `policy.ts`, and the guard always runs after the tutor. Do not add deepagents. The pamphlet line is: "Not entering LangChain. The hint level is code, not an agent."
+- LangChain, Best use of deepagents. Entered. The use case is the tutor, and only the tutor. `policy.ts` picks the level, then `tutor.ts` runs one deepagent at that level. Level 1 has no tools. Level 2 has `cite_notes`. Level 3 writes `count_list`. The guard, the scribe, and the coach stay functions, and the guard runs after the agent returns. The prize is a Switch 2. The pamphlet line is: "Entering LangChain. The tutor is one deepagent. The hint level is chosen in code, and the guard checks the draft after."
 - Photon, messaging agent. Entered. The use case is one professor message created with the Thursday card. `POST /api/prof/thursday-card` also stores a `ProfessorMessage` with the concept, the percent, and the three practice problems. `/prof/messages` lists those messages. Students keep using the assignment chat. There is no SMS service and no voice. The voice prize is not entered. The winner's purse, if we place, is $400 plus $300 in credits.
 - ChatOverflow leaderboard. No product change and no extra Devpost form. The README sentence is: "Built with a coding agent connected to the ChatOverflow leaderboard." Top 3 split $900, plus a $100 raffle.
 
@@ -271,7 +271,7 @@ Do not enter CoStar (their building data), either Arlequin track (forensics, soc
 
 ## Working rules for agents
 
-- Follow DESIGN.md for UI once it exists. The work list is `docs/BOARD.md`, not a second TODO. This file and the board name the same use cases. Do not reopen LangChain, voice, Best Rookie, a study percentage, or the photo as the demo.
+- Follow DESIGN.md for UI once it exists. The work list is `docs/BOARD.md`, not a second TODO. This file and the board name the same use cases. Do not reopen voice, Best Rookie, a study percentage, or the photo as the demo. The tutor is the LangChain entry.
 - The real-MVP and comment rules above override any older line about a seed script, synthetic students, or a simulated label. If the board still says to invent a class, do not. Comment every function. Do not ship a generic one-line comment that only repeats the code.
 - Commit after each milestone with a clear message. Do not push or deploy unless asked.
 - At the end of a work session, report what works, how to run it, the red-team pass rate, known issues, and the 3 most important next tasks.

@@ -49,7 +49,7 @@ Create backend/src/types.ts and backend/src/llm.ts. types.ts is the only place t
 
 Done when. A test double that returns fixed JSON is parsed, and a second test throws when the payload is not JSON. No other file imports the Gemini SDK. The test comment names the case. It does not call the input dummy data.
 
-Do not. Do not call the model from anywhere except completeJson. Do not add LangChain or deepagents. Do not commit a key.
+Do not. Guard and scribe call the model only through completeJson. The tutor calls the model only through createDeepAgent in tutor.ts. Do not commit a key.
 
 ### L-B2 · Deterministic hint policy
 
@@ -61,11 +61,11 @@ Do not. Do not ask the model which level to use. Escalation is code.
 
 ### L-B3 · Tutor
 
-Create backend/src/tutor.ts. Inputs are the level, the assignment prompt, the professor's notes, recent turns, and the student text. The type has no answer-key argument. The instruction caps the reply at 4 sentences, prefers one question, and is warm rather than preachy. Level 1 is one guiding question. Level 2 cites the professor's notes. Level 3 is a different but related problem. A direct demand for the answer gets one friendly refusal sentence and then the hint.
+Create backend/src/tutor.ts. This is the LangChain entry. Install `deepagents`, `langchain`, `@langchain/core`, and `@langchain/google-genai` in backend. `draftHint` takes the level, the assignment prompt, the professor's notes, recent turns, and the student text. The type has no answer-key argument. Strip emails, phone numbers, and long numeric ids, then call `createDeepAgent` with `ChatGoogleGenerativeAI` and `LLM_API_KEY`. Look up the current Gemini model id. The tools array is chosen in code: level 1 gets no tools, level 2 gets `cite_notes` (keyword search of the notes; the demo notes return Lecture 7, slides 12-16), level 3 gets no tools and the prompt requires a worked example of `count_list`. Use the in-memory backend, not a filesystem backend rooted at the repo. Do not pass a subagent for the guard, the scribe, the coach, or for writing the solution. The reply is at most 4 sentences, prefers one question, and is warm. A direct demand for the answer gets one friendly refusal sentence and then the hint. Return the full draft.
 
-Done when. A test double checks that the system prompt forbids the solution and that the function cannot be called with an answer key.
+Done when. A test double checks that the system prompt forbids the solution, that the function cannot be called with an answer key, and that a level-1 call is built with no tools.
 
-Do not. Do not stream. The guard must see the whole draft. Do not let the tutor see the key.
+Do not. Do not stream. Do not let the agent pick the hint level. Do not put the key in the prompt, the tools, or the agent's files.
 
 ### L-B4 · Guard, deterministic layer
 
@@ -427,7 +427,7 @@ Do not. Do not add gesture recognition, emotion tracking, or a webcam.
 
 ## Row 4 · Prize tracks
 
-Start only after the localhost demo path works. These entries are decided. Education is the only main track. Amazon, Peri, Photon, and ChatOverflow are in. LangChain, Best Rookie, Best Overall, and every prize in L-S4 are out. Company tracks are judged once in round 1, and each one we enter is another demo visit.
+Start only after the localhost demo path works. These entries are decided. Education is the only main track. Amazon, Peri, Photon, ChatOverflow, and LangChain are in. Best Rookie, Best Overall, and every prize in L-S4 are out. Company tracks are judged once in round 1, and each one we enter is another demo visit.
 
 ### Lebyy
 
@@ -439,13 +439,13 @@ Done when. Those five headings are in the README and a new person can run that d
 
 Do not. Do not describe a feature that is not on the branch. Do not add a second Amazon story.
 
-### L-S2 · LangChain, not entered
+### L-S2 · LangChain, the tutor
 
-The use case that would qualify is one deepagent with four tools: Tutor, Guard, Scribe, and Coach. That would let the model choose the hint level and the tool order. We are not building it. The hint level stays in `policy.ts`, and the guard always runs after the tutor. The pamphlet line is exactly: "Not entering LangChain. The hint level is code, not an agent." The prize we are declining is a Switch 2.
+Entered. The use case is the tutor, and only the tutor. `policy.ts` picks the hint level, then `tutor.ts` runs one deepagent at that level. Level 1 has no tools. Level 2 has `cite_notes`. Level 3 writes `count_list` and has no tool that can see `sum_list`. The guard, the scribe, and the coach stay ordinary functions. The guard runs after the agent returns. The pamphlet line is exactly: "Entering LangChain. The tutor is one deepagent. The hint level is chosen in code, and the guard checks the draft after." The prize is a Switch 2.
 
-Done when. That sentence is on the pamphlet, and no package.json depends on deepagents.
+Done when. `backend/package.json` depends on `deepagents`, a level-1 turn is built with no tools, the red-team suite still passes, and that sentence is on the pamphlet.
 
-Do not. Do not add the library. Do not reopen this as a maybe.
+Do not. Do not give the agent a tool that returns the solution. Do not move the guard inside the agent. Do not switch the backend to Python.
 
 ### L-S3 · ChatOverflow leaderboard
 
@@ -490,7 +490,7 @@ Done when. Generating the Thursday card creates a message, `/prof/messages` show
 
 Do not. Do not add SMS, a phone number, or voice. Do not show an empty inbox as a demo.
 
-**Checkpoint: Education is the only main track, with the sentence from D-S2. Amazon has the five README headings. Peri has docs/peri.md from the club conversation. LangChain's pamphlet line is the one in L-S2, and deepagents is not a dependency. Photon has /prof/messages. ChatOverflow has the README sentence. Best Rookie, Best Overall, MLH, and a Gemini prize are not entries.**
+**Checkpoint: Education is the only main track, with the sentence from D-S2. Amazon has the five README headings. Peri has docs/peri.md from the club conversation. LangChain's pamphlet line is the one in L-S2, and backend/package.json depends on deepagents. Photon has /prof/messages. ChatOverflow has the README sentence. Best Rookie, Best Overall, MLH, and a Gemini prize are not entries.**
 
 ## Row 5 · Judge pamphlet
 
@@ -575,7 +575,7 @@ Do not. Do not call the dashboard surveillance, and do not call it a gradebook.
 
 ### D-J5 · Tracks on the back
 
-The back lists these entries and no others: Education, judged both rounds; Amazon, four equal scores, extra demo visit; Peri, the club officer named in docs/peri.md; Photon, the professor message; ChatOverflow, no extra form. Then one line of what is not entered: LangChain, Best Rookie, Best Overall, CoStar, both Arlequin tracks, Capital One Nessie, Physical AI, Best Hardware, and no MLH or Gemini prize.
+The back lists these entries and no others: Education, judged both rounds; Amazon, four equal scores, extra demo visit; Peri, the club officer named in docs/peri.md; Photon, the professor message; ChatOverflow, no extra form; LangChain, the tutor deepagent. Then one line of what is not entered: Best Rookie, Best Overall, CoStar, both Arlequin tracks, Capital One Nessie, Physical AI, Best Hardware, and no MLH or Gemini prize.
 
 Done when. The back matches that list.
 
@@ -627,7 +627,7 @@ Do not. Do not keep the only working copy on your machine.
 
 ### D-H1 · Devpost draft
 
-Submit these tracks and no others: Education, Amazon, Peri, Photon, ChatOverflow. Do not submit LangChain, Best Rookie, Best Overall, an MLH prize, or a Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.
+Submit these tracks and no others: Education, Amazon, Peri, Photon, ChatOverflow, LangChain. Do not submit Best Rookie, Best Overall, an MLH prize, or a Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.
 
 Done when. The draft reads like the pamphlet and the links resolve.
 

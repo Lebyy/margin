@@ -156,7 +156,7 @@
             <h3>Shared types and the Gemini provider</h3>
             <p>Create backend/src/types.ts and backend/src/llm.ts. types.ts is the only place the shared shapes live: HintLevel 1|2|3, StruggleType (misconception, stuck_starting, syntax_or_mechanics, careless_error, none), ScribeLabel, GuardVerdict (leaks, severity none|partial|full, reason, layer deterministic|judge|fallback), and TurnResult. llm.ts exports completeJson. That function strips email addresses, phone numbers, and long numeric ids from anything it sends, and callers do not pass display_name into it. Use the official Gemini SDK. Look up the current model ids in Google's docs. Use a strong model for the tutor and a fast cheap model for the guard and the scribe. Validate with zod. On a bad payload, retry once, then throw. The empty lines LLM_API_KEY= and MONGODB_URI= are already in .env.example. Do not add a second key name.</p>
             <p class="done"><b>Done when.</b> A test double that returns fixed JSON is parsed, and a second test throws when the payload is not JSON. No other file imports the Gemini SDK. The test comment names the case. It does not call the input dummy data.</p>
-            <p class="dont"><b>Do not.</b> Do not call the model from anywhere except completeJson. Do not add LangChain or deepagents. Do not commit a key.</p>
+            <p class="dont"><b>Do not.</b> Guard and scribe call the model only through completeJson. The tutor calls the model only through createDeepAgent in tutor.ts. Do not commit a key.</p>
           </span>
         </label>
       </article>
@@ -178,9 +178,9 @@
           <span class="body">
             <span class="id">L-B3</span>
             <h3>Tutor</h3>
-            <p>Create backend/src/tutor.ts. Inputs are the level, the assignment prompt, the professor's notes, recent turns, and the student text. The type has no answer-key argument. The instruction caps the reply at 4 sentences, prefers one question, and is warm rather than preachy. Level 1 is one guiding question. Level 2 cites the professor's notes. Level 3 is a different but related problem. A direct demand for the answer gets one friendly refusal sentence and then the hint.</p>
-            <p class="done"><b>Done when.</b> A test double checks that the system prompt forbids the solution and that the function cannot be called with an answer key.</p>
-            <p class="dont"><b>Do not.</b> Do not stream. The guard must see the whole draft. Do not let the tutor see the key.</p>
+            <p>Create backend/src/tutor.ts. This is the LangChain entry. Install deepagents, langchain, @langchain/core, and @langchain/google-genai in backend. draftHint takes the level, the assignment prompt, the professor's notes, recent turns, and the student text. The type has no answer-key argument. Strip emails, phone numbers, and long numeric ids, then call createDeepAgent with ChatGoogleGenerativeAI and LLM_API_KEY. Look up the current Gemini model id. The tools array is chosen in code: level 1 gets no tools, level 2 gets cite_notes (keyword search of the notes; the demo notes return Lecture 7, slides 12-16), level 3 gets no tools and the prompt requires a worked example of count_list. Use the in-memory backend, not a filesystem backend rooted at the repo. Do not pass a subagent for the guard, the scribe, the coach, or for writing the solution. The reply is at most 4 sentences, prefers one question, and is warm. A direct demand for the answer gets one friendly refusal sentence and then the hint. Return the full draft.</p>
+            <p class="done"><b>Done when.</b> A test double checks that the system prompt forbids the solution, that the function cannot be called with an answer key, and that a level-1 call is built with no tools.</p>
+            <p class="dont"><b>Do not.</b> Do not stream. Do not let the agent pick the hint level. Do not put the key in the prompt, the tools, or the agent's files.</p>
           </span>
         </label>
       </article>
@@ -703,7 +703,7 @@
       <div class="mile-head">
         <p class="kicker">Row 4</p>
         <h2>Prize tracks</h2>
-        <p>Start only after the localhost demo path works. These entries are decided. Education is the only main track. Amazon, Peri, Photon, and ChatOverflow are in. LangChain, Best Rookie, Best Overall, and every prize in L-S4 are out. Company tracks are judged once in round 1, and each one we enter is another demo visit.</p>
+        <p>Start only after the localhost demo path works. These entries are decided. Education is the only main track. Amazon, Peri, Photon, ChatOverflow, and LangChain are in. Best Rookie, Best Overall, and every prize in L-S4 are out. Company tracks are judged once in round 1, and each one we enter is another demo visit.</p>
       </div>
       <div class="pair">
         <div class="col"><article class="task" id="L-S1">
@@ -723,10 +723,10 @@
           <input type="checkbox" data-id="L-S2" data-owner="lebyy" aria-label="Mark L-S2 done on this browser">
           <span class="body">
             <span class="id">L-S2</span>
-            <h3>LangChain, not entered</h3>
-            <p>The use case that would qualify is one deepagent with four tools: Tutor, Guard, Scribe, and Coach. That would let the model choose the hint level and the tool order. We are not building it. The hint level stays in policy.ts, and the guard always runs after the tutor. The pamphlet line is exactly: "Not entering LangChain. The hint level is code, not an agent." The prize we are declining is a Switch 2.</p>
-            <p class="done"><b>Done when.</b> That sentence is on the pamphlet, and no package.json depends on deepagents.</p>
-            <p class="dont"><b>Do not.</b> Do not add the library. Do not reopen this as a maybe.</p>
+            <h3>LangChain, the tutor</h3>
+            <p>Entered. The use case is the tutor, and only the tutor. policy.ts picks the hint level, then tutor.ts runs one deepagent at that level. Level 1 has no tools. Level 2 has cite_notes. Level 3 writes count_list and has no tool that can see sum_list. The guard, the scribe, and the coach stay ordinary functions. The guard runs after the agent returns. The pamphlet line is exactly: "Entering LangChain. The tutor is one deepagent. The hint level is chosen in code, and the guard checks the draft after." The prize is a Switch 2.</p>
+            <p class="done"><b>Done when.</b> backend/package.json depends on deepagents, a level-1 turn is built with no tools, the red-team suite still passes, and that sentence is on the pamphlet.</p>
+            <p class="dont"><b>Do not.</b> Do not give the agent a tool that returns the solution. Do not move the guard inside the agent. Do not switch the backend to Python.</p>
           </span>
         </label>
       </article>
@@ -791,7 +791,7 @@
         </label>
       </article></div>
       </div>
-      <p class="gate">Checkpoint: Education is the only main track, with the sentence from D-S2. Amazon has the five README headings. Peri has docs/peri.md from the club conversation. LangChain's pamphlet line is the one in L-S2, and deepagents is not a dependency. Photon has /prof/messages. ChatOverflow has the README sentence. Best Rookie, Best Overall, MLH, and a Gemini prize are not entries.</p>
+      <p class="gate">Checkpoint: Education is the only main track, with the sentence from D-S2. Amazon has the five README headings. Peri has docs/peri.md from the club conversation. LangChain's pamphlet line is the one in L-S2, and backend/package.json depends on deepagents. Photon has /prof/messages. ChatOverflow has the README sentence. Best Rookie, Best Overall, MLH, and a Gemini prize are not entries.</p>
     </section>
 <section class="mile" id="pamphlet">
       <div class="mile-head">
@@ -914,7 +914,7 @@
           <span class="body">
             <span class="id">D-J5</span>
             <h3>Tracks on the back</h3>
-            <p>The back lists these entries and no others: Education, judged both rounds; Amazon, four equal scores, extra demo visit; Peri, the club officer named in docs/peri.md; Photon, the professor message; ChatOverflow, no extra form. Then one line of what is not entered: LangChain, Best Rookie, Best Overall, CoStar, both Arlequin tracks, Capital One Nessie, Physical AI, Best Hardware, and no MLH or Gemini prize.</p>
+            <p>The back lists these entries and no others: Education, judged both rounds; Amazon, four equal scores, extra demo visit; Peri, the club officer named in docs/peri.md; Photon, the professor message; ChatOverflow, no extra form; LangChain, the tutor deepagent. Then one line of what is not entered: Best Rookie, Best Overall, CoStar, both Arlequin tracks, Capital One Nessie, Physical AI, Best Hardware, and no MLH or Gemini prize.</p>
             <p class="done"><b>Done when.</b> The back of the sheet matches row 4's decisions.</p>
             <p class="dont"><b>Do not.</b> Do not add a track the morning of the demo.</p>
           </span>
@@ -984,7 +984,7 @@
           <span class="body">
             <span class="id">D-H1</span>
             <h3>Devpost draft</h3>
-            <p>Submit these tracks and no others: Education, Amazon, Peri, Photon, ChatOverflow. Do not submit LangChain, Best Rookie, Best Overall, an MLH prize, or a Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.</p>
+            <p>Submit these tracks and no others: Education, Amazon, Peri, Photon, ChatOverflow, LangChain. Do not submit Best Rookie, Best Overall, an MLH prize, or a Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.</p>
             <p class="done"><b>Done when.</b> The draft reads like the pamphlet and the links resolve.</p>
             <p class="dont"><b>Do not.</b> Do not submit from a private repo. The GitHub repo is https://github.com/Lebyy/margin and it was created during the event.</p>
           </span>
