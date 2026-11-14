@@ -150,7 +150,7 @@
       <div class="pair">
         <div class="col"><article class="task" id="L-B1">
         <label>
-          <input type="checkbox" data-id="L-B1" data-owner="lebyy" aria-label="Mark L-B1 done on this browser">
+          <input type="checkbox" data-id="L-B1" data-owner="lebyy" data-shipped="true" checked aria-label="L-B1 is done on main">
           <span class="body">
             <span class="id">L-B1</span>
             <h3>Shared types and the Gemini provider</h3>
@@ -1030,7 +1030,7 @@
       <p class="gate">Done: the public repo, the deployed demo, the pamphlet, and the Devpost submission all describe the same product.</p>
     </section>
   <footer>
-    <p>Margin · HackPrinceton Fall 2026. Checkboxes are private to this browser and are not shared between Lebyy and David.</p>
+    <p>Margin · HackPrinceton Fall 2026. A box marked on main starts checked for everyone. Any other click stays in this browser.</p>
   </footer>
   <script>
     const key = "margin-board-v1";
@@ -1047,7 +1047,9 @@
       document.getElementById("count-david").textContent = tally.david[0] + " of " + tally.david[1] + " checked on this browser";
     }
     boxes.forEach((box) => {
-      box.checked = Boolean(saved[box.dataset.id]);
+      const id = box.dataset.id;
+      if (Object.prototype.hasOwnProperty.call(saved, id)) box.checked = Boolean(saved[id]);
+      else if (box.dataset.shipped === "true") box.checked = true;
       box.addEventListener("change", () => {
         saved[box.dataset.id] = box.checked;
         localStorage.setItem(key, JSON.stringify(saved));

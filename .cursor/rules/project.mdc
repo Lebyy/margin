@@ -17,7 +17,7 @@ Lebyy (GitHub Lebyy) and David (GitHub WobbbleFoot) each take half of every mile
 
 The task brief, with ids, files, and done-when lines, is `docs/BOARD.md`. The shareable page is https://margin-board-ochre.vercel.app (`docs/index.html`). Read that brief before writing code. An agent invoked by Lebyy takes only the `L-*` tasks. An agent invoked by David takes only the `D-*` tasks. This file is the product law. The board is the work split. If a task conflicts with a safety rule here, this file wins.
 
-Checkboxes on the web page are a local browser aid. A task is done when the commit that implements it is on `main`.
+A task is done when the commit that implements it is on `main`. That commit starts its box checked on the board. Any other checkbox click stays in one browser.
 
 ## Real MVP, and how to comment
 
