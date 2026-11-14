@@ -7,7 +7,7 @@ import { createApp } from "../src/app.ts";
 import { connectDb, disconnectDb } from "../src/db.ts";
 import { FALLBACK_REPLY } from "../src/guard.ts";
 import { CANARY, Message, ScribeEvent, Session } from "../src/models.ts";
-import { boxOnImage, stepLeaks } from "../src/vision.ts";
+import { boxOnImage, fromBox2d, stepLeaks } from "../src/vision.ts";
 import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // D-R1 and D-R2 (server half) done-when:
@@ -34,6 +34,14 @@ describe("stepLeaks", () => {
     assert.equal(stepLeaks(KEY.replace(/\n/g, " "), KEY, CANARY), true);
     assert.equal(stepLeaks("There is no base case, so the recursion never stops on an empty list.", KEY, CANARY), false);
     assert.equal(stepLeaks("Nothing handles the empty list before the recursive call.", KEY, CANARY), false);
+  });
+});
+
+describe("fromBox2d", () => {
+  it("turns [ymin, xmin, ymax, xmax] on 0-1000 into a 0-to-1 box, and refuses one with no area", () => {
+    assert.deepEqual(fromBox2d(BOX_2D), BOX);
+    assert.equal(fromBox2d([500, 100, 500, 900]), null);
+    assert.equal(fromBox2d([600, 100, 400, 900]), null);
   });
 });
 
@@ -65,7 +73,10 @@ const PHOTO = {
 };
 
 const STEP = "There is no base case, so sum_list never stops when the list is empty.";
-const BOX = { x: 0.03, y: 0.15, w: 0.7, h: 0.4 };
+// The call line of the test photo, in the model's [ymin, xmin, ymax, xmax]
+// 0-1000 format, and the same box as the route returns it in 0-to-1 units.
+const BOX_2D = [400, 120, 540, 830];
+const BOX = { x: 0.12, y: 0.4, w: 0.71, h: 0.14 };
 const QUESTION = "What should sum_list return when xs is empty?";
 const CLEAN = JSON.stringify({ leaks: false, severity: "none", reason: "A question." });
 
@@ -132,7 +143,7 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
     // Case: the done-when line. The step names the missing base case without
     // the fix, the box is on the photo, and one student message and one
     // misconception event on base_case are stored. The level does not move.
-    visionReply = async () => JSON.stringify({ found: true, step: STEP, question: QUESTION, concept: "base_case", box: BOX });
+    visionReply = async () => JSON.stringify({ found: true, step: STEP, question: QUESTION, concept: "base_case", box_2d: BOX_2D });
     judgeReply = async () => CLEAN;
     const sessionId = await startSession("Grace");
     const { status, text } = await post(`/api/sessions/${sessionId}/messages`, { image: PHOTO });
@@ -176,10 +187,10 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
     // nothing; the leaking step's text never reaches the response.
     const sessionId = await startSession("Ada");
     const answers = [
-      { found: true, step: "Add if not xs: return 0 before the recursive call.", question: QUESTION, concept: "base_case", box: BOX },
-      { found: true, step: STEP, question: QUESTION, concept: "base_case", box: { x: 0.6, y: 0.2, w: 0.7, h: 0.2 } },
-      { found: false, step: "", question: "", concept: "base_case", box: { x: 0, y: 0, w: 0, h: 0 } },
-      { found: true, step: STEP, question: QUESTION, concept: "not_a_concept", box: BOX },
+      { found: true, step: "Add if not xs: return 0 before the recursive call.", question: QUESTION, concept: "base_case", box_2d: BOX_2D },
+      { found: true, step: STEP, question: QUESTION, concept: "base_case", box_2d: [200, 600, 400, 1300] },
+      { found: false, step: "", question: "", concept: "base_case", box_2d: [0, 0, 0, 0] },
+      { found: true, step: STEP, question: QUESTION, concept: "not_a_concept", box_2d: BOX_2D },
     ];
     for (const answer of answers) {
       visionReply = async () => JSON.stringify(answer);
@@ -202,7 +213,7 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
       [QUESTION, async () => "not json", 2],
     ];
     for (const [question, judge, calls] of cases) {
-      visionReply = async () => JSON.stringify({ found: true, step: STEP, question, concept: "base_case", box: BOX });
+      visionReply = async () => JSON.stringify({ found: true, step: STEP, question, concept: "base_case", box_2d: BOX_2D });
       judgeReply = judge;
       judgeCalls = 0;
       const { status, text } = await post(`/api/sessions/${sessionId}/messages`, { image: PHOTO });
