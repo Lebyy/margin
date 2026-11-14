@@ -24,8 +24,8 @@ This is a real MVP. Assignments, students, and turns exist only because a person
 ### Contract
 
 - Lebyy creates backend/src/types.ts in L-B1. David imports those types and does not invent a second set of field names.
-- Lebyy owns llm.ts, policy.ts, tutor.ts, guard.ts, turn.ts, and backend/test/redteam.ts. David owns schema.sql, db.ts, scribe.ts, coach.ts (or the card logic inside the summary module), routes.ts, and the wiring in index.ts. Neither person adds a seed script or invented students.
-- The message route calls runTurn. runTurn does not touch SQLite. The tutor function never receives the answer key. The guard does.
+- Lebyy owns llm.ts, policy.ts, tutor.ts, guard.ts, turn.ts, and backend/test/redteam.ts. David owns the Mongoose models, scribe.ts, coach.ts (or the card logic inside the summary module), routes.ts, and the wiring in index.ts. Neither person adds a seed script or invented students.
+- The message route calls runTurn. runTurn does not touch MongoDB. The tutor function never receives the answer key. The guard does.
 - Student JSON is reply, level, verdict, and retries. Verdict reasons that quote the key stay on the server.
 - An image is a 501 until D-R1 is actually reliable.
 - The home page is Lebyy's file. Professor routes live under frontend/app/prof. Student routes live under frontend/app/student.
@@ -87,9 +87,9 @@ Do not. Do not fail open. A parse error is a leak, not a pass.
 
 Create backend/src/turn.ts. Export runTurn(state, studentText, label). Order: policy, tutor, guard with the retries above. Return TurnResult. This file does not import the database. David calls it from the message route.
 
-Done when. A local test runs one benign turn and one 'just give me the code' turn through a test double, with no SQLite. David can import the function.
+Done when. A local test runs one benign turn and one 'just give me the code' turn through a test double, with no database. David can import the function.
 
-Do not. Do not read or write tables here. Do not put the answer key into the tutor's prompt.
+Do not. Do not read or write MongoDB here. Do not put the answer key into the tutor's prompt.
 
 ### L-B7 · Red-team suite
 
@@ -110,21 +110,21 @@ Do not. Do not log the raw key. If a log needs an identifier, hash it.
 
 ### David
 
-### D-B1 · SQLite schema
+### D-B1 · Mongoose models
 
-Create backend/schema.sql and backend/src/db.ts with assignments, students, sessions, messages, scribe_events, and thursday_cards. Use the fields in .cursor/rules/project.mdc. answer_key is a column. The app creates the file on startup and does not wipe it on the next boot. Gitignore *.sqlite and *.db.
+Connect with Mongoose using MONGODB_URI from the environment. Add an empty MONGODB_URI= line to .env.example. Define models for assignments, students, sessions, messages, scribe_events, and thursday_cards with the fields in .cursor/rules/project.mdc. answer_key is a field on the assignment. A second boot keeps the documents from the first boot.
 
-Done when. Starting the API twice keeps the rows from the first start.
+Done when. Starting the API twice keeps those documents, and a student query cannot select answer_key.
 
-Do not. Do not add Supabase unless SQLite actually blocks you. Do not return answer_key from any student route.
+Do not. Do not add SQLite, a SQL file, or Supabase. Do not commit the connection string. Do not return answer_key from any student route.
 
 ### D-B2 · The first real assignment
 
 Do not create a seed script. The sum_list assignment is created through POST /api/prof/assignments: intro CS, Python recursion, 'Write sum_list(xs) recursively', notes that name Lecture 7 slides 12-16, concepts base_case, recursive_call_progress, return_value_propagation, and call_stack_tracing, hint ceiling 3. Students and scribe events appear only after a person starts a session and sends a turn.
 
-Done when. Saving that assignment through the route stores one row, and the students table stays empty until POST /api/sessions.
+Done when. Saving that assignment through the route stores one document, and the students collection stays empty until POST /api/sessions.
 
-Do not. Do not invent a class, a percent, or an is_synthetic column. Do not comment the assignment as sample data.
+Do not. Do not invent a class, a percent, or an is_synthetic field. Do not comment the assignment as sample data.
 
 ### D-B3 · Assignment routes
 
@@ -154,7 +154,7 @@ Do not. Do not invent concepts. Do not put the answer key in the evidence quote.
 
 Own backend/src/routes.ts and the wiring in backend/src/index.ts. POST /api/sessions/:id/messages runs the scribe, calls runTurn, and stores the message, level, verdict, and retries. Keep the health check and the CORS rule for http://localhost:3000. If runTurn is not on the branch yet, stub a level-1 question and replace the stub before this row is done. If the body has an image and vision is not ready, return 501 and do not call a model.
 
-Done when. curl of a text turn returns reply, level, verdict, and retries, and the row is in SQLite. curl of an image returns 501.
+Done when. curl of a text turn returns reply, level, verdict, and retries, and the document is in MongoDB. curl of an image returns 501.
 
 Do not. Do not put the answer key in the JSON. Do not stream the reply.
 
@@ -457,7 +457,7 @@ Do not. Do not add a badge, a widget, or a Devpost form for this.
 
 ### L-S4 · Do not enter
 
-Write one line for the pamphlet. Do not enter CoStar, because it needs their building data. Do not enter either Arlequin track, forensics or social graphs. Do not enter Capital One Nessie, because it is a banking API. Do not enter Physical AI or Best Hardware. Salesforce and Scale AI are career-fair only. This packet lists no MLH or Gemini prize, so do not enter one. Gemini stays the model. Best Overall is a PS5 and is automatic. Do not submit it. A win on Education blocks it.
+Write one line for the pamphlet. Do not enter Best Rookie. This is not every member's first hackathon. Do not enter CoStar, because it needs their building data. Do not enter either Arlequin track, forensics or social graphs. Do not enter Capital One Nessie, because it is a banking API. Do not enter Physical AI or Best Hardware. Salesforce and Scale AI are career-fair only. This packet lists no MLH or Gemini prize, so do not enter one. Gemini stays the model. Best Overall is a PS5 and is automatic. Do not submit it. A win on Education blocks it.
 
 Done when. The pamphlet has that line, and the repo has no dependency or page for those prizes.
 
@@ -490,16 +490,7 @@ Done when. The pamphlet says entering or not entering, and names which path is r
 
 Do not. Do not add a fake inbox. Do not add voice in this row if the core demo is still shaky. Voice waits until the row 3 checkpoint is green.
 
-### D-S4 · Best Rookie
-
-The prize is a JBL Charge 6. Enter only if this is every member's first hackathon. Ask Lebyy, and answer for yourself.
-
-Done when. The pamphlet says entering or not entering.
-
-Do not. Do not guess. If either person is unsure, do not enter.
-
-
-**Checkpoint: Education is the only main track, and the pamphlet says it is judged in both rounds. Amazon has a README. Peri is evidenced or skipped. LangChain says not entering unless a deepagent is actually in the build. Photon and Rookie each have a yes or a no. The pamphlet says there is no MLH or Gemini prize, and Best Overall is not an entry.**
+**Checkpoint: Education is the only main track, and the pamphlet says it is judged in both rounds. Amazon has a README. Peri is evidenced or skipped. LangChain says not entering unless a deepagent is actually in the build. Photon has a yes or a no. Best Rookie is not entered. The pamphlet says there is no MLH or Gemini prize, and Best Overall is not an entry.**
 
 ## Row 5 · Judge pamphlet
 
@@ -584,7 +575,7 @@ Do not. Do not call the dashboard surveillance, and do not call it a gradebook.
 
 ### D-J5 · Tracks on the back
 
-List Education as the only main track, judged in both rounds. List Amazon with the four scores. List Peri only if the evidence exists. List LangChain, Photon, and Rookie only as the yes or no from row 4. Note ChatOverflow has no extra Devpost form. List what we are not entering, including that this packet has no MLH or Gemini prize and that Best Overall is not an entry.
+List Education as the only main track, judged in both rounds. List Amazon with the four scores. List Peri only if the evidence exists. List LangChain and Photon only as the yes or no from row 4. Do not list Best Rookie. Note ChatOverflow has no extra Devpost form. List what we are not entering, including that this packet has no MLH or Gemini prize and that Best Overall is not an entry.
 
 Done when. The back of the sheet matches row 4's decisions.
 
@@ -636,7 +627,7 @@ Do not. Do not keep the only working copy on your machine.
 
 ### D-H1 · Devpost draft
 
-Fill the project page: what it is, Education as the only main track, Amazon, and any other company track row 4 actually entered. Do not submit Best Overall, LangChain, Photon, or Rookie unless that row said yes. Do not submit an MLH or Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.
+Fill the project page: what it is, Education as the only main track, Amazon, and any other company track row 4 actually entered. Do not submit Best Overall or Best Rookie. Do not submit LangChain or Photon unless that row said yes. Do not submit an MLH or Gemini prize. Include the built-with list and the try-it URL Lebyy deployed. Screenshots of the student catch and the Thursday card. No screenshot that shows the answer key.
 
 Done when. The draft reads like the pamphlet and the links resolve.
 

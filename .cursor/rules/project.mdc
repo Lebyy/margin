@@ -111,7 +111,9 @@ Take one idea from Asclepius: the cloud model should not receive who the student
 - The first assignment a person creates is "Write `sum_list(xs)` recursively", with an answer key, short lecture notes referencing "Lecture 7, slides 12-16", and concepts `base_case`, `recursive_call_progress`, `return_value_propagation`, `call_stack_tracing`.
 - Class patterns come from sessions people actually run. Do not generate a class, a misconception profile, or a percent in code.
 
-## Data model (minimum)
+## Data model (Mongoose)
+
+These are Mongoose models. Reference fields use ObjectId. `answer_key` is a field on the assignment and is never selected into a student response.
 
 - `assignments`: id, course_name, title, prompt, answer_key (never sent to the student client), notes, concepts (controlled vocabulary), hint_ceiling
 - `students`: id, display_name
@@ -149,7 +151,7 @@ Take one idea from Asclepius: the cloud model should not receive who the student
 - Run both with `npm run dev`. Web is on http://localhost:3000, API health on http://localhost:4000/health. Secrets live in `.env` (gitignored), with `.env.example` committed. Never commit keys.
 - LLM provider: Google Gemini API, because it handles images. This packet has no MLH or Gemini prize, so do not enter one. All model calls go through one module with a provider interface so switching providers is a one-file change. Check the provider's current docs for model IDs and SDK usage, do not guess. Use a strong model for the tutor and vision, and a fast cheap model for the guard and scribe.
 - Structured LLM outputs use JSON schema mode, validated (for example with zod). On parse failure retry once, then fall back safely.
-- Database: SQLite or Supabase, whichever is fastest. Keep the app runnable at every commit and deployable to a free host.
+- Database: MongoDB through Mongoose. The connection string is `MONGODB_URI` in `.env`, with an empty placeholder in `.env.example`. Do not add SQLite, a SQL schema file, or Supabase. Keep the app runnable at every commit and deployable to a free host. A local MongoDB or MongoDB Atlas both qualify. Never commit the connection string.
 - Simplicity beats cleverness. Ask before adding a heavy dependency or a new service. If something blocks for more than about 20 minutes, stub it, note it in TODO.md, and move on.
 
 ## Tests required before calling the guard done
@@ -164,7 +166,7 @@ Take one idea from Asclepius: the cloud model should not receive who the student
 Do these rows in order. The equal split inside each row is on the board.
 
 - M0, done: scaffold, one-command run, README, `.env.example`.
-- M1, backend, all of it: Lebyy owns the provider, hint policy, tutor, guard, `runTurn`, and the red-team suite. David owns SQLite, routes, scribe, progress, class summary, and the Thursday card. There is no seed script. David's message route calls Lebyy's `runTurn`.
+- M1, backend, all of it: Lebyy owns the provider, hint policy, tutor, guard, `runTurn`, and the red-team suite. David owns the Mongoose models, routes, scribe, progress, class summary, and the Thursday card. There is no seed script. David's message route calls Lebyy's `runTurn`.
 - M2, frontend, after M1: Lebyy owns the student chat, hint indicator, attempt box, debug drawer, and the demo jailbreak. David owns professor setup, the heatmap, the three-line summaries, the transcript, and the Thursday card on screen.
 - M3, richer demo, after the core path works: features adapted from MindPad, Asclepius, and Lume. Listed below. Still before prize paperwork.
 - M4, sub tracks, after the demo path works on localhost.
@@ -239,7 +241,7 @@ Company tracks are judged once in round 1. Each extra one is another demo visit.
 - Photon, messaging agent. Enter if students can text the tutor or the professor gets the mini log as a message. The winner gets $400 plus $300 in credits. The voice prize is separate and only if voice exists. This is a stretch goal only after the core works.
 - ChatOverflow leaderboard. No product change. Connect the coding agent while you build. Top 3 split $900, plus a $100 raffle. No extra Devpost submission.
 
-Enter Best Rookie, a JBL Charge 6, only if this is every member's first hackathon.
+Do not enter Best Rookie. This is not every member's first hackathon.
 
 Do not enter CoStar (their building data), either Arlequin track (forensics, social graphs), Capital One Nessie (banking API), Physical AI, or Best Hardware. Salesforce and Scale AI are career-fair only. This packet lists no MLH or Gemini prize.
 
