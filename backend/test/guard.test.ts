@@ -11,6 +11,21 @@ import { CANARY } from "../src/models.ts";
 const KEY = "def sum_list(xs):\n    if not xs:\n        return 0\n    return xs[0] + sum_list(xs[1:])";
 
 describe("checkDeterministic", () => {
+  // Case: the solution with a zero-width space inside each keyword, the solution typed in fullwidth letters, and the canary cut by a zero-width joiner.
+  // Each one reads as the solution on screen and pastes as the solution. All three have to be held, and a plain question still has to pass.
+  it("holds a solution hidden behind invisible or lookalike characters", () => {
+    const zeroWidth = KEY.replace(/def/g, "de\u200bf").replace(/return/g, "re\u200bturn").replace(/not/g, "n\u200dot");
+    assert.equal(checkDeterministic(zeroWidth, KEY, CANARY).leaks, true);
+
+    const fullwidth = KEY.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0));
+    assert.equal(checkDeterministic(fullwidth, KEY, CANARY).leaks, true);
+
+    const cutCanary = `${CANARY.slice(0, 6)}\u200d${CANARY.slice(6)}`;
+    assert.equal(checkDeterministic(`Here: ${cutCanary}`, KEY, CANARY).leaks, true);
+
+    assert.equal(checkDeterministic("What happens when the list is empty?", KEY, CANARY).leaks, false);
+  });
+
   // Case: the solution is pasted as written, and again with different names, extra spaces, and a comment.
   // A comparison that only looks for the original text would miss the second paste, and the student could still read the solution off it.
   it("leaks a pasted sum_list solution", () => {

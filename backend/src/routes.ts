@@ -392,15 +392,6 @@ export function createRouter(deps: RouteDeps = {}): Router {
   });
 
   /**
-   * GET /api/assignments/:id: the student's view of an assignment.
-   *
-   * This route must not shape the response itself. It returns exactly what
-   * `findStudentAssignment` builds from its inclusion list, so the key and the
-   * canary are absent at the query, in memory, and in the JSON. The frontend is
-   * not trusted to hide anything: what it receives is already safe. An unknown
-   * or malformed id is a 404 rather than a cast error.
-   */
-  /**
    * GET /api/students/:id/progress: one student's own formative log.
    *
    * Everything comes from `studentProgress`, which reads only rows owned by the
@@ -449,6 +440,15 @@ export function createRouter(deps: RouteDeps = {}): Router {
     res.status(status).json({ error: result.reason });
   });
 
+  /**
+   * GET /api/assignments/:id: the student's view of an assignment.
+   *
+   * This route must not shape the response itself. It returns exactly what
+   * `findStudentAssignment` builds from its inclusion list, so the key and the
+   * canary are absent at the query, in memory, and in the JSON. The frontend is
+   * not trusted to hide anything: what it receives is already safe. An unknown
+   * or malformed id is a 404 rather than a cast error.
+   */
   router.get("/api/assignments/:id", async (req, res) => {
     const view = await findStudentAssignment(req.params.id);
     if (!view) {

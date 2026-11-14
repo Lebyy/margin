@@ -1,5 +1,5 @@
 // The only file that imports the Gemini SDK.
-// Guard and scribe call completeJson. Vision calls it too, because a photo still has to come back as JSON.
+// Guard, scribe, and coach call completeJson. Vision calls it too, because a photo still has to come back as JSON.
 // The tutor does not. tutor.ts calls createDeepAgent. Importing the SDK from that file would make two model doors, and the identity strip would be optional on one of them.
 
 import { GoogleGenAI } from "@google/genai";
@@ -46,11 +46,21 @@ export function agentPlatformRequest(): { baseUrl: string; apiVersion: string } 
   };
 }
 
-/** Who is asking. There is no tutor role. Adding one would route the tutor through this file. */
-export type ModelRole = "guard" | "scribe" | "vision";
+/**
+ * Who is asking. There is no tutor role. Adding one would route the tutor through this file.
+ * The coach has its own name so a later change to the scribe's model does not silently move the Thursday card with it.
+ */
+export type ModelRole = "guard" | "scribe" | "coach" | "vision";
 
 /**
- * Vision uses the strong model. Guard and scribe use the fast one.
+ * How long one model request may take, in milliseconds.
+ * The student waits on the scribe, then the tutor, then the judge, and nothing is streamed. Without a limit a stalled request holds the reply open until the browser gives up.
+ * A timeout is thrown as a provider error. The guard reads that as a leak and the scribe as the closed label, so a slow model holds the draft instead of releasing it.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * Vision uses the strong model. Guard, scribe, and coach use the fast one.
  * A later default of the strong model for every role would spend the guard's budget on the slow model, on every turn.
  */
 export function modelFor(role: ModelRole): string {
@@ -169,6 +179,7 @@ async function generateWithGemini<T>(
     apiKey,
     project: CLOUD_PROJECT,
     location: MODEL_LOCATION,
+    httpOptions: { timeout: REQUEST_TIMEOUT_MS },
   });
   const response = await ai.models.generateContent({
     model: request.model,

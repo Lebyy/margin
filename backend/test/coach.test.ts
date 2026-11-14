@@ -24,6 +24,13 @@ describe("statesStatistic", () => {
     assert.equal(statesStatistic("about 40 percent struggled"), true);
     assert.equal(statesStatistic("3 of 4 students"), true);
     assert.equal(statesStatistic("7 out of 10 students"), true);
+    // The same claim in words. A model told not to write a percent reaches for these.
+    assert.equal(statesStatistic("Half of the class forgot the base case."), true);
+    assert.equal(statesStatistic("Most students skip the empty list."), true);
+    assert.equal(statesStatistic("three out of four missed it"), true);
+    assert.equal(statesStatistic("About 1 in 4 got it."), true);
+    assert.equal(statesStatistic("Trace the call on a list of three items on the board."), false);
+    assert.equal(statesStatistic("Use one of the three problems as a warm-up."), false);
     assert.equal(statesStatistic("Write count_list for [1, 2, 3]."), false);
     assert.equal(statesStatistic("Review Lecture 7, slides 12-16."), false);
   });
@@ -163,10 +170,17 @@ describe("class summary and Thursday card (D-B8)", { skip }, () => {
     assert.equal(card.students_struggling, 2);
     assert.equal(card.total_students, 4);
     assert.deepEqual(card.practice_problems, PROBLEMS);
-    assert.ok(!text.includes("99") && !text.includes("41"), "a model number reached the card");
+    // card_id is left out of the search. It is a random hex id, and it can
+    // contain "99" or "41" without any model number being on the card.
+    const { card_id: _cardId, ...shown } = card;
+    const shownText = JSON.stringify(shown);
+    assert.ok(!shownText.includes("99") && !shownText.includes("41") && !shownText.includes("40"), "a model number reached the card");
+    assert.ok(!shownText.includes("call_stack_tracing"), "the model's concept reached the card");
 
     const stored = await ThursdayCard.findById(card.card_id).lean();
     const payload = stored?.payload as Record<string, unknown>;
+    assert.deepEqual(Object.keys(payload).sort(), Object.keys(shown).sort(), "the stored card and the response differ");
+    assert.ok(!/99|41|40/.test(JSON.stringify(payload)), "a model number reached the stored card");
     assert.equal(payload.percent_struggling, 50);
     assert.equal(payload.students_struggling, 2);
     assert.equal(payload.concept, "base_case");
@@ -194,6 +208,22 @@ describe("class summary and Thursday card (D-B8)", { skip }, () => {
     const card = JSON.parse(text);
     assert.equal(card.percent_struggling, 50);
     assert.match(card.reteach_note, /^Reteach base_case/);
+  });
+
+  test("a practice problem that states a class statistic stores nothing", async () => {
+    // Case: the stand-in puts its own percent inside a problem, where no
+    // code-written sentence can replace it. The route is a 503 and neither a
+    // card nor a message is written.
+    const cards = await ThursdayCard.countDocuments();
+    const messages = await ProfessorMessage.countDocuments();
+    coachReply = JSON.stringify({
+      reteach_note: "Trace sum_list([]) on the board before any recursive call.",
+      practice_problems: [PROBLEMS[0], PROBLEMS[1], "70% of students missed this: write reverse_string(s) recursively."],
+    });
+    const { status } = await call("POST", `/api/prof/thursday-card?assignment_id=${sumListId}`);
+    assert.equal(status, 503);
+    assert.equal(await ThursdayCard.countDocuments(), cards);
+    assert.equal(await ProfessorMessage.countDocuments(), messages);
   });
 
   test("no card is invented for an assignment nobody has struggled with", async () => {
