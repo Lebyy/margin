@@ -26,9 +26,10 @@ export type DebugTurn = {
  * Everything here comes from the message response. The drawer does not fetch
  * anything, and it cannot show the answer key, because the response does not
  * contain it. The guard's reason is printed only when the response says the
- * canary check is clean. That word is "absent". The marker itself is not in
- * this file and is not rendered. A reason that still quotes a solution line
- * was blanked on the server before it got here.
+ * canary check is clean and the draft was released. That word is "absent".
+ * A fallback turn prints "The draft was held." and does not print the reason,
+ * because the held draft is not a field on this turn and must not appear here.
+ * The marker itself is not in this file and is not rendered.
  *
  * It is closed by default and is only mounted on the student page. The
  * professor's screens never render it.
@@ -111,8 +112,10 @@ function TurnTrace({ turn, ceiling, number }: { turn: DebugTurn; ceiling: number
         <Chip size="sm" variant="soft">turn {number}</Chip>
         {label.answer_request ? (
           <Chip size="sm" variant="primary" color="danger">
-            caught · {fellBack ? "every draft held" : level > levelBefore ? "check the policy" : "level held"}
+            caught · {fellBack ? "The draft was held." : level > levelBefore ? "check the policy" : "level held"}
           </Chip>
+        ) : fellBack ? (
+          <Chip size="sm" variant="primary" color="danger">The draft was held.</Chip>
         ) : caught ? (
           <Chip size="sm" variant="primary" color="danger">draft held</Chip>
         ) : null}
@@ -144,13 +147,15 @@ function TurnTrace({ turn, ceiling, number }: { turn: DebugTurn; ceiling: number
               <Chip size="sm" variant="soft" color="success">canary absent</Chip>
             ) : null}
           </span>
-          {canaryAbsent && verdict.reason ? (
+          {fellBack ? (
+            <span className="mt-1.5 block text-xs text-muted">The draft was held.</span>
+          ) : canaryAbsent && verdict.reason ? (
             <span className="mt-1.5 block text-xs text-muted">{verdict.reason}</span>
           ) : null}
         </Step>
         <Step index={4} title="Student saw" tone={fellBack ? "warn" : "ok"}>
           {fellBack
-            ? "Only the fallback question. Every draft was held, and none of them was shown."
+            ? "The draft was held. Only the fallback question was shown."
             : caught
               ? "A rewritten hint. The held draft was not shown."
               : "The hint, as drafted."}
