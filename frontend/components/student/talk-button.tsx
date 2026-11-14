@@ -22,7 +22,7 @@ export function TalkButton({
 }: {
   sessionId: string;
   isDisabled?: boolean;
-  onCaption: (role: "student" | "tutor", text: string) => void;
+  onCaption: (role: "student" | "tutor", text: string, partial: boolean) => void;
   onError: (message: string) => void;
 }) {
   const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
@@ -39,7 +39,7 @@ export function TalkButton({
     setPhase("connecting");
     try {
       hangup.current = await startLive(sessionId, {
-        onCaption: (caption) => onCaption(caption.role, caption.text),
+        onCaption: (caption) => onCaption(caption.role, caption.text, caption.partial),
         onError,
         onEnd: () => {
           hangup.current = null;

@@ -7,7 +7,22 @@
 
 import { API_BASE } from "@/lib/api";
 
-export type LiveCaption = { role: "student" | "tutor"; text: string; speak: boolean };
+export type LiveCaption = { role: "student" | "tutor"; text: string; speak: boolean; partial: boolean };
+
+/**
+ * Puts a live caption into the thread.
+ * While `live` is set, a later caption for that same side replaces the text instead of adding a line. The bubble stays one line that grows as the words arrive.
+ */
+export function placeCaption<T extends { role: "student" | "tutor"; content: string; live?: boolean }>(turns: T[], next: T): T[] {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].live && turns[i].role === next.role) {
+      const copy = turns.slice();
+      copy[i] = { ...turns[i], content: next.content, live: next.live };
+      return copy;
+    }
+  }
+  return [...turns, next];
+}
 
 const WORKLET = `
 class PcmCapture extends AudioWorkletProcessor {
@@ -130,7 +145,7 @@ export function startLive(
         play(event.data);
         return;
       }
-      let message: { type?: string; error?: string; role?: "student" | "tutor"; text?: string; speak?: boolean };
+      let message: { type?: string; error?: string; role?: "student" | "tutor"; text?: string; speak?: boolean; partial?: boolean };
       try {
         message = JSON.parse(String(event.data)) as typeof message;
       } catch {
@@ -146,7 +161,7 @@ export function startLive(
         return;
       }
       if (message.type === "caption" && message.role && message.text) {
-        handlers.onCaption({ role: message.role, text: message.text, speak: Boolean(message.speak) });
+        handlers.onCaption({ role: message.role, text: message.text, speak: Boolean(message.speak), partial: Boolean(message.partial) });
         if (message.speak && "speechSynthesis" in window) {
           window.speechSynthesis.speak(new SpeechSynthesisUtterance(message.text));
         }

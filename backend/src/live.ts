@@ -4,8 +4,10 @@
 // express key never leaves this process, and neither does the answer key.
 // The live model can speak a solution it already knows, so its audio is held
 // until the output transcript has been through the same string check as a
-// written hint. No transcript, or a transcript that hits, and the student
-// hears only the fallback sentence. The model is never given the key.
+// written hint. The words that pass are sent to the page as they arrive, and
+// the same line grows until the turn closes. No transcript, or a transcript
+// that hits, and the student hears only the fallback sentence. A hit after
+// the line is already up replaces that line. The model is never given the key.
 
 import type { Server as HttpServer } from "node:http";
 import mongoose from "mongoose";
@@ -25,9 +27,12 @@ const MAX_AUDIO_BYTES = 1_000_000;
 /** Searches in one conversation. Each one is another model round on the shared credit. */
 const MAX_SEARCHES = 8;
 
-/** What the browser is allowed to hear or read from one live turn. */
+/**
+ * What the browser is allowed to hear or read from one live turn.
+ * A caption with `partial` still open is the words so far. The same bubble is updated until `partial` is false. Only the closed caption is stored.
+ */
 export type LiveOutbound =
-  | { type: "caption"; role: "student" | "tutor"; text: string; speak: boolean; held: boolean }
+  | { type: "caption"; role: "student" | "tutor"; text: string; speak: boolean; held: boolean; partial: boolean }
   | { type: "audio"; pcm: Buffer }
   | { type: "stop" };
 
@@ -148,10 +153,15 @@ export function createLiveBridge(input: {
   // The reply was refused. Later audio from the same reply is dropped until the turn ends, so the next reply can play.
   let blocked = false;
 
-  function emitStudent() {
+  function emitCaption(role: "student" | "tutor", text: string, partial: boolean, held = false, speak = false) {
+    input.emit({ type: "caption", role, text, speak, held, partial });
+  }
+
+  function emitStudent(partial: boolean) {
     const text = heard.trim();
-    heard = "";
-    if (text) input.emit({ type: "caption", role: "student", text, speak: false, held: false });
+    if (!text) return;
+    emitCaption("student", text, partial);
+    if (!partial) heard = "";
   }
 
   function clearAudio() {
@@ -174,8 +184,8 @@ export function createLiveBridge(input: {
     playing = false;
     if (!captionSent) {
       captionSent = true;
-      emitStudent();
-      input.emit({ type: "caption", role: "tutor", text: fallbackFor(input.kind), speak: true, held: true });
+      emitStudent(false);
+      emitCaption("tutor", fallbackFor(input.kind), false, true, true);
     }
     output = "";
     phase = "settled";
@@ -184,12 +194,11 @@ export function createLiveBridge(input: {
   function finishClean() {
     const caption = output.trim();
     flushAudio();
-    if (!captionSent) {
+    emitStudent(false);
+    if (caption && !captionSent) {
       captionSent = true;
-      emitStudent();
-      if (caption) {
-        input.emit({ type: "caption", role: "tutor", text: caption, speak: !playing, held: false });
-      }
+      // `speak` is only for a clean transcript that arrived with no audio. A reply already playing does not get read out a second time.
+      emitCaption("tutor", caption, false, false, !playing);
     }
     output = "";
     playing = false;
@@ -223,6 +232,8 @@ export function createLiveBridge(input: {
     onEvent(event) {
       if (event.type === "inputText") {
         heard = extendTranscript(heard, event.text);
+        // The student's words go up while they are still talking, not after Margin answers.
+        emitStudent(true);
         return false;
       }
       if (event.type === "tool") {
@@ -230,6 +241,7 @@ export function createLiveBridge(input: {
         return false;
       }
       if (event.type === "interrupted") {
+        const shown = output.trim();
         clearAudio();
         output = "";
         playing = false;
@@ -237,7 +249,9 @@ export function createLiveBridge(input: {
         blocked = false;
         phase = "settled";
         input.emit({ type: "stop" });
-        emitStudent();
+        emitStudent(false);
+        // Close the line already on screen so the next turn starts a new bubble.
+        if (shown) emitCaption("tutor", shown, false);
         return false;
       }
       if (event.type === "audio") {
@@ -262,6 +276,8 @@ export function createLiveBridge(input: {
           hold();
           return false;
         }
+        // The line is on screen at the same moment it is allowed to play, and it grows as more words arrive.
+        emitCaption("tutor", output.trim(), true);
         flushAudio();
         if (phase === "waiting") {
           finishClean();
@@ -360,7 +376,8 @@ async function serveLive(client: WebSocket, sessionId: string, connect: typeof o
       } else {
         sendJson(client, message);
       }
-      if (message.type === "caption") void remember(loaded.sessionId, loaded.level, message);
+      // Partials are the live line. Storing each one would leave a transcript of half sentences.
+      if (message.type === "caption" && !message.partial) void remember(loaded.sessionId, loaded.level, message);
     },
     replyTool(id, name, result) {
       holder.live?.sendToolResult(id, name, result);

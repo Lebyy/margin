@@ -20,6 +20,7 @@ import { PHOTO_ACCEPT, preparePhoto } from "@/lib/photo";
 import { splitTurn } from "@/lib/attempt";
 import { browser } from "@/lib/browser";
 import { KIND } from "@/lib/kinds";
+import { placeCaption } from "@/lib/live-talk";
 import { speak, stopSpeaking, useCanSpeak } from "@/lib/speech";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,8 @@ type ChatTurn = {
   photo?: { src: string; box: PhotoBox; step: string };
   /** True for a reply that just arrived, so it is typed out. A reply restored on reload appears whole. */
   fresh?: boolean;
+  /** A Talk line that is still growing. The words already checked are shown as they arrive, and the same bubble is rewritten until the turn closes. */
+  live?: boolean;
 };
 
 /**
@@ -200,9 +203,10 @@ export default function StudentAssignmentPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const lastTurn = turns[turns.length - 1];
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns.length, sending]);
+  }, [turns.length, lastTurn?.content, sending]);
 
   function editCode(next: string) {
     setCode(next);
@@ -629,7 +633,7 @@ export default function StudentAssignmentPage() {
                         <TalkButton
                           sessionId={sessionId}
                           isDisabled={sending}
-                          onCaption={(role, text) => setTurns((prev) => [...prev, { id: crypto.randomUUID(), role, content: text }])}
+                          onCaption={(role, text, partial) => setTurns((prev) => placeCaption(prev, { id: crypto.randomUUID(), role, content: text, live: partial }))}
                           onError={setSendError}
                         />
                         {codeIsNew ? (
@@ -777,7 +781,7 @@ function Turn({ turn, isDemo }: { turn: ChatTurn; isDemo: boolean }) {
           <Card.Description>Not your assignment. Follow it, then find the matching step in yours.</Card.Description>
         </Card.Header>
         <Card.Content>
-          <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh ? <Typed text={turn.content} /> : turn.content}</p>
+          <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh && !turn.live ? <Typed text={turn.content} /> : turn.content}</p>
         </Card.Content>
       </Card>
     );
@@ -785,7 +789,7 @@ function Turn({ turn, isDemo }: { turn: ChatTurn; isDemo: boolean }) {
   return (
     <div className="border-l-2 border-margin-red pl-3">
       {turn.level ? <p className="text-xs font-medium text-margin-red">Hint {turn.level}</p> : null}
-      <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh ? <Typed text={turn.content} /> : turn.content}</p>
+      <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh && !turn.live ? <Typed text={turn.content} /> : turn.content}</p>
     </div>
   );
 }

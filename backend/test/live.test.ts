@@ -27,7 +27,8 @@ function bridge(kind: "code" | "topic" = "code", level: 1 | 2 | 3 = 1) {
 }
 
 function tutorText(messages: LiveOutbound[]): string {
-  const caption = messages.find((message) => message.type === "caption" && message.role === "tutor");
+  const captions = messages.filter((message) => message.type === "caption" && message.role === "tutor");
+  const caption = captions[captions.length - 1];
   return caption && caption.type === "caption" ? caption.text : "";
 }
 
@@ -108,6 +109,8 @@ describe("live talk", () => {
     onEvent({ type: "audio", pcm: first });
     assert.equal(messages.some((message) => message.type === "audio"), false);
     onEvent({ type: "outputText", text: "What happens when the list is empty?" });
+    const early = messages.find((message) => message.type === "caption" && message.role === "tutor");
+    assert.equal(early?.type === "caption" && early.partial && early.text === "What happens when the list is empty?", true);
     const played = messages.find((message) => message.type === "audio");
     assert.equal(played?.type === "audio" && played.pcm.equals(first), true);
     onEvent({ type: "audio", pcm: rest });
@@ -147,6 +150,16 @@ describe("live talk", () => {
     assert.equal(level2.tools[0]?.includes("Lecture 7"), true);
 
     if (safeNoteResult(KEY, KEY, CANARY, "code") !== NO_MATCH) throw new Error("a solution in the notes was returned");
+  });
+
+  // Case: the student's transcript is sent while they are still going, as the text so far, not saved up for the reply.
+  it("shows the student's words as they arrive", () => {
+    const { messages, onEvent } = bridge();
+    onEvent({ type: "inputText", text: "I don't" });
+    onEvent({ type: "inputText", text: "I don't know" });
+    const lines = messages.filter((message) => message.type === "caption" && message.role === "student");
+    const last = lines[lines.length - 1];
+    assert.equal(last?.type === "caption" && last.partial && last.text === "I don't know", true);
   });
 
   // Case: a transcript delivered as the whole text so far is not repeated, and a later piece is kept.
