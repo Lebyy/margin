@@ -3,9 +3,19 @@ import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
 import type { TextGenerator } from "./llm.ts";
-import { Assignment, CANARY, Message, Session, Student, findStudentAssignment } from "./models.ts";
+import {
+  Assignment,
+  CANARY,
+  Message,
+  ProfessorMessage,
+  Session,
+  Student,
+  ThursdayCard,
+  findStudentAssignment,
+} from "./models.ts";
 import { START_LEVEL } from "./policy.ts";
 import { studentProgress } from "./progress.ts";
+import { roster, transcript } from "./roster.ts";
 import { classSummary, generateThursdayCard } from "./coach.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
 import { runTurn } from "./turn.ts";
@@ -103,6 +113,12 @@ const sessionInput = z
 const messageInput = z
   .object({
     text: z.string().trim().min(1).max(8000).optional(),
+    // The "what I tried" field of the composer. It is kept apart from the
+    // question on the wire so the page cannot blur the two, and joined into
+    // one message below so the scribe reads the try as the student's own work.
+    // An empty try is simply absent: the client cannot claim an attempt by
+    // sending a flag, because there is no flag. The scribe reads the words.
+    attempt: z.string().trim().max(8000).optional(),
     image: z.object({ mimeType: z.string().min(1), base64: z.string().min(1) }).optional(),
   })
   .refine((b) => (b.text === undefined) !== (b.image === undefined), {
@@ -302,7 +318,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
       res.status(501).json({ error: "vision_unavailable" });
       return;
     }
-    const text = parsed.data.text as string;
+    const attempt = parsed.data.attempt ?? "";
+    const text = attempt.length > 0 ? `${parsed.data.text}\n\nWhat I tried:\n${attempt}` : (parsed.data.text as string);
 
     // The key and canary are selected here and passed only to the scribe's
     // local evidence scrub and to runTurn's guard. They never go into a
@@ -392,6 +409,38 @@ export function createRouter(deps: RouteDeps = {}): Router {
   });
 
   /**
+   * GET /api/sessions/:id/messages: the chat so far, for a page reload.
+   *
+   * The student page keeps its session id in the browser and asks for the
+   * turns again after a refresh, so a reload during the demo does not start
+   * the ladder over. Only role, content, and hint level are selected. The
+   * guard verdict stays on the server: it was already sent once, scrubbed, in
+   * the reply to the turn, and the stored copy is the professor's.
+   */
+  router.get("/api/sessions/:id/messages", async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    const session = await Session.findById(req.params.id).lean();
+    if (!session) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    const messages = await Message.find({ session_id: session._id })
+      .sort({ created_at: 1, _id: 1 })
+      .select("role content hint_level")
+      .lean();
+    res.json({
+      session_id: String(session._id),
+      student_id: String(session.student_id),
+      assignment_id: String(session.assignment_id),
+      level: session.current_level,
+      messages: messages.map((m) => ({ role: m.role, content: m.content, hint_level: m.hint_level ?? null })),
+    });
+  });
+
+  /**
    * GET /api/students/:id/progress: one student's own formative log.
    *
    * Everything comes from `studentProgress`, which reads only rows owned by the
@@ -433,11 +482,118 @@ export function createRouter(deps: RouteDeps = {}): Router {
   router.post("/api/prof/thursday-card", async (req, res) => {
     const result = await generateThursdayCard(String(req.query.assignment_id ?? ""), deps.coach);
     if (result.ok) {
-      res.status(201).json({ card_id: result.card_id, ...result.payload });
+      res.status(201).json({ card_id: result.card_id, generated_at: new Date().toISOString(), ...result.payload });
       return;
     }
     const status = { assignment_not_found: 404, no_struggles_yet: 409, coach_unavailable: 503 }[result.reason];
     res.status(status).json({ error: result.reason });
+  });
+
+  /**
+   * GET /api/assignments: the assignments a student can open, newest first.
+   *
+   * The home page uses this to send a student to the latest assignment
+   * without typing an id. Only id, course, and title are selected, so the
+   * list cannot carry a key even by accident.
+   */
+  router.get("/api/assignments", async (_req, res) => {
+    const docs = await Assignment.find().sort({ created_at: -1, _id: -1 }).select("course_name title").lean();
+    res.json({ assignments: docs.map((d) => ({ id: String(d._id), course_name: d.course_name, title: d.title })) });
+  });
+
+  /**
+   * GET /api/prof/assignments/:id: the saved assignment, for the setup form.
+   *
+   * The form reloads the prompt, notes, concepts, and ceiling. The key is not
+   * selected and is not returned. `has_answer_key` tells the form a key is
+   * stored, so it can say "leave blank to keep the saved key" without the
+   * solution ever travelling back to a browser.
+   */
+  router.get("/api/prof/assignments/:id", async (req, res) => {
+    const view = await findStudentAssignment(req.params.id);
+    if (!view) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    res.json({ ...view, has_answer_key: true });
+  });
+
+  /**
+   * GET /api/prof/students?assignment_id=: the three-line summary per student,
+   * plus what the guard did for the class. Counted in code by roster.ts.
+   */
+  router.get("/api/prof/students", async (req, res) => {
+    const result = await roster(String(req.query.assignment_id ?? ""));
+    if (!result) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    res.json(result);
+  });
+
+  /**
+   * GET /api/prof/students/:id/transcript?assignment_id=: one student's turns.
+   *
+   * Read from the database. No model is called, so a drill-down is not a new
+   * send of the student's work. The guard's reason is left out by roster.ts.
+   */
+  router.get("/api/prof/students/:id/transcript", async (req, res) => {
+    const result = await transcript(req.params.id, String(req.query.assignment_id ?? ""));
+    if (!result) {
+      res.status(404).json({ error: "student_not_found" });
+      return;
+    }
+    res.json(result);
+  });
+
+  /**
+   * GET /api/prof/thursday-card?assignment_id=: the most recent stored card.
+   *
+   * The dashboard reads this on load, so a card generated earlier is still
+   * there after a reload and no model is called to show it. 404 `no_card_yet`
+   * is the normal state before the professor has pressed generate.
+   */
+  router.get("/api/prof/thursday-card", async (req, res) => {
+    const id = String(req.query.assignment_id ?? "");
+    if (!mongoose.isValidObjectId(id) || !(await Assignment.exists({ _id: id }))) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    const card = await ThursdayCard.findOne({ assignment_id: id }).sort({ generated_at: -1, _id: -1 }).lean();
+    if (!card) {
+      res.status(404).json({ error: "no_card_yet" });
+      return;
+    }
+    res.json({
+      card_id: String(card._id),
+      generated_at: new Date(card.generated_at as Date).toISOString(),
+      ...(card.payload as Record<string, unknown>),
+    });
+  });
+
+  /**
+   * GET /api/prof/messages?assignment_id=: the professor's messages, newest first.
+   *
+   * One row was written each time a Thursday card was generated, and this
+   * lists them. It is the Photon entry (D-S3). The body is the text coach.ts
+   * built from numbers counted in code, returned as stored. Nothing is
+   * regenerated here, so opening the page twice shows the same messages.
+   */
+  router.get("/api/prof/messages", async (req, res) => {
+    const id = String(req.query.assignment_id ?? "");
+    if (!mongoose.isValidObjectId(id) || !(await Assignment.exists({ _id: id }))) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    const rows = await ProfessorMessage.find({ assignment_id: id }).sort({ created_at: -1, _id: -1 }).lean();
+    res.json({
+      assignment_id: id,
+      messages: rows.map((m) => ({
+        id: String(m._id),
+        body: m.body,
+        created_at: new Date(m.created_at as Date).toISOString(),
+      })),
+    });
   });
 
   /**

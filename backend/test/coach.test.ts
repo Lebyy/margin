@@ -170,9 +170,10 @@ describe("class summary and Thursday card (D-B8)", { skip }, () => {
     assert.equal(card.students_struggling, 2);
     assert.equal(card.total_students, 4);
     assert.deepEqual(card.practice_problems, PROBLEMS);
-    // card_id is left out of the search. It is a random hex id, and it can
-    // contain "99" or "41" without any model number being on the card.
-    const { card_id: _cardId, ...shown } = card;
+    // card_id and generated_at are left out of the search. One is a random hex
+    // id and the other a clock time, and either can contain "99" or "41"
+    // without any model number being on the card.
+    const { card_id: _cardId, generated_at: _generatedAt, ...shown } = card;
     const shownText = JSON.stringify(shown);
     assert.ok(!shownText.includes("99") && !shownText.includes("41") && !shownText.includes("40"), "a model number reached the card");
     assert.ok(!shownText.includes("call_stack_tracing"), "the model's concept reached the card");
