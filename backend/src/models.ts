@@ -1,4 +1,5 @@
 import mongoose, { Schema, type InferSchemaType, type Types } from "mongoose";
+import type { GuardLayer, GuardSeverity, StruggleType } from "./types.ts";
 
 // The Mongoose models for every collection in `.cursor/rules/project.mdc`
 // under "Data model". Field names are snake_case on purpose: they are the names
@@ -17,19 +18,33 @@ export const CANARY = "MARGIN_CANARY_7f3a";
 /** Hint ladder bounds. Level 1 is a question, 2 a pointer to the notes, 3 a different worked example. */
 const HINT_LEVELS = [1, 2, 3] as const;
 
-// These value lists mirror the shared shapes Lebyy defines in
-// `backend/src/types.ts` (L-B1). They are repeated here only because Mongoose
-// needs runtime arrays for `enum` validation. When types.ts lands, import its
-// constants instead so the two cannot drift apart.
-const STRUGGLE_TYPES = [
-  "misconception",
-  "stuck_starting",
-  "syntax_or_mechanics",
-  "careless_error",
-  "none",
-] as const;
-const GUARD_SEVERITIES = ["none", "partial", "full"] as const;
-const GUARD_LAYERS = ["deterministic", "judge", "fallback"] as const;
+// The shared shapes live in `types.ts` (L-B1) as TypeScript types only, and
+// Mongoose needs runtime arrays for `enum` validation. Each array below is
+// built from a `Record<SharedType, true>`, which the compiler requires to list
+// every member of the type and nothing else. If `types.ts` adds, removes, or
+// renames a struggle type, severity, or layer, this file stops compiling until
+// the enum matches, so the database cannot accept a value the rest of the app
+// does not know (or reject one it does).
+const STRUGGLE_TYPES = Object.keys({
+  misconception: true,
+  stuck_starting: true,
+  syntax_or_mechanics: true,
+  careless_error: true,
+  none: true,
+} satisfies Record<StruggleType, true>) as StruggleType[];
+const GUARD_SEVERITIES = Object.keys({
+  none: true,
+  partial: true,
+  full: true,
+} satisfies Record<GuardSeverity, true>) as GuardSeverity[];
+const GUARD_LAYERS = Object.keys({
+  deterministic: true,
+  judge: true,
+  fallback: true,
+} satisfies Record<GuardLayer, true>) as GuardLayer[];
+
+// Roles are local to the transcript. No shared type names them, so this is
+// the one place they are defined.
 const MESSAGE_ROLES = ["student", "tutor"] as const;
 
 /**
@@ -201,9 +216,10 @@ export const Session = mongoose.model("Session", sessionSchema);
 // ---------------------------------------------------------------------------
 
 // The guard's decision on a tutor draft, kept for the debug drawer and for the
-// red-team record. `reason` may quote the answer key, so this whole object
-// stays on the server; the student JSON carries only the verdict summary the
-// board allows (reply, level, verdict, retries) without the raw reason.
+// red-team record. Its fields are `GuardVerdict` from types.ts. The guard is
+// required not to quote the answer key in `reason`, but the board still keeps
+// verdict reasons on the server as a second line of defense: a student
+// response is built from TurnResult, never by sending this stored row.
 const guardVerdictSchema = new Schema(
   {
     leaks: { type: Boolean, required: true },
