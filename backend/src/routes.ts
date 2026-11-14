@@ -6,6 +6,7 @@ import type { TextGenerator } from "./llm.ts";
 import { Assignment, CANARY, Message, Session, Student, findStudentAssignment } from "./models.ts";
 import { START_LEVEL } from "./policy.ts";
 import { studentProgress } from "./progress.ts";
+import { classSummary, generateThursdayCard } from "./coach.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
 import { runTurn } from "./turn.ts";
 import type { TutorRunner } from "./tutor.ts";
@@ -146,6 +147,8 @@ export type RouteDeps = {
   scribe?: TextGenerator;
   judge?: TextGenerator;
   tutor?: TutorRunner;
+  /** The Thursday card's note and practice problems. */
+  coach?: TextGenerator;
 };
 
 /** Answers a zod failure with field paths only, never the submitted values. */
@@ -411,6 +414,39 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
     res.json(progress);
+  });
+
+  /**
+   * GET /api/prof/class-summary?assignment_id=: the heatmap numbers.
+   *
+   * Counted in code by coach.ts from the sessions and scribe events that
+   * exist. No model is called. An assignment nobody has opened returns zero
+   * students and zeros everywhere, which the dashboard shows as its empty state.
+   */
+  router.get("/api/prof/class-summary", async (req, res) => {
+    const summary = await classSummary(String(req.query.assignment_id ?? ""));
+    if (!summary) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    res.json(summary);
+  });
+
+  /**
+   * POST /api/prof/thursday-card?assignment_id=: generate and store the card.
+   *
+   * 201 with the stored card. 409 when no student has struggled yet, because
+   * a card about nothing would be invented. 503 when the model could not write
+   * the note and problems; nothing is stored in that case.
+   */
+  router.post("/api/prof/thursday-card", async (req, res) => {
+    const result = await generateThursdayCard(String(req.query.assignment_id ?? ""), deps.coach);
+    if (result.ok) {
+      res.status(201).json({ card_id: result.card_id, ...result.payload });
+      return;
+    }
+    const status = { assignment_not_found: 404, no_struggles_yet: 409, coach_unavailable: 503 }[result.reason];
+    res.status(status).json({ error: result.reason });
   });
 
   router.get("/api/assignments/:id", async (req, res) => {
