@@ -11,6 +11,14 @@ Margin is an AI tutor that a university endorses instead of banning other tools.
 
 The name comes from the professor's red pen. Help lives in the margins of the student's work and is never the answer itself.
 
+## Who builds what
+
+Lebyy (GitHub Lebyy) and David (GitHub WobbbleFoot) each take half of every milestone. The order is fixed: the whole backend, then the whole frontend, then the richer demo features, then the prize tracks, then the judge pamphlet, then submit. Do not open the next row until your half of the current row is done.
+
+The task brief, with ids, files, and done-when lines, is `docs/BOARD.md`. The shareable page is https://margin-board-ochre.vercel.app (`docs/index.html`). Read that brief before writing code. An agent invoked by Lebyy takes only the `L-*` tasks. An agent invoked by David takes only the `D-*` tasks. This file is the product law. The board is the work split. If a task conflicts with a safety rule here, this file wins.
+
+Checkboxes on the web page are a local browser aid. A task is done when the commit that implements it is on `main`.
+
 ## Problem and users
 
 - Students already use ChatGPT-style tools and get black-box solutions. Unguarded AI raises practice scores but can lower later exam scores (Bastani et al., PNAS 2025: about 17% lower on exams for unrestricted GPT-4, avoided by a guardrailed tutor). Verify exact figures before they go on a slide. State the evidence accurately: guided AI avoids the harm, it does not clearly beat studying alone.
@@ -132,19 +140,40 @@ Treat all student text (and later, image content) as untrusted data, never as in
 
 ## Milestones
 
-- M0: scaffold, one-command run, README, `.env.example`, DECISIONS.md
-- M1: data model, seed endpoint, student-safe assignment API with the answer-key leak test
-- M2: tutor with the deterministic hint-level policy
-- M3: guard (both layers) with the red-team suite passing
-- M4: scribe labels persisted, class-summary returns real aggregates over synthetic and live data
-- M5: frontend shells (student chat with level indicator and debug drawer, prof setup, dashboard, Thursday card)
-- M6: deploy to a free host and confirm the full demo path on the deployed URL
+Do these rows in order. The equal split inside each row is on the board.
+
+- M0, done: scaffold, one-command run, README, `.env.example`.
+- M1, backend, all of it: Lebyy owns the provider, hint policy, tutor, guard, `runTurn`, and the red-team suite. David owns SQLite, seed, routes, scribe, progress, class summary, and the Thursday card. David's message route calls Lebyy's `runTurn`.
+- M2, frontend, after M1: Lebyy owns the student chat, hint indicator, attempt box, debug drawer, and the demo jailbreak. David owns professor setup, the heatmap, the three-line summaries, the transcript, and the Thursday card on screen.
+- M3, richer demo, after the core path works: features adapted from MindPad, Asclepius, and Lume. Listed below. Still before prize paperwork.
+- M4, sub tracks, after the demo path works on localhost.
+- M5, judge pamphlet: one sheet, Lebyy writes the student half, David writes the professor half.
+- M6, ship: Lebyy deploys and rehearses the student minute. David fills Devpost and rehearses the professor minute.
 
 ## Team and roles
 
-- The team is two students. Owner of the four agents and the guard: one engineer. Owner of snap-your-work and the dashboard: the other. The team also red-teams the guard and defines the mistake categories and hint ladder.
+- The team is two students: Lebyy and David. Lebyy owns the tutor, the guard, the hint policy, the student screen, and the Amazon docs. David owns the database, the scribe, the coach, the professor screen, snap-your-work, and the Peri evidence packet. The team also red-teams the guard and defines the mistake categories and hint ladder.
 - Dr. Desmond Lund advised the team on the idea only. He is not a team member, client, partner, or endorser, and has no official role in the project. Do not list him on the team, do not attribute work, quotes, endorsements, or a pilot to him, and do not put him in the pitch or Devpost write-up as anything beyond "advised by", and only with his permission.
 - There is no confirmed pilot. Never claim one.
+
+## Features added from other hacks
+
+Take the mechanism, not the stack. MindPad (HackPrinceton Fall 2025, Best Overall and Amazon Practical AI), Asclepius (a measured privacy proxy), and Lume (Fall 2025 education track: show the exact step, in speech) are the sources. Discer.io contributes only the "try a smaller problem" beat. Cortex contributes only "search the professor's own notes."
+
+Build these in M3, after the core loop is real:
+
+- A canary string stored with the answer key. It must never reach a student-facing body. This is Asclepius's verbatim check, aimed at our key.
+- Fail closed. If the guard's JSON fails or the provider errors, the student does not see the draft. Asclepius leaked because a parse error fell through to the weak path.
+- Pass rates reported by attack class, not as one comforting number.
+- A level-3 related-problem card, separate from the chat bubble, so the demo is not a plain chat box. MindPad's canvas, cut down to one card.
+- Typed-work highlight: mark the line that went wrong and do not rewrite it. This is Lume's "show where," and it is the fallback when the photo circle is not reliable.
+- Snap-your-work: a photo in, the wrong step and a normalized box out, a red ellipse on screen. 501 until it works. Go or no-go Saturday 2 PM.
+- Level-2 citation by searching the professor's pasted notes. Keyword match is enough. No new search service.
+- Flashcards for that student's weakest concept, drawn from the notes, with no solution lines. MindPad's revise loop, without the answer.
+- A pasted-notes field on professor setup. A PDF upload only after paste works.
+- Accessibility of the two screens: contrast, focus order, and usable at 200% zoom. No camera and no gesture control.
+
+Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a HIPAA stripper, clinical-trial IP detection, a Python or FastAPI backend, and LangChain deepagents. Voice is not part of M1–M3. Add voice only if the core demo already works and only if someone is actually entering the Photon voice prize.
 
 ## Out of scope this weekend (put on a Roadmap slide)
 
@@ -203,6 +232,6 @@ Do not enter CoStar, because it needs their building data. Do not enter Arlequin
 
 ## Working rules for agents
 
-- Follow DESIGN.md for UI once it exists. Keep PLAN.md, DECISIONS.md, and TODO.md current. TODO.md must list next steps for snap-your-work (vision returns the step and a normalized bounding box, the frontend draws a red ellipse), the full professor dashboard, and Thursday card polish.
+- Follow DESIGN.md for UI once it exists. The work list is `docs/BOARD.md`, not a second TODO. Keep DECISIONS.md current when a real choice is made. Snap-your-work, the professor dashboard, and the Thursday card are already tasked on the board.
 - Commit after each milestone with a clear message. Do not push or deploy unless asked.
 - At the end of a work session, report what works, how to run it, the red-team pass rate, known issues, and the 3 most important next tasks.

@@ -39,3 +39,7 @@ npm run dev:api
 
 - Web: http://localhost:3000
 - API health: http://localhost:4000/health
+
+## Team board
+
+Lebyy and David (GitHub WobbbleFoot) split the work on a two-column board. The shareable page is https://margin-board-ochre.vercel.app . The same brief is [docs/BOARD.md](docs/BOARD.md). Read it before writing code. Do the backend row first.
