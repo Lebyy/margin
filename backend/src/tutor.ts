@@ -9,6 +9,7 @@ import { createDeepAgent, registerHarnessProfile, StateBackend } from "deepagent
 import { tool } from "langchain";
 import { z } from "zod";
 import { agentPlatformRequest, STRONG_MODEL, stripIdentity } from "./llm.ts";
+import { searchNotes } from "./notes.ts";
 import type { HintLevel } from "./types.ts";
 
 /**
@@ -65,24 +66,9 @@ export type TutorCall = {
 
 export type TutorRunner = (call: TutorCall) => Promise<string>;
 
-/**
- * Lines in the notes that share a word with the query.
- * This is a string match, not a vector index. "base case" hits "base cases", and the demo line is "Lecture 7, slides 12-16".
- * A miss returns a fixed sentence so the model cannot treat silence as permission to invent a citation.
- */
-export function searchNotes(notes: string, query: string): string {
-  const wanted = words(query);
-  const hits = notes
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && wanted.some((word) => line.toLowerCase().includes(word)));
-  if (hits.length === 0) return "No matching line in the notes.";
-  return hits.join("\n");
-}
-
-function words(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 3);
-}
+// The level-2 search lives in notes.ts (D-R3). It is re-exported here because
+// cite_notes below is its only caller and the tutor tests import it from here.
+export { searchNotes } from "./notes.ts";
 
 /**
  * The hint for this turn.
