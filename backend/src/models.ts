@@ -135,6 +135,10 @@ const assignmentSchema = new Schema(
     // searches those lectures' slides, page by page, and cites them as
     // "Lecture n, slide p". Empty means the pasted notes are searched, as before.
     lecture_ids: { type: [{ type: Schema.Types.ObjectId, ref: "LectureFile" }], default: [] },
+    // The professor's Question PDF, kept in GridFS so a student can open the
+    // original sheet. The Answer key PDF is never stored: its text is read
+    // into the hidden keys at save time and the file is dropped.
+    question_pdf_id: { type: Schema.Types.ObjectId, default: null },
     // The class this belongs to. Set when the assignment is saved, from its course name. Null only on a row saved before courses existed, until the course list is next read.
     course_id: { type: Schema.Types.ObjectId, ref: "Course", default: null },
   },
@@ -184,6 +188,7 @@ export const STUDENT_ASSIGNMENT_FIELDS = Object.freeze([
   "questions",
   "due_at",
   "margin_enabled",
+  "question_pdf_id",
 ] as const);
 
 /** The shape a student receives for an assignment. It has no key and no canary. */
@@ -203,6 +208,8 @@ export type StudentAssignmentView = {
   /** ISO time, or null for no due date. */
   due_at: string | null;
   margin_enabled: boolean;
+  /** True when the professor's Question PDF can be opened. The id itself stays on the server. */
+  has_question_pdf: boolean;
 };
 
 /**
@@ -233,6 +240,7 @@ export async function findStudentAssignment(id: string): Promise<StudentAssignme
     questions: [doc.prompt, ...(doc.questions ?? []).map((q) => q.prompt)],
     due_at: doc.due_at ? new Date(doc.due_at).toISOString() : null,
     margin_enabled: doc.margin_enabled !== false,
+    has_question_pdf: doc.question_pdf_id != null,
   };
 }
 
@@ -275,6 +283,10 @@ const sessionSchema = new Schema(
     // the student presses Next or Finish, and the tutor and the guard read the
     // prompt and key at this index.
     current_question: { type: Number, default: 0, min: 0 },
+    // Real attempts on the current question, counted from the scribe's
+    // attempt_made. The request rule in policy.ts unlocks the slides and the
+    // worked example only after three. It resets when the student moves on.
+    question_attempts: { type: Number, default: 0, min: 0 },
     // The per-question clock the professor sees. One entry opens when a
     // question starts and closes when the student presses Next or Finish. The
     // times are the server's, so the page cannot edit them, and no student

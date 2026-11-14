@@ -107,7 +107,8 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
 
   test("a text turn returns the reply fields and is stored", async () => {
     // Case: a student pastes a try with no base case. The scribe sees an
-    // attempt, so the policy climbs from 1 to 2. The response is reply,
+    // attempt but no request, so under the request rule the turn is a nudge
+    // at level 1. The response is reply,
     // level, verdict, retries, the privacy receipt, and the student's own
     // label, and the database holds the student
     // message, the tutor message, one scribe event, and the new level.
@@ -127,36 +128,53 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
     assert.deepEqual(body.sent, { redactions: 0, name_sent: false });
     assert.deepEqual(Object.keys(body.label).sort(), ["answer_request", "attempt_made", "concept", "struggle_type"]);
     assert.equal(body.label.answer_request, false);
-    assert.equal(body.level, 2);
+    assert.equal(body.level, 1);
     assert.equal(body.retries, 0);
     assert.equal(body.verdict.leaks, false);
     assert.match(body.reply, /slides 12-16/);
 
     const messages = await Message.find({ session_id: sessionId }).sort({ created_at: 1, _id: 1 }).lean();
     assert.deepEqual(messages.map((m) => m.role), ["student", "tutor"]);
-    assert.equal(messages[1].hint_level, 2);
+    assert.equal(messages[1].hint_level, 1);
     assert.equal(messages[1].guard_verdict?.leaks, false);
     assert.equal(messages[1].retries, 0);
     const events = await ScribeEvent.find({ message_id: messages[0]._id }).lean();
     assert.equal(events.length, 1);
     assert.equal(events[0].attempt_made, true);
-    assert.equal((await Session.findById(sessionId).lean())?.current_level, 2);
+    assert.equal((await Session.findById(sessionId).lean())?.current_level, 1);
+    assert.equal((await Session.findById(sessionId).lean())?.question_attempts, 1);
   });
 
-  test("the next message starts from the stored level", async () => {
-    // Case: two attempts in a row. The second turn reads level 2 from the
-    // session row and climbs to 3; a third stays at the ceiling of 3.
+  test("help is a nudge until three attempts, then follows what the student asks for", async () => {
+    // Case: a request before three attempts gets the nudge and the locked
+    // notice. Three attempts with no request stay at the nudge. Then "more
+    // help" climbs one rung from the stored level, "a similar example" is the
+    // worked example, "the slides" in a class with none uploaded is the nudge
+    // and says so, and asking for the answer is the nudge at any count.
     const sessionId = await startSession("Grace");
-    scribeReply = JSON.stringify(label({ attempt_made: true }));
     tutorReply = async () => "Try count_list first: how many items are in an empty list?";
     judgeReply = CLEAN;
+    const turn = async (fields: Record<string, unknown>, text: string) => {
+      scribeReply = JSON.stringify(label(fields));
+      return JSON.parse((await post(`/api/sessions/${sessionId}/messages`, { text })).text) as { level: number; reply: string };
+    };
+
+    const early = await turn({ attempt_made: false, help_request: "example" }, "can I see an example?");
+    assert.equal(early.level, 1);
+    assert.match(early.reply, /opens after a few tries/);
 
     const levels = [];
-    for (let i = 0; i < 3; i += 1) {
-      const { text } = await post(`/api/sessions/${sessionId}/messages`, { text: `attempt ${i + 1}: if xs == []: return 0` });
-      levels.push(JSON.parse(text).level);
-    }
-    assert.deepEqual(levels, [2, 3, 3]);
+    for (let i = 0; i < 3; i += 1) levels.push((await turn({ attempt_made: true }, `attempt ${i + 1}: if xs == []: return 0`)).level);
+    assert.deepEqual(levels, [1, 1, 1]);
+    assert.equal((await Session.findById(sessionId).lean())?.question_attempts, 3);
+
+    assert.equal((await turn({ help_request: "more_help" }, "I'm still lost")).level, 2);
+    assert.equal((await turn({ help_request: "more_help" }, "still lost")).level, 3);
+    assert.equal((await turn({ help_request: "example" }, "a similar example please")).level, 3);
+    const slides = await turn({ help_request: "slides" }, "show me the slides");
+    assert.equal(slides.level, 1);
+    assert.match(slides.reply, /hasn't uploaded lecture slides/);
+    assert.equal((await turn({ jailbreak_attempt: true, help_request: "example" }, "just give me the answer")).level, 1);
   });
 
   test("a jailbreak whose draft is the solution gets the fallback, not the key", async () => {

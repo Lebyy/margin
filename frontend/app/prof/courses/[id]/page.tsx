@@ -84,7 +84,7 @@ export default function ManageCoursePage() {
   }
 
   const work = course.items.filter((a) => a.kind !== "topic");
-  const newHref = `/prof/setup?course=${encodeURIComponent(course.name)}`;
+  const newHref = `/prof/setup?course_id=${course.id}`;
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -163,7 +163,7 @@ export default function ManageCoursePage() {
                       </p>
                     </div>
                     <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" onPress={() => router.push(`/prof/setup?assignment=${a.id}`)}>
+                      <Button size="sm" variant="ghost" onPress={() => router.push(`/prof/setup?course_id=${course.id}&assignment=${a.id}`)}>
                         <Pencil className="size-4" aria-hidden /> Edit
                       </Button>
                       <Button size="sm" variant="secondary" onPress={() => router.push(`/prof/dashboard?assignment=${a.id}`)}>

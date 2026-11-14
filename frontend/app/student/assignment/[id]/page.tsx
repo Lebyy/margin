@@ -1,7 +1,7 @@
 "use client";
 
 import { Alert, Breadcrumbs, Button, Card, Chip, Description, Drawer, Input, Label, Spinner, Tabs, TextArea, TextField, Tooltip } from "@heroui/react";
-import { ArrowRight, ArrowUp, Bug, Camera, Check, MessageCircle, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
+import { ArrowRight, ArrowUp, Bug, Camera, Check, FileText, MessageCircle, Paperclip, ShieldCheck, Volume2, VolumeX } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,7 +17,7 @@ import { Quiz } from "@/components/student/quiz";
 import { StudyPanel } from "@/components/student/study-panel";
 import { ReflectionCard } from "@/components/student/reflection-card";
 import { CitationContext, CitedText } from "@/components/student/cited-text";
-import { api, ApiError, conceptLabel, STRUGGLE_LABEL, type Assignment, type Drawing, type HintLevel, type Lecture, type PhotoBox, type Reflection, type StudentProgress, type TurnReply } from "@/lib/api";
+import { api, ApiError, conceptLabel, questionPdfUrl, STRUGGLE_LABEL, type Assignment, type Drawing, type HintLevel, type Lecture, type PhotoBox, type Reflection, type StudentProgress, type TurnReply } from "@/lib/api";
 import { PHOTO_ACCEPT, preparePhoto } from "@/lib/photo";
 import { splitTurn } from "@/lib/attempt";
 import { browser } from "@/lib/browser";
@@ -728,6 +728,12 @@ export default function StudentAssignmentPage() {
               {prompts.length > 1 ? `Question ${current + 1} of ${prompts.length}` : "Brief"}
             </h2>
             <p className="mt-1.5 whitespace-pre-wrap font-serif text-lg leading-7">{prompts[current]}</p>
+            {/* The professor's original sheet, for figures and layout the text cannot carry. The answer key PDF has no link: it is not kept. */}
+            {assignment.has_question_pdf ? (
+              <a href={questionPdfUrl(assignment.id)} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">
+                <FileText className="size-3.5" aria-hidden /> Open the question sheet
+              </a>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-1.5">
               {assignment.concepts.map((c) => (
                 <Chip key={c} size="sm" variant="soft">

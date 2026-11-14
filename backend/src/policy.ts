@@ -12,6 +12,13 @@
 import type { HintLevel, ScribeLabel } from "./types.ts";
 
 /**
+ * Attempts on one question before a request can raise the level. Below this,
+ * every turn is a nudge, whatever the student asks for: help is earned by
+ * working on the question, not by asking for it.
+ */
+export const ATTEMPTS_BEFORE_HELP = 3;
+
+/**
  * The rung a new session stores before any hint.
  * Sessions default to this same number. A second constant in the session
  * schema would let a new student start at 2 and skip the question.
@@ -29,7 +36,15 @@ export type PolicyInput = {
    * jailbreak_attempt covers begging, claimed permission, and "ignore the rules".
    * Those stay on the current rung even when the same message also contains a try.
    */
-  label: Pick<ScribeLabel, "attempt_made" | "jailbreak_attempt" | "demonstrated_understanding">;
+  label: Pick<ScribeLabel, "attempt_made" | "jailbreak_attempt" | "demonstrated_understanding" | "help_request">;
+  /**
+   * Real attempts the student has made on the question they are on, counted
+   * by the route from the scribe's attempt_made (this message included).
+   * When set, the request rule below decides the level. Left out, the older
+   * attempt-by-attempt ladder decides, which is what the red-team suite and
+   * the earlier tests exercise.
+   */
+  attempts?: number;
 };
 
 /**
@@ -43,6 +58,7 @@ export function nextHintLevel(input: PolicyInput): HintLevel {
   const level = clampLevel(input.level, START_LEVEL);
   const ceiling = clampLevel(input.hintCeiling, START_LEVEL);
   const current = level > ceiling ? ceiling : level;
+  if (input.attempts !== undefined) return requestLevel(input, current, ceiling);
 
   const stuck = input.label.demonstrated_understanding !== true;
   const attempted = input.label.attempt_made === true;
@@ -52,6 +68,35 @@ export function nextHintLevel(input: PolicyInput): HintLevel {
   const next = current + 1;
   if (next > ceiling || next > 3) return current;
   return next as HintLevel;
+}
+
+/**
+ * The request rule: Margin nudges unless the student asks for more, and only
+ * after ATTEMPTS_BEFORE_HELP real attempts on this question.
+ *
+ * - A jailbreak (asking for the answer, claimed permission) is a nudge at any
+ *   count. The answer itself is never a level; the guard holds it regardless.
+ * - Fewer attempts than the minimum: a nudge, whatever was asked.
+ * - Then "show me the slides" is the pointer (2), "a similar example" is the
+ *   worked example (3), and "I'm lost / more help" is one rung above the last
+ *   one, so asking again after a pointer gets the example.
+ * - No request: a nudge. The level does not stay up on its own.
+ * Every result is kept inside the ceiling.
+ */
+function requestLevel(input: PolicyInput, current: HintLevel, ceiling: HintLevel): HintLevel {
+  const cap = (n: number): HintLevel => (Math.min(n, ceiling, 3) as HintLevel);
+  if (input.label.jailbreak_attempt === true) return START_LEVEL;
+  if ((input.attempts ?? 0) < ATTEMPTS_BEFORE_HELP) return START_LEVEL;
+  switch (input.label.help_request ?? "none") {
+    case "slides":
+      return cap(2);
+    case "example":
+      return cap(3);
+    case "more_help":
+      return cap(current + 1);
+    default:
+      return START_LEVEL;
+  }
 }
 
 /**

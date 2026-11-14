@@ -79,3 +79,33 @@ describe("nextHintLevel", () => {
     );
   });
 });
+
+// The request rule: with an attempt count, Margin nudges unless the student
+// asks for more, and only after three attempts on the question. The answer is
+// never a level, so asking for it is a nudge at any count.
+describe("nextHintLevel, the request rule", () => {
+  const ask = (help_request: "none" | "more_help" | "slides" | "example", attempts: number, level: 1 | 2 | 3 = 1, jailbreak = false) =>
+    nextHintLevel({ level, hintCeiling: 3, attempts, label: { attempt_made: false, jailbreak_attempt: jailbreak, demonstrated_understanding: false, help_request } });
+
+  it("before three attempts every request is a nudge", () => {
+    for (const r of ["none", "more_help", "slides", "example"] as const) for (const n of [0, 1, 2]) assert.equal(ask(r, n, 3), 1, `${r} at ${n}`);
+  });
+
+  it("from three attempts, slides is the pointer, example is the worked example, more help climbs one", () => {
+    assert.equal(ask("slides", 3), 2);
+    assert.equal(ask("example", 3), 3);
+    assert.equal(ask("more_help", 3, 1), 2);
+    assert.equal(ask("more_help", 5, 2), 3);
+    assert.equal(ask("more_help", 5, 3), 3);
+    assert.equal(ask("none", 9, 3), 1, "with no request the level does not stay up");
+  });
+
+  it("asking for the answer is a nudge at any count, even with a request", () => {
+    assert.equal(ask("example", 10, 3, true), 1);
+    assert.equal(ask("slides", 10, 2, true), 1);
+  });
+
+  it("the ceiling still caps a request", () => {
+    assert.equal(nextHintLevel({ level: 1, hintCeiling: 2, attempts: 4, label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false, help_request: "example" } }), 2);
+  });
+});

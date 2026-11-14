@@ -42,7 +42,17 @@ export type Assignment = {
   due_at?: string | null;
   /** False when the professor has not turned Margin on for this assignment. Every tutor route then answers 403. */
   margin_enabled?: boolean;
+  /** True when the professor's Question PDF can be opened with `questionPdfUrl`. */
+  has_question_pdf?: boolean;
 };
+
+/** What "Read PDFs" shows the professor: the questions found, and per question only whether its answer was found. Never an answer. */
+export type AssignmentDraft = { draft_id: string; kind: AssignmentKind; concepts: string[]; questions: { prompt: string; has_answer: boolean }[] };
+
+/** The professor's Question PDF for an assignment, in the browser's own viewer. There is no URL for the answer key PDF: it is not kept. */
+export function questionPdfUrl(assignmentId: string): string {
+  return `${API_BASE}/api/assignments/${encodeURIComponent(assignmentId)}/question-pdf`;
+}
 
 /** Not started is no session; in progress is a session; submitted is a session that pressed Submit on the last question. */
 export type AssignmentStatus = "not_started" | "in_progress" | "submitted";
@@ -378,6 +388,21 @@ export const api = {
   /** The student behind a named profile, found or created by name and enrolled in that class. */
   profileStudent: (displayName: string, courseName: string) =>
     request<{ student_id: string; course_id: string; display_name: string }>("POST", "/api/profiles/students", { display_name: displayName, course_name: courseName }),
+  /**
+   * Reads a Question PDF and an Answer key PDF into a draft, in two uploads:
+   * the question sheet opens the draft, the answer key completes it and is
+   * read with it. Returns the preview.
+   */
+  readAssignmentPdfs: async (courseId: string, questionPdf: File, answerPdf: File) => {
+    const opened = await request<{ draft_id: string }>("POST", `/api/prof/courses/${q(courseId)}/assignment-drafts`, undefined, { type: "application/pdf", data: questionPdf });
+    return request<AssignmentDraft>("POST", `/api/prof/assignment-drafts/${q(opened.draft_id)}/answer-key`, undefined, { type: "application/pdf", data: answerPdf });
+  },
+  /** A new assignment in this class, from a read draft. */
+  createPdfAssignment: (courseId: string, fields: { draft_id: string; title: string; due_at: string | null; margin_enabled: boolean }) =>
+    request<{ _id: string }>("POST", `/api/prof/courses/${q(courseId)}/assignments`, fields),
+  /** Edits title, due date and the switch; with `draft_id`, also replaces the questions and keys. 400 `pdfs_required` for an assignment without PDFs. */
+  editPdfAssignment: (assignmentId: string, fields: { draft_id?: string; title: string; due_at: string | null; margin_enabled: boolean }) =>
+    request<{ _id: string }>("PATCH", `/api/prof/assignments/${q(assignmentId)}`, fields),
   profCourses: () => request<{ courses: ProfCourseCard[] }>("GET", "/api/prof/courses"),
   posts: (courseId: string) => request<{ posts: Post[] }>("GET", `/api/courses/${q(courseId)}/posts`),
   addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),

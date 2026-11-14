@@ -108,18 +108,18 @@ describe("GET /api/students/:id/progress (D-B7)", { skip }, () => {
 
   test("the progress lists concepts, struggle types, and levels, and nothing else of note", async () => {
     // Case: A's one turn. The label carries A's concept and struggle type, the
-    // tutor answered it at level 2 (an attempt from level 1), and the session
+    // tutor answered it at level 1 (an attempt with no request is a nudge), and the session
     // shows the stored level. No key, canary, score, or integrity flag.
     const { text } = await call("GET", `/api/students/${studentA}/progress`);
     const body = JSON.parse(text);
     assert.equal(body.student_id, studentA);
     assert.equal(body.sessions.length, 1);
-    assert.equal(body.sessions[0].current_level, 2);
+    assert.equal(body.sessions[0].current_level, 1);
     assert.equal(body.sessions[0].assignment_title, SUM_LIST.title);
     assert.equal(body.labels.length, 1);
     assert.equal(body.labels[0].concept, "recursive_call_progress");
     assert.equal(body.labels[0].struggle_type, "misconception");
-    assert.equal(body.labels[0].hint_level, 2);
+    assert.equal(body.labels[0].hint_level, 1);
     assert.equal(body.labels[0].session_id, body.sessions[0].session_id);
 
     assert.ok(!text.includes("answer_key") && !text.includes(CANARY) && !text.includes("if not xs"));

@@ -347,6 +347,14 @@ describe("the routes the screens read", { skip }, () => {
     // is still on level 1 afterward.
     // Case two: a tutor that answers with the assigned solution is held, and the reply is not the solution.
     // Case three: a ceiling of 2 has no such card.
+    // Before three attempts the control is the locked notice, with no model call.
+    const locked = JSON.parse((await call("POST", `/api/sessions/${bob.session_id}/smaller`)).text);
+    assert.equal(locked.level, 1);
+    assert.match(locked.reply, /opens after a few tries/);
+    label = { concept: "base_case", struggle_type: "misconception", attempt_made: true, jailbreak_attempt: false };
+    draft = "What happens when the list is empty?";
+    for (let i = 0; i < 3; i += 1) await call("POST", `/api/sessions/${bob.session_id}/messages`, { text: `try ${i + 1}: return xs[0] + sum_list(xs[1:])` });
+
     draft = "Take count_list on [7, 8]. The count of [7, 8] is one more than the count of [8], and the count of [8] is one more than the count of []. The count of [] is zero, so the waiting additions finish: one, then two. Which step of your own function matches?";
     const card = await call("POST", `/api/sessions/${bob.session_id}/smaller`);
     assert.equal(card.status, 200);

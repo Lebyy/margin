@@ -17,6 +17,8 @@ import type { AssignmentKind, HintLevel, ScribeLabel, TurnResult } from "./types
  */
 export type TurnState = {
   level: HintLevel;
+  /** Real attempts on the current question, this message included. Set by the message route, which turns on the request rule in policy.ts. */
+  attempts?: number;
   hintCeiling: HintLevel;
   /** The assignment prompt the student already sees. */
   prompt: string;
@@ -57,8 +59,9 @@ export function startDraft(state: TurnState, studentText: string, hooks?: TurnHo
   const level = nextHintLevel({
     level: state.level,
     hintCeiling: state.hintCeiling,
-    // The label that never climbs. The policy returns the current rung, clamped to the ceiling, which is the rung to draft at.
-    label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false },
+    // The label that never climbs. Under the attempt ladder that is the current rung; under the request rule it is the nudge, which is most turns.
+    label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false, help_request: "none" },
+    attempts: state.attempts,
   });
   const draft = draftHint(hintInput(state, studentText, level), hooks?.run).catch(() => null);
   return { level, draft };
@@ -80,6 +83,7 @@ export async function runTurn(
     level: state.level,
     hintCeiling: state.hintCeiling,
     label,
+    attempts: state.attempts,
   });
   // The early draft counts only if the policy landed on the rung it was written at.
   const reused = early && early.level === level ? await early.draft : null;

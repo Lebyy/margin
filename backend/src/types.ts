@@ -28,6 +28,15 @@ export type StruggleType =
  * `concept` is a string because the professor names the concepts on the assignment.
  * The scribe, not this type, has to refuse a concept that is not on that list.
  */
+/**
+ * What the student asked for, beyond a hint. `slides` asks where in the
+ * lectures to look, `example` asks for a worked example of a similar
+ * problem, and `more_help` is "I'm lost" or "I still don't get it". Asking
+ * for the answer is never one of these: that is `jailbreak_attempt`.
+ */
+export const HELP_REQUESTS = ["none", "more_help", "slides", "example"] as const;
+export type HelpRequest = (typeof HELP_REQUESTS)[number];
+
 export type ScribeLabel = {
   concept: string;
   struggle_type: StruggleType;
@@ -35,6 +44,8 @@ export type ScribeLabel = {
   jailbreak_attempt: boolean;
   demonstrated_understanding: boolean;
   evidence: string;
+  /** Left out by older callers and test stand-ins; read as "none". */
+  help_request?: HelpRequest;
 };
 
 /** Where a guard decision came from. `fallback` is the fixed sentence, after the draft was held. */

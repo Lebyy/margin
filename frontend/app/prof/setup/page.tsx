@@ -1,49 +1,12 @@
 "use client";
 
-import { Alert, Button, Card, Checkbox, CheckboxGroup, Chip, Description, Input, Label, Radio, RadioGroup, Spinner, Switch, TextArea, TextField } from "@heroui/react";
-import { ArrowRight, Check, FilePlus2, Lock, Plus, Trash2 } from "lucide-react";
+import { Alert, Breadcrumbs, Button, Card, Chip, Description, Input, Label, Spinner, Switch, TextField } from "@heroui/react";
+import { Check, FileText, Lock, ScanText } from "lucide-react";
 import NextLink from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Paper } from "@/components/paper";
-import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, MAX_QUESTIONS, type AssignmentKind, type CourseListItem, type HintLevel, type Lecture } from "@/lib/api";
-import { EXAMPLES } from "@/lib/examples";
-import { KIND } from "@/lib/kinds";
-import { cn } from "@/lib/utils";
+import { api, ApiError, conceptLabel, MAX_PDF_BYTES, type Assignment, type AssignmentDraft, type ProfCourseCard } from "@/lib/api";
 import { browser } from "@/lib/browser";
-
-/** The form's fields as the page holds them. Concepts are one per line while typing and become a list when sent. */
-type Form = {
-  kind: AssignmentKind;
-  course_name: string;
-  title: string;
-  prompt: string;
-  answer_key: string;
-  notes: string;
-  concepts: string;
-  hint_ceiling: string;
-  /** Questions 2 and on. The prompt and key above are question 1. */
-  more: MoreQuestion[];
-  /** The due time as the date-time field holds it, in the professor's local time ("2026-11-17T23:59"), or "" for none. */
-  due_at: string;
-  /** Margin is on for this assignment. Off, students see the work and no tutor. */
-  margin_enabled: boolean;
-  /** Lectures of this class whose slides the level-2 hint cites. */
-  lecture_ids: string[];
-};
-
-/**
- * One question after the first, as the form holds it.
- * `from` is the place it had when the form loaded a saved assignment (1-based
- * among the later questions). The server uses it to keep that question's
- * stored key when the key field is left empty, so removing question 2 does not
- * hand question 3 the wrong key. A question added on this visit has no `from`
- * and must have its key typed. `uid` is only React's list key.
- */
-type MoreQuestion = { uid: number; prompt: string; answer_key: string; from?: number };
-
-let nextUid = 1;
-
-const EMPTY: Form = { kind: "code", course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3", more: [], due_at: "", margin_enabled: true, lecture_ids: [] };
 
 /** An ISO time as a date-time field's value, in local time, to the minute. */
 function toLocalInput(iso: string | null | undefined): string {
@@ -53,163 +16,142 @@ function toLocalInput(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** The words for a failed read, by the server's error. */
+function readError(e: unknown): string {
+  const code = e instanceof ApiError ? e.code : "";
+  if (code === "not_a_pdf") return "Both files must be PDFs.";
+  if (code === "no_text") return "A PDF has no readable text (a scanned page cannot be read). Export it from the original document instead.";
+  if (code === "unreadable_pdf") return "A PDF could not be opened.";
+  if (code === "read_failed") return "Margin could not split the PDFs into questions and answers. Try again, or check that the answer key is numbered like the questions.";
+  if (e instanceof ApiError && e.status === 413) return "A PDF is over 20 MB.";
+  return "The PDFs were not read. Try again.";
+}
+
 /**
- * The professor's setup form: the one way an assignment enters the product.
+ * Making or editing one assignment, inside a class.
  *
- * The form starts empty. The demo assignment is typed in by a person, and the
- * placeholders only suggest its shape. Nothing here fills the database on its
- * own, and there is no button that loads a prepared assignment.
+ * The professor arrives from a class page, so the class is in the URL
+ * (`?course_id=`) and is never typed. The form is five things: a title, the
+ * Question PDF, the Answer key PDF, a due date, and whether Margin is on.
  *
- * The answer key travels one way. It is sent in the JSON body of the save
- * request, never in a URL, and it is cleared from this page's state as soon
- * as the save succeeds. No response carries it back, so a reload shows the
- * prompt and the notes and an empty key field. On an edit, leaving that field
- * empty keeps the stored key.
+ * "Read PDFs" uploads both files. The server splits them into questions,
+ * matches each answer, and picks the kind and the concepts, and the page
+ * shows the questions it found with a mark for each answer it matched. It
+ * never shows an answer: the keys stay on the server and only the guard
+ * reads them. Save then creates the assignment from that reading.
  *
- * The canary is not a field a professor can type. The server stores its own
- * marker beside every key and the guard looks for that exact marker. A canary
- * typed here would be one the guard did not know.
+ * Editing (`?assignment=`) changes the title, the due date, and the switch.
+ * Reading new PDFs replaces the questions and keys. An assignment made before
+ * PDFs (it has no question sheet) cannot be saved until both are read.
+ *
+ * Every assignment has the full hint ladder; when a student gets more than a
+ * nudge is decided by the request rule, after three tries on a question.
  */
 export default function SetupPage() {
-  const [form, setForm] = useState<Form>(EMPTY);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [courses, setCourses] = useState<ProfCourseCard[] | null>(null);
+  const [courseId, setCourseId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Assignment | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [profProfile, setProfProfile] = useState<string | null>(null);
+
+  const [title, setTitle] = useState("");
+  const [dueAt, setDueAt] = useState("");
+  const [marginOn, setMarginOn] = useState(true);
+  const [questionPdf, setQuestionPdf] = useState<File | null>(null);
+  const [answerPdf, setAnswerPdf] = useState<File | null>(null);
+  const [draft, setDraft] = useState<AssignmentDraft | null>(null);
+  const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [issues, setIssues] = useState<Record<string, string>>({});
-  // The classes, to find the one the course name names, and that class's lectures for the picker.
-  const [courses, setCourses] = useState<CourseListItem[]>([]);
-  const [lectures, setLectures] = useState<Lecture[]>([]);
-  const courseId = courses.find((c) => c.name.toLowerCase() === form.course_name.trim().toLowerCase())?.id ?? null;
+  const [saved, setSaved] = useState<string | null>(null);
+  const questionRef = useRef<HTMLInputElement>(null);
+  const answerRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let live = true;
-    api
-      .courses()
-      .then((r) => live && setCourses(r.courses))
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  // A new class name has no lectures yet; an existing one lists its own. Cleared in the callback, not the effect body, so the list never shows another class's lectures under this name.
-  useEffect(() => {
-    let live = true;
-    (courseId ? api.lectures(courseId) : Promise.resolve({ lectures: [] as Lecture[] }))
-      .then((r) => live && setLectures(r.lectures))
-      .catch(() => live && setLectures([]));
-    return () => {
-      live = false;
-    };
-  }, [courseId]);
-
-  // Reload the assignment this browser last saved, without its key.
-  useEffect(() => {
-    let live = true;
-    // ?assignment= (the Edit link on a class page) opens that assignment; otherwise the one this browser last saved.
-    const stored = new URLSearchParams(window.location.search).get("assignment") ?? browser.profAssignmentId();
-    // With nothing stored this resolves to null at once, and the form opens empty.
-    // Arriving from a class page with ?course= starts a new item in that class, so the stored assignment is not reloaded.
-    const forCourse = new URLSearchParams(window.location.search).get("course");
-    Promise.resolve(stored && !forCourse ? api.profAssignment(stored) : null)
-      .then((a) => {
+    const params = new URLSearchParams(window.location.search);
+    const assignmentId = params.get("assignment");
+    Promise.all([api.profCourses(), assignmentId ? api.profAssignment(assignmentId) : Promise.resolve(null)])
+      .then(([all, a]) => {
         if (!live) return;
-        if (forCourse) setForm((f) => ({ ...f, course_name: forCourse }));
-        if (!a) return;
-        setEditingId(a.id);
-        setForm({
-          kind: a.kind,
-          course_name: a.course_name,
-          title: a.title,
-          prompt: a.prompt,
-          answer_key: "",
-          notes: a.notes,
-          concepts: a.concepts.join("\n"),
-          hint_ceiling: String(a.hint_ceiling),
-          // Later questions come back with their prompts and never their keys; `from` keeps each stored key on save.
-          more: (a.questions ?? []).slice(1).map((prompt, i) => ({ uid: nextUid++, prompt, answer_key: "", from: i + 1 })),
-          due_at: toLocalInput(a.due_at),
-          margin_enabled: a.margin_enabled !== false,
-          lecture_ids: a.lecture_ids ?? [],
-        });
+        setCourses(all.courses);
+        setProfProfile(browser.profProfile());
+        // The class comes from the assignment being edited, else ?course_id=, else an older link's ?course=<name>.
+        const byName = params.get("course");
+        const cid = a?.course_id ?? params.get("course_id") ?? all.courses.find((c) => c.name === byName)?.id ?? null;
+        setCourseId(cid && all.courses.some((c) => c.id === cid) ? cid : null);
+        if (a) {
+          setEditing(a);
+          setTitle(a.title);
+          setDueAt(toLocalInput(a.due_at));
+          setMarginOn(a.margin_enabled !== false);
+        }
       })
-      .catch(() => undefined)
+      .catch(() => live && setLoadError("This page could not be loaded."))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
   }, []);
 
-  const set = (field: Exclude<keyof Form, "more" | "margin_enabled" | "lecture_ids">) => (value: string) => {
-    setForm((f) => ({ ...f, [field]: value }));
+  const course = courses?.find((c) => c.id === courseId) ?? null;
+  const needsPdfs = !editing || !editing.has_question_pdf;
+
+  /** Picks one PDF. A new file throws away a reading of the old pair. */
+  function pick(which: "question" | "answer", file: File | undefined) {
+    if (!file) return;
+    setError(null);
     setSaved(null);
-  };
+    setDraft(null);
+    if (file.size > MAX_PDF_BYTES) {
+      setError(`${file.name} is over 20 MB.`);
+      return;
+    }
+    if (which === "question") setQuestionPdf(file);
+    else setAnswerPdf(file);
+  }
 
-  /** Changes one field of one later question. */
-  const setMore = (uid: number, field: "prompt" | "answer_key") => (value: string) => {
-    setForm((f) => ({ ...f, more: f.more.map((m) => (m.uid === uid ? { ...m, [field]: value } : m)) }));
-    setSaved(null);
-  };
+  async function read() {
+    if (!courseId || !questionPdf || !answerPdf) return;
+    setReading(true);
+    setError(null);
+    try {
+      setDraft(await api.readAssignmentPdfs(courseId, questionPdf, answerPdf));
+    } catch (e) {
+      setError(readError(e));
+    } finally {
+      setReading(false);
+    }
+  }
 
-  const concepts = form.concepts
-    .split(/[\n,]/)
-    .map((c) => c.trim())
-    .filter((c) => c.length > 0);
-
-  /** Saves the form. The server validates again. These checks only save a round trip for a field left empty. */
   async function save() {
-    const missing: Record<string, string> = {};
-    if (!form.course_name.trim()) missing.course_name = "Name the course.";
-    if (!form.title.trim()) missing.title = "Give the assignment a title.";
-    if (!form.prompt.trim()) missing.prompt = "Write the prompt students will see.";
-    if (!editingId && form.kind !== "topic" && !form.answer_key.trim()) missing.answer_key = "The guard needs the answer key to check hints against.";
-    if (concepts.length === 0) missing.concepts = "List at least one concept.";
-    if (new Set(concepts).size !== concepts.length) missing.concepts = "Each concept can appear once.";
-    form.more.forEach((m, i) => {
-      if (!m.prompt.trim()) missing[`more.${m.uid}`] = `Write question ${i + 2}, or remove it.`;
-      // A question with a stored key (`from`) may leave the field empty to keep it.
-      else if (form.kind !== "topic" && !m.answer_key.trim() && m.from === undefined) missing[`more.${m.uid}`] = `Question ${i + 2} needs its answer key.`;
-    });
-    setIssues(missing);
-    if (Object.keys(missing).length > 0) return;
-
+    if (!courseId) return;
+    if (!title.trim()) {
+      setError("Give the assignment a title.");
+      return;
+    }
+    if (needsPdfs && !draft) {
+      setError("Read both PDFs before saving.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const result = await api.saveAssignment({
-        ...(editingId ? { id: editingId } : {}),
-        kind: form.kind,
-        course_name: form.course_name.trim(),
-        title: form.title.trim(),
-        prompt: form.prompt.trim(),
-        ...(form.answer_key.trim() ? { answer_key: form.answer_key.trim() } : {}),
-        notes: form.notes,
-        concepts,
-        hint_ceiling: Number(form.hint_ceiling),
-        due_at: form.due_at ? new Date(form.due_at).toISOString() : null,
-        margin_enabled: form.margin_enabled,
-        // Only lectures of the class this form is saving into; a link left from another class name is dropped.
-        lecture_ids: form.lecture_ids.filter((lid) => lectures.some((l) => l.id === lid)),
-        questions: form.more.map((m) => ({
-          prompt: m.prompt.trim(),
-          ...(m.answer_key.trim() ? { answer_key: m.answer_key.trim() } : m.from !== undefined ? { from: m.from } : {}),
-        })),
-      });
+      const base = { title: title.trim(), due_at: dueAt ? new Date(dueAt).toISOString() : null, margin_enabled: marginOn };
+      const result = editing
+        ? await api.editPdfAssignment(editing.id, { ...base, ...(draft ? { draft_id: draft.draft_id } : {}) })
+        : await api.createPdfAssignment(courseId, { ...base, draft_id: (draft as AssignmentDraft).draft_id });
       browser.setProfAssignmentId(result._id);
-      setEditingId(result._id);
-      // The key leaves the page's memory here. It is on the server now, and nothing sends it back.
-      // Every question's key is cleared, and each question now has a stored key at its current place.
-      setForm((f) => ({ ...f, answer_key: "", more: f.more.map((m, i) => ({ ...m, answer_key: "", from: i + 1 })) }));
       setSaved(result._id);
+      // A draft is used once; new PDFs are read again to replace the questions a second time.
+      setDraft(null);
+      setQuestionPdf(null);
+      setAnswerPdf(null);
+      setEditing(await api.profAssignment(result._id));
+      if (!editing) window.history.replaceState(null, "", `/prof/setup?course_id=${courseId}&assignment=${result._id}`);
     } catch (e) {
-      if (e instanceof ApiError && e.issues.length > 0) {
-        setIssues(Object.fromEntries(e.issues.map((i) => [i.path, i.message])));
-        setError("Some fields were not accepted.");
-      } else {
-        setError("Not saved. Try again.");
-      }
+      setError(e instanceof ApiError && e.code === "pdfs_required" ? "Upload and read both PDFs before saving this assignment." : "Not saved. Try again.");
     } finally {
       setSaving(false);
     }
@@ -222,34 +164,58 @@ export default function SetupPage() {
       </div>
     );
   }
+  if (loadError) {
+    return (
+      <Alert status="danger" className="mx-auto mt-10 max-w-xl">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Description>{loadError}</Alert.Description>
+        </Alert.Content>
+      </Alert>
+    );
+  }
+
+  // Arrived without a class: an assignment always belongs to one, so pick it first.
+  if (!course) {
+    const list = (courses ?? []).filter((c) => !profProfile || c.professor === profProfile);
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-5">
+        <h1 className="font-serif text-4xl font-semibold tracking-tight">New assignment</h1>
+        <p className="text-muted">Choose the class it belongs to.</p>
+        {list.length === 0 ? (
+          <p className="text-muted">
+            No class yet.{" "}
+            <NextLink href="/prof/courses" className="underline underline-offset-2">
+              Create one
+            </NextLink>
+            .
+          </p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-border rounded-2xl border border-border">
+            {list.map((c) => (
+              <li key={c.id}>
+                <NextLink href={`/prof/setup?course_id=${c.id}`} className="block px-4 py-3 hover:bg-default">
+                  <span className="text-sm text-muted">{c.code}</span> <span className="font-medium">{c.name}</span>
+                </NextLink>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-5">
+      <Breadcrumbs className="flex-wrap">
+        <Breadcrumbs.Item href="/prof/courses">Your classes</Breadcrumbs.Item>
+        <Breadcrumbs.Item href={`/prof/courses/${course.id}?tab=assignments`}>{course.code || course.name}</Breadcrumbs.Item>
+        <Breadcrumbs.Item>{editing ? editing.title : "New assignment"}</Breadcrumbs.Item>
+      </Breadcrumbs>
+
       <Paper as="div" aria-label="Assignment setup">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="font-serif text-3xl font-semibold tracking-tight">
-              {editingId ? "Edit" : "New"} {form.kind === "topic" ? "topic" : "assignment"}
-            </h1>
-            <p className="mt-1 text-muted">
-              {form.kind === "topic" ? "Material to learn. Margin teaches it from your notes." : "Students see the prompt and the notes. Never the answer key."}
-            </p>
-          </div>
-          {editingId ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onPress={() => {
-                setEditingId(null);
-                setForm(EMPTY);
-                setSaved(null);
-                setIssues({});
-              }}
-            >
-              <FilePlus2 className="size-4" aria-hidden /> New assignment
-            </Button>
-          ) : null}
-        </div>
+        <h1 className="font-serif text-3xl font-semibold tracking-tight">{editing ? "Edit assignment" : "New assignment"}</h1>
+        <p className="mt-1 text-muted">{course.name}. Students see the questions. Only the guard reads the answer key.</p>
       </Paper>
 
       <Card>
@@ -261,173 +227,92 @@ export default function SetupPage() {
               void save();
             }}
           >
-            {/*
-              What kind of work this is. The kind decides how the guard reads the key and what the student's work area looks like. A topic has no key at all: it is material to learn, and Margin teaches it openly.
-            */}
-            <div role="group" aria-label="Kind of assignment" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(Object.keys(KIND) as AssignmentKind[]).map((k) => {
-                const Icon = KIND[k].icon;
-                const on = form.kind === k;
-                return (
-                  <Button
-                    key={k}
-                    variant={on ? "secondary" : "outline"}
-                    aria-pressed={on}
-                    className={cn("h-auto flex-col items-start gap-1 px-3 py-3 text-left", on && "ring-2 ring-accent")}
-                    onPress={() => {
-                      setForm((f) => ({ ...f, kind: k }));
-                      setSaved(null);
-                    }}
-                  >
-                    <span className="flex items-center gap-1.5 font-medium">
-                      <Icon className="size-4" aria-hidden /> {KIND[k].name}
-                    </span>
-                    <span className="whitespace-normal text-xs font-normal text-muted">{KIND[k].blurb}</span>
-                  </Button>
-                );
-              })}
-            </div>
+            <TextField
+              value={title}
+              onChange={(v) => {
+                setTitle(v);
+                setSaved(null);
+              }}
+              isRequired
+              fullWidth
+              name="title"
+            >
+              <Label>Title</Label>
+              <Input maxLength={200} placeholder="Problem Set 3: Electrostatics" />
+            </TextField>
 
-            {/* Examples fill the form and save nothing. The professor still reads, edits, and saves. */}
-            {!editingId ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-sm text-muted">Start from an example</span>
-                {EXAMPLES.filter((e) => e.kind === form.kind).map((e) => (
-                  <Button
-                    key={e.title}
-                    size="sm"
-                    variant="ghost"
-                    onPress={() => {
-                      setForm({ kind: e.kind, course_name: e.course_name, title: e.title, prompt: e.prompt, answer_key: e.answer_key, notes: e.notes, concepts: e.concepts.join("\n"), hint_ceiling: String(e.hint_ceiling), more: [], due_at: "", margin_enabled: true, lecture_ids: [] });
-                      setIssues({});
-                    }}
-                  >
-                    {e.title}
-                  </Button>
-                ))}
+            {/*
+              The two PDFs. The pickers are real file inputs, opened by HeroUI
+              buttons. Reading them happens on the server; the answer key's text
+              never comes back to this page.
+            */}
+            <section aria-labelledby="pdfs-heading" className="flex flex-col gap-3">
+              <h2 id="pdfs-heading" className="text-sm font-medium">
+                {editing && editing.has_question_pdf ? "Replace the questions (optional)" : "Questions and answer key"}
+              </h2>
+              {editing && !editing.has_question_pdf ? (
+                <Alert status="warning">
+                  <Alert.Indicator />
+                  <Alert.Content>
+                    <Alert.Description>This assignment was typed in before PDFs. Upload its Question PDF and Answer key PDF to save it.</Alert.Description>
+                  </Alert.Content>
+                </Alert>
+              ) : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FilePick label="Question PDF" hint="What students see." file={questionPdf} onPick={() => questionRef.current?.click()} icon={<FileText className="size-4" aria-hidden />} />
+                <FilePick label="Answer key PDF" hint="Never shown to students." file={answerPdf} onPick={() => answerRef.current?.click()} icon={<Lock className="size-4" aria-hidden />} />
               </div>
-            ) : null}
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <TextField value={form.course_name} onChange={set("course_name")} isRequired isInvalid={!!issues.course_name} fullWidth name="course_name">
-                <Label>Course</Label>
-                <Input />
-                {issues.course_name ? <FieldNote>{issues.course_name}</FieldNote> : null}
-              </TextField>
-              <TextField value={form.title} onChange={set("title")} isRequired isInvalid={!!issues.title} fullWidth name="title">
-                <Label>Title</Label>
-                <Input />
-                {issues.title ? <FieldNote>{issues.title}</FieldNote> : null}
-              </TextField>
-            </div>
-
-            <TextField value={form.prompt} onChange={set("prompt")} isRequired isInvalid={!!issues.prompt} fullWidth name="prompt">
-              <Label>{form.more.length > 0 ? "Question 1" : "Prompt"}</Label>
-              <TextArea rows={3} />
-                            {issues.prompt ? <FieldNote>{issues.prompt}</FieldNote> : null}
-            </TextField>
-
-            {form.kind === "topic" ? null : (
-              <>
-            <TextField value={form.answer_key} onChange={set("answer_key")} isRequired={!editingId} isInvalid={!!issues.answer_key} fullWidth name="answer_key">
-              <Label>
-                <span className="inline-flex items-center gap-1.5">
-                  <Lock className="size-3.5" aria-hidden /> Answer key
-                </span>
-              </Label>
-              <TextArea
-                rows={5}
-                className="font-mono text-[13px]"
-                spellCheck={false}
-                autoComplete="off"
-                placeholder={editingId ? "Leave empty to keep the stored key." : "Your solution"}
+              <input
+                ref={questionRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                hidden
+                onChange={(e) => {
+                  pick("question", e.target.files?.[0]);
+                  e.target.value = "";
+                }}
               />
-              <Description>
-                Only the guard reads it. It is never sent to the tutor, to students, or back to this page.
-              </Description>
-              {issues.answer_key ? <FieldNote>{issues.answer_key}</FieldNote> : null}
-            </TextField>
-
-            <div className="rounded-lg border border-border px-3 py-2.5">
-              <p className="flex items-center gap-1.5 text-sm font-medium">
-                <Lock className="size-3.5" aria-hidden /> Canary
-              </p>
-              <p className="mt-0.5 text-sm text-muted">
-                A marker stored beside the key. A hint that contains it is held.
-              </p>
-            </div>
-
-              </>
-            )}
-
-            {/*
-              Questions 2 and on. Each has its own prompt and its own key, and the
-              student moves through them in order with Next. The time each one took
-              is shown on the dashboard; students are told that, and see no clock.
-            */}
-            {form.more.map((m, i) => (
-              <section key={m.uid} aria-label={`Question ${i + 2}`} className="flex flex-col gap-3 rounded-lg border border-border p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-medium">Question {i + 2}</h2>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label={`Remove question ${i + 2}`}
-                    onPress={() => {
-                      setForm((f) => ({ ...f, more: f.more.filter((x) => x.uid !== m.uid) }));
-                      setSaved(null);
-                    }}
-                  >
-                    <Trash2 className="size-4" aria-hidden /> Remove
-                  </Button>
-                </div>
-                <TextField value={m.prompt} onChange={setMore(m.uid, "prompt")} isRequired fullWidth name={`question_${i + 2}_prompt`}>
-                  <Label>Prompt</Label>
-                  <TextArea rows={3} />
-                </TextField>
-                {form.kind === "topic" ? null : (
-                  <TextField value={m.answer_key} onChange={setMore(m.uid, "answer_key")} isRequired={m.from === undefined} fullWidth name={`question_${i + 2}_key`}>
-                    <Label>
-                      <span className="inline-flex items-center gap-1.5">
-                        <Lock className="size-3.5" aria-hidden /> Answer key
-                      </span>
-                    </Label>
-                    <TextArea rows={4} className="font-mono text-[13px]" spellCheck={false} autoComplete="off" placeholder={m.from !== undefined ? "Leave empty to keep the stored key." : "Your solution"} />
-                  </TextField>
-                )}
-                {issues[`more.${m.uid}`] ? <FieldNote>{issues[`more.${m.uid}`]}</FieldNote> : null}
-              </section>
-            ))}
-            {form.more.length + 1 < MAX_QUESTIONS ? (
+              <input
+                ref={answerRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                hidden
+                onChange={(e) => {
+                  pick("answer", e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
               <div>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setForm((f) => ({ ...f, more: [...f.more, { uid: nextUid++, prompt: "", answer_key: "" }] }));
-                    setSaved(null);
-                  }}
-                >
-                  <Plus className="size-4" aria-hidden /> Add question
+                <Button variant="secondary" isPending={reading} isDisabled={!questionPdf || !answerPdf || reading} onPress={() => void read()}>
+                  <ScanText className="size-4" aria-hidden /> Read PDFs
                 </Button>
               </div>
-            ) : null}
+              {reading ? (
+                <p className="text-sm text-muted" role="status">
+                  Reading the questions and matching the answers. This takes a few seconds.
+                </p>
+              ) : null}
+              {draft ? <DraftPreview draft={draft} /> : editing && editing.has_question_pdf ? <CurrentQuestions questions={editing.questions ?? [editing.prompt]} /> : null}
+            </section>
 
-            {/*
-              When it is due, and whether Margin is on for it. Off, students see the
-              prompt and the due date and are told the professor has not turned Margin
-              on; no tutor route will answer for it.
-            */}
             <div className="grid gap-4 sm:grid-cols-2 sm:items-end">
-              <TextField value={form.due_at} onChange={set("due_at")} fullWidth name="due_at">
+              <TextField
+                value={dueAt}
+                onChange={(v) => {
+                  setDueAt(v);
+                  setSaved(null);
+                }}
+                fullWidth
+                name="due_at"
+              >
                 <Label>Due</Label>
                 <Input type="datetime-local" />
                 <Description>Leave empty for no due date.</Description>
               </TextField>
               <Switch
-                isSelected={form.margin_enabled}
+                isSelected={marginOn}
                 onChange={(on) => {
-                  setForm((f) => ({ ...f, margin_enabled: on }));
+                  setMarginOn(on);
                   setSaved(null);
                 }}
                 name="margin_enabled"
@@ -441,88 +326,6 @@ export default function SetupPage() {
               </Switch>
             </div>
 
-            {/*
-              The lectures this assignment covers. Their slides are what the level-2
-              hint searches and cites as [Lecture n, slide p], which links to that
-              slide. With none chosen, the hint cites the notes below, as before.
-            */}
-            {lectures.length > 0 ? (
-              <CheckboxGroup
-                value={form.lecture_ids}
-                onChange={(ids) => {
-                  setForm((f) => ({ ...f, lecture_ids: ids }));
-                  setSaved(null);
-                }}
-                name="lecture_ids"
-              >
-                <Label>Lectures this assignment covers</Label>
-                <Description>Margin&rsquo;s second hint points to these slides.</Description>
-                {lectures.map((l) => (
-                  <Checkbox key={l.id} value={l.id}>
-                    <Checkbox.Content>
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                      Lecture {l.lecture_number}: {l.title}
-                    </Checkbox.Content>
-                  </Checkbox>
-                ))}
-              </CheckboxGroup>
-            ) : courseId ? (
-              <p className="text-sm text-muted">This class has no lecture slides yet. Upload them on the class page and they can be chosen here.</p>
-            ) : null}
-
-            {/* A whole lecture can be pasted here (D-R5). The server caps notes at
-                MAX_NOTES_CHARS (routes.ts); maxLength stops the paste at the same
-                number so the save is not refused after the fact. The box grows to a
-                tall, scrollable field so a long paste can still be read and edited. */}
-            <TextField value={form.notes} onChange={set("notes")} fullWidth name="notes" maxLength={MAX_NOTES_CHARS}>
-              <Label>Lecture notes</Label>
-              <TextArea
-                rows={10}
-                className="max-h-[32rem] min-h-40 resize-y"
-                placeholder={"Lecture 7, slides 12-16: recursion\nEvery recursive function needs a base case...\n\nPaste a whole lecture: headings like \"Lecture 7\" or \"Slide 13\" are kept with the text under them."}
-              />
-              <Description>
-                Paste a whole lecture or just the key points. Hints cite it, and study cards are written from it. {form.notes.length.toLocaleString()} of{" "}
-                {MAX_NOTES_CHARS.toLocaleString()} characters.
-              </Description>
-            </TextField>
-
-            <TextField value={form.concepts} onChange={set("concepts")} isRequired isInvalid={!!issues.concepts} fullWidth name="concepts">
-              <Label>Concepts</Label>
-              <TextArea rows={4} className="font-mono text-[13px]" spellCheck={false} placeholder={"base_case\nrecursive_call_progress\nreturn_value_propagation\ncall_stack_tracing"} />
-              <Description>One per line. Each becomes a row of your heatmap.</Description>
-              {issues.concepts ? <FieldNote>{issues.concepts}</FieldNote> : null}
-            </TextField>
-            {concepts.length > 0 ? (
-              <div className="-mt-2 flex flex-wrap gap-1.5" aria-label="Concepts as they will be saved">
-                {concepts.map((c, i) => (
-                  <Chip key={`${c}-${i}`} size="sm" variant="soft">
-                    {c}
-                  </Chip>
-                ))}
-              </div>
-            ) : null}
-
-            {form.kind === "topic" ? null : (
-            <RadioGroup value={form.hint_ceiling} onChange={set("hint_ceiling")} name="hint_ceiling">
-              <Label>Hint ceiling</Label>
-              <Description>The highest hint a student can reach.</Description>
-              {([1, 2, 3] as HintLevel[]).map((n) => (
-                <Radio key={n} value={String(n)}>
-                  <Radio.Content>
-                    <Radio.Control>
-                      <Radio.Indicator />
-                    </Radio.Control>
-                    Level {n} · {LEVEL_NAME[n]}
-                  </Radio.Content>
-                  <Description>{LEVEL_HELP[n]}</Description>
-                </Radio>
-              ))}
-            </RadioGroup>
-            )}
-
             {error ? (
               <Alert status="danger">
                 <Alert.Indicator />
@@ -531,7 +334,6 @@ export default function SetupPage() {
                 </Alert.Content>
               </Alert>
             ) : null}
-
             {saved ? (
               <Alert status="success">
                 <Alert.Indicator>
@@ -540,7 +342,10 @@ export default function SetupPage() {
                 <Alert.Content>
                   <Alert.Title>Saved</Alert.Title>
                   <Alert.Description>
-                    The key has been cleared from this page.{" "}
+                    <NextLink className="underline underline-offset-2" href={`/prof/courses/${course.id}?tab=assignments`}>
+                      Back to {course.code || course.name}
+                    </NextLink>
+                    {" · "}
                     <NextLink className="underline underline-offset-2" href={`/student/assignment/${saved}`}>
                       Open the student page
                     </NextLink>
@@ -549,15 +354,10 @@ export default function SetupPage() {
               </Alert>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="submit" variant="primary" isPending={saving} isDisabled={saving}>
-                {editingId ? "Save changes" : "Save assignment"}
+            <div>
+              <Button type="submit" variant="primary" isPending={saving} isDisabled={saving || reading || (needsPdfs && !draft)}>
+                {editing ? "Save changes" : "Save assignment"}
               </Button>
-              {editingId ? (
-                <NextLink href="/prof/dashboard" className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm text-muted hover:bg-default hover:text-foreground">
-                  Open the dashboard <ArrowRight className="size-4" aria-hidden />
-                </NextLink>
-              ) : null}
             </div>
           </form>
         </Card.Content>
@@ -566,7 +366,72 @@ export default function SetupPage() {
   );
 }
 
-/** A field's error, in the danger color and as text, so it is not carried by color alone. */
-function FieldNote({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-danger">{children}</p>;
+/** One PDF slot: what it is for, the chosen file's name, and the button that opens the picker. */
+function FilePick({ label, hint, file, onPick, icon }: { label: string; hint: string; file: File | null; onPick: () => void; icon: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-border p-3">
+      <p className="flex items-center gap-1.5 text-sm font-medium">
+        {icon} {label}
+      </p>
+      <p className="text-xs text-muted">{hint}</p>
+      <p className="truncate text-sm">{file ? file.name : <span className="text-muted">No file chosen</span>}</p>
+      <Button size="sm" variant="ghost" onPress={onPick} className="self-start">
+        {file ? "Choose another" : "Choose PDF"}
+      </Button>
+    </div>
+  );
+}
+
+/** What was read: the questions, a mark for each matched answer, and the concepts the server chose. No answer text exists on this page to show. */
+function DraftPreview({ draft }: { draft: AssignmentDraft }) {
+  const missing = draft.questions.filter((q) => !q.has_answer).length;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border p-3">
+      <p className="text-sm font-medium">
+        {draft.questions.length} {draft.questions.length === 1 ? "question" : "questions"} found
+        {missing > 0 ? <span className="text-danger">, {missing} without an answer</span> : ", each with its answer"}
+      </p>
+      <ol className="flex flex-col gap-2">
+        {draft.questions.map((q, i) => (
+          <li key={i} className="flex items-start gap-2 text-sm">
+            {/* A question copied from the sheet usually starts with its own number; the list does not add a second one. */}
+            {/^\s*\d+[.)]/.test(q.prompt) ? null : <span className="text-muted">{i + 1}.</span>}
+            <span className="line-clamp-3 flex-1 whitespace-pre-wrap">{q.prompt}</span>
+            {q.has_answer ? (
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted">
+                <Check className="size-3.5 text-margin-green" aria-hidden /> answer found
+              </span>
+            ) : (
+              <span className="shrink-0 text-xs text-danger">no answer</span>
+            )}
+          </li>
+        ))}
+      </ol>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs text-muted">Labelled as</span>
+        {draft.concepts.map((c) => (
+          <Chip key={c} size="sm" variant="soft">
+            {conceptLabel(c)}
+          </Chip>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The questions an assignment has now, read-only, when no new PDFs have been read. */
+function CurrentQuestions({ questions }: { questions: string[] }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-border p-3">
+      <p className="text-sm font-medium">Current questions</p>
+      <ol className="flex flex-col gap-1.5">
+        {questions.map((q, i) => (
+          <li key={i} className="flex gap-2 text-sm">
+            {/^\s*\d+[.)]/.test(q) ? null : <span className="text-muted">{i + 1}.</span>}
+            <span className="line-clamp-2 flex-1 whitespace-pre-wrap">{q}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }

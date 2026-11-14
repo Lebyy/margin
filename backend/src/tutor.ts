@@ -201,7 +201,7 @@ function generalPrompt(level: HintLevel, kind: AssignmentKind): string {
       ? "Level 1, a nudge. Ask one guiding question that points at the idea the student is missing, and stop there. Do not answer your own question."
       : level === 2
         ? "Level 2, a pointer. Call cite_notes with the concept the student is stuck on. Then tell the student where in the professor's notes to look, and cite the line it returns exactly as returned. When the line names one slide, as in \"Lecture 3, slide 9\", write that place in square brackets exactly as [Lecture 3, slide 9], so the student can open that slide; use the numbers the tool returned. Do not invent a lecture or a slide number. If the tool finds no matching line, say the notes do not cover it and ask one guiding question."
-        : "Level 3, a similar example. Walk through a different, smaller problem of the same kind, in words. It must not be the assigned problem with the names or numbers changed. End by asking which step of their own work matches.",
+        : "Level 3, a similar worked example. The student asked for one after several tries. Take the question they are on and work through a similar problem of the same kind, step by step, in words: the same idea, applied to a different setup, not the assigned problem with only the names or numbers changed. Never state the answer to the assigned question. End by asking which step of their own work matches.",
   ].join("\n");
 }
 

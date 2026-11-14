@@ -40,7 +40,11 @@ function write(key: string, value: string | null): void {
 
 export const browser = {
   studentId: () => read(KEY.student),
-  setStudentId: (id: string) => write(KEY.student, id),
+  /** A different student than the one stored drops the profile label, so the header never shows one person's name over another's work. */
+  setStudentId: (id: string) => {
+    if (read(KEY.student) !== id) write(KEY.studentProfile, null);
+    write(KEY.student, id);
+  },
   sessionId: (assignmentId: string) => read(KEY.session(assignmentId)),
   setSessionId: (assignmentId: string, id: string | null) => write(KEY.session(assignmentId), id),
   /** The student's work in the editor, kept so a reload does not lose it. It is their own text, on their own machine. */
@@ -80,6 +84,7 @@ export const browser = {
     }
     write(KEY.student, studentId);
     write(KEY.name, name);
+    // Set after the id, so the label belongs to this student.
     write(KEY.studentProfile, name);
   },
   /** Chooses a professor profile. The name is also the professor label the class list sorts and filters by. */

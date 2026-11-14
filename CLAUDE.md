@@ -90,8 +90,8 @@ Do not write a comment, a log line, a UI label, or a commit message that apologi
 - Level 2, POINTER: where in the professor's materials to look. On the demo assignment this is Lecture 7, slides 12-16, found by keyword in the pasted notes.
 - Level 3, SIMILAR EXAMPLE: a worked example of a different problem. The smaller-problem control is `count_list`, a function that counts items in a list. It is not `sum_list`.
 - Never: the solution, any line or part of it, or the final answer.
-- The professor sets `hint_ceiling` (1 to 3) per assignment. Never exceed it.
-- Escalation is deterministic code, not the LLM. Escalate one level only if the student is still stuck AND has made an attempt since the last hint. Never escalate on "just tell me", pressure, claimed permission, or jailbreaks.
+- Every assignment made from PDFs has `hint_ceiling` 3. Never exceed the ceiling.
+- Escalation is deterministic code, not the LLM (`policy.ts`). Margin nudges (level 1) on every turn unless the student asks for more, and a request counts only after at least 3 real attempts on the question they are on (counted per question, reset on Next). Then "show me the slides" is level 2, searching all of the class's uploaded lecture slides (if the class has none, the student is told so and gets a nudge), "a similar worked example" is level 3, a worked example of a problem similar to their question, and "I'm lost / more help" climbs one rung. The scribe classifies the request; code picks the level. Never escalate on "just tell me", pressure, claimed permission, or jailbreaks, and never give the answer from the key under any circumstances.
 
 ## Four roles (agents)
 
@@ -239,8 +239,8 @@ Margin is for assignments and for learning. An assignment has a `kind`: `code`, 
 
 - `code`, `written`, and `math` are graded work. Each has an answer key, the hint ladder applies, and the guard checks every reply. The guard reads a code key with names folded, and a written or math key as words: eight consecutive words of the key, or the whole key when it is shorter, is a hit. A held turn on a written or math assignment shows exactly: "What is the question asking you to find?" The recursion demo keeps "What happens when the list is empty?"
 - `topic` is course material to learn. It has no answer key and no ladder, and Margin teaches it openly from the professor's notes. The canary check still runs on every reply.
-- The demo is still `sum_list`. Its tutor wording, its fallback sentence, and its four concepts do not change.
-- The setup form offers examples that fill the form. An example saves nothing. A professor still presses save, so every assignment in the database is one a person saved. Do not add a script, a route, or a boot step that writes assignments, students, sessions, or turns.
+- The `sum_list` demo assignment has been removed from the database; the live classes are Undergraduate Electrostatics 101, ME 201: Engineering Statics, and CS 251: Data Structures and Algorithms. The code keeps the `sum_list` tutor wording and fallback sentence for any assignment about it.
+- A professor makes an assignment from inside a class: a title, a Question PDF, an Answer key PDF, a due date, and the Margin switch. The server reads both PDFs (pdf.js for the text, one model call to split them into numbered questions with matching answers, and to pick the kind and 3 to 6 concepts). The preview shows the questions and whether each answer was found, never an answer. The Question PDF is kept so students can open the sheet; the Answer key PDF is read and not kept. There is no kind picker, no canary box, no notes, concepts, or ceiling field, and no examples on the form. The canary is still stored and checked on the server. Do not add a script, a route, or a boot step that writes assignments, students, sessions, or turns.
 - A student can keep their own notes on an assignment, typed or loaded from a text file. They are stored for that student, the tutor reads them as the student's material, and no professor screen shows them.
 - On the canvas, a student can add a picture and ask Margin about it. Margin describes it and marks up to five parts with a red ellipse. The picture goes to the vision model without the student's name and is not stored. The guard checks the words, and a note never contains the fix.
 

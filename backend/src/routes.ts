@@ -22,7 +22,13 @@ import {
   ThursdayCard,
   findStudentAssignment,
 } from "./models.ts";
-import { START_LEVEL } from "./policy.ts";
+import { ATTEMPTS_BEFORE_HELP, START_LEVEL } from "./policy.ts";
+
+/** Shown after the nudge when a student asks for more before three attempts on this question. */
+export const HELP_LOCKED_NOTICE = "More help (the lecture slides, or a similar worked example) opens after a few tries on this question.";
+
+/** Shown when a student asks for the slides and the class has none uploaded. */
+export const NO_SLIDES_NOTICE = "Your professor hasn't uploaded lecture slides that cover this yet.";
 import { studentProgress } from "./progress.ts";
 import { roster, transcript } from "./roster.ts";
 import { annotatePicture, drawForStudent, pictureOf, type Drawing } from "./canvas.ts";
@@ -37,6 +43,7 @@ import { studentFlashcards } from "./flashcards.ts";
 import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import { reflectOn, type Reflection } from "./reflect.ts";
 import { slideNotes } from "./slides.ts";
+import { createAssignmentPdfRouter } from "./assignment-pdf.ts";
 import { courseCard, createCourseRouter, enroll, listItem, statusByAssignment } from "./course-routes.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { AssignmentKind, GuardVerdict, HintLevel } from "./types.ts";
@@ -310,6 +317,8 @@ export type RouteDeps = {
   flashcards?: TextGenerator;
   /** The two reflection questions after the last question. */
   reflect?: TextGenerator;
+  /** Reads a Question PDF and an Answer key PDF into questions, keys, kind, and concepts. */
+  assignmentReader?: TextGenerator;
 };
 
 /** Answers a zod failure with field paths only, never the submitted values. */
@@ -466,8 +475,12 @@ const MAX_CLASS_NOTES = 12_000;
 async function classNotes(assignment: { notes?: string | null; course_id?: unknown; lecture_ids?: unknown[] | null }): Promise<string> {
   const parts: string[] = [];
   const linked = (assignment.lecture_ids ?? []).map(String).filter((id) => mongoose.isValidObjectId(id));
-  if (linked.length > 0) {
-    const lectures = await LectureFile.find({ _id: { $in: linked.map((id) => new mongoose.Types.ObjectId(id)) }, course_id: assignment.course_id as mongoose.Types.ObjectId }).select("lecture_number").lean();
+  // With no lectures named, every lecture of the class is searched: the
+  // professor uploads slides to the class, and a student asking for them
+  // should find them without the assignment having to list each one.
+  if (assignment.course_id) {
+    const filter = linked.length > 0 ? { _id: { $in: linked.map((id) => new mongoose.Types.ObjectId(id)) }, course_id: assignment.course_id as mongoose.Types.ObjectId } : { course_id: assignment.course_id as mongoose.Types.ObjectId };
+    const lectures = await LectureFile.find(filter).select("lecture_number").lean();
     const pages = await SlidePage.find({ lecture_file_id: { $in: lectures.map((l) => l._id) } }).select("lecture_file_id page_number text").lean();
     parts.push(slideNotes(lectures.map((l) => ({ lecture_number: l.lecture_number, pages: pages.filter((p) => String(p.lecture_file_id) === String(l._id)) }))));
   }
@@ -494,6 +507,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
   const router = Router();
   router.use(requireDb);
   router.use(createCourseRouter());
+  router.use(createAssignmentPdfRouter({ reader: deps.assignmentReader }));
 
   /**
    * True when the professor has turned Margin off for this session's
@@ -739,6 +753,24 @@ export function createRouter(deps: RouteDeps = {}): Router {
       generate: deps.scribe,
     });
 
+    // The request rule (policy.ts): attempts on this question, this message
+    // included, decide whether a request for slides, an example, or more help
+    // can raise the level. The early draft above was started with the count
+    // before this message, which is the nudge it almost always is.
+    const attempts = (session.question_attempts ?? 0) + (label.attempt_made ? 1 : 0);
+    turnState.attempts = attempts;
+    const request = label.jailbreak_attempt ? "none" : (label.help_request ?? "none");
+    let turnLabel = label;
+    let notice = "";
+    if (request !== "none" && attempts < ATTEMPTS_BEFORE_HELP) {
+      notice = HELP_LOCKED_NOTICE;
+    } else if (request === "slides" && !(await LectureFile.exists({ course_id: assignment.course_id }))) {
+      // Asked for slides the class does not have. The student is told so
+      // plainly and gets a nudge, rather than a pointer to notes that are not slides.
+      notice = NO_SLIDES_NOTICE;
+      turnLabel = { ...label, help_request: "none" };
+    }
+
     const studentMessage = await new Message({
       session_id: session._id,
       role: "student",
@@ -754,7 +786,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
 
     let result;
     try {
-      result = await runTurn(turnState, text, label, hooks, early);
+      result = await runTurn(turnState, text, turnLabel, hooks, early);
     } catch (error) {
       // The tutor's model call failed. The student sees a fixed error, never a
       // partial draft, and the session level does not move.
@@ -764,6 +796,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
     }
 
     let released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary);
+    // The fixed notice goes after the guarded reply. It is our own sentence, never model text, so it needs no check.
+    if (notice) released = { ...released, reply: `${released.reply}\n\n${notice}` };
     // The guard checked this question's key. A reply that holds another
     // question's solution is held the same way, with the same fallback.
     const kind = (assignment.kind ?? "code") as AssignmentKind;
@@ -780,7 +814,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
       guard_verdict: released.verdict,
       retries: result.retries,
     }).save();
-    await Session.updateOne({ _id: session._id }, { current_level: result.level });
+    await Session.updateOne({ _id: session._id }, { current_level: result.level, question_attempts: attempts });
     res.json({
       reply: released.reply,
       level: result.level,
@@ -845,6 +879,15 @@ export function createRouter(deps: RouteDeps = {}): Router {
     }
     if (assignment.kind === "topic" || (assignment.hint_ceiling ?? 3) < 3) {
       res.status(409).json({ error: "not_offered" });
+      return;
+    }
+    // "Try a smaller problem" is a request for a worked example, so it waits
+    // for the same three attempts as asking in words. Before that the student
+    // is told why, and no model is called.
+    if ((session.question_attempts ?? 0) < ATTEMPTS_BEFORE_HELP) {
+      await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK }).save();
+      await new Message({ session_id: session._id, role: "tutor", content: HELP_LOCKED_NOTICE, hint_level: session.current_level }).save();
+      res.json({ reply: HELP_LOCKED_NOTICE, level: START_LEVEL, session_level: session.current_level, verdict: { leaks: false, severity: "none", reason: "", layer: "deterministic" }, retries: 0 });
       return;
     }
     const question = questionAt(assignment, session.current_question ?? 0);
@@ -961,6 +1004,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
     if (index + 1 < count) {
       session.current_question = index + 1;
       session.current_level = START_LEVEL;
+      // Attempts are per question: the next one starts at zero.
+      session.question_attempts = 0;
       times.push({ index: index + 1, started_at: now, finished_at: null });
       await session.save();
       res.json({ done: false, current_question: index + 1, level: START_LEVEL });
