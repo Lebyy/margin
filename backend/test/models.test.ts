@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import mongoose from "mongoose";
 import { Assignment, CANARY, Student, findStudentAssignment } from "../src/models.ts";
+import { clearCollections, testUri } from "./support/db.ts";
 
 // D-B1 done-when, checked against a real MongoDB:
 //   1. Starting the API twice keeps the documents written before the restarts.
@@ -14,28 +15,7 @@ import { Assignment, CANARY, Student, findStudentAssignment } from "../src/model
 // sessions. Without MONGODB_URI the suite is skipped, not passed: a skip in the
 // output means nothing was verified.
 
-const baseUri = process.env.MONGODB_URI;
-
-/**
- * Points the configured URI at the `margin_test` database.
- *
- * The path of a MongoDB URI is the database name, so replacing it keeps the
- * host, credentials, and options. Returns undefined for a URI that the URL
- * parser cannot read (for example a multi-host replica set string), and the
- * suite then skips instead of risking the real database.
- */
-function testUri(uri: string | undefined): string | undefined {
-  if (!uri) return undefined;
-  try {
-    const url = new URL(uri);
-    url.pathname = "/margin_test";
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-const uri = testUri(baseUri);
+const uri = testUri("margin_test");
 const skip = uri ? false : "MONGODB_URI is not set (or not a single-host URI), so nothing was verified";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
@@ -83,12 +63,12 @@ describe("Mongoose models (D-B1)", { skip }, () => {
   before(async () => {
     await mongoose.connect(uri!, { serverSelectionTimeoutMS: 10_000 });
     // Clearing `margin_test` up front makes each run start from a known state.
-    // This drops only the test database named in testUri, never the real one.
-    await mongoose.connection.dropDatabase();
+    // This clears only the test database named in testUri, never the real one.
+    await clearCollections();
   });
 
   after(async () => {
-    await mongoose.connection.dropDatabase();
+    await clearCollections();
     await mongoose.disconnect();
   });
 
