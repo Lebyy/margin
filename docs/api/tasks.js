@@ -54,7 +54,7 @@ export default async function handler(req, res) {
     const tasks = await save(id, done);
     send(res, 200, { tasks });
   } catch (error) {
-    console.error("board store failed", error instanceof Error ? error.name : "error");
+    console.error("board store failed", error instanceof Error ? error.name + ": " + error.message : "error");
     send(res, 500, { error: "the board store did not answer" });
   }
 }
