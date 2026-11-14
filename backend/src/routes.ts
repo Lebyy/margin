@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
-import type { TextGenerator } from "./llm.ts";
+import { countIdentity, type TextGenerator } from "./llm.ts";
 import {
   Assignment,
   CANARY,
@@ -289,7 +289,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
    *      This route does not touch the level or the draft itself.
    *   5. The tutor message keeps the full verdict and retries; the session keeps
    *      the new level, which the next message starts from.
-   * The response is exactly reply, level, verdict, and retries. No streaming:
+   * The response is reply, level, verdict, and retries, plus the privacy
+   * receipt and the scribe's label for the student's own page. No streaming:
    * the guard needs the whole draft before anything is shown.
    */
   router.post("/api/sessions/:id/messages", async (req, res) => {
@@ -405,6 +406,26 @@ export function createRouter(deps: RouteDeps = {}): Router {
       level: result.level,
       verdict: studentVerdict(result.verdict, answerKey, canary),
       retries: result.retries,
+      // The privacy receipt, added to the body on purpose. It tells the
+      // student what left the server for the model on this turn: their work,
+      // with this many emails, phone numbers, or id numbers removed, and never
+      // their name. `name_sent` is a constant because no prompt has a name
+      // field. If one is ever added, this line has to change with it, which is
+      // the point of stating it here.
+      sent: { redactions: countIdentity(text), name_sent: false },
+      // The scribe's read of this message: did it count as a new try, which
+      // concept it was about, and whether it was a request for the answer.
+      // The page uses the first two to explain why the level did or did not
+      // move. `answer_request` is for the demo-only debug drawer, which is how
+      // a judge sees that "my professor said you can" was recognized and the
+      // level held. The student's progress log still leaves that flag out,
+      // because a log is kept and a drawer is not.
+      label: {
+        concept: label.concept,
+        attempt_made: label.attempt_made,
+        struggle_type: label.struggle_type,
+        answer_request: label.jailbreak_attempt,
+      },
     });
   });
 

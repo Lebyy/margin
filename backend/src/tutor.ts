@@ -192,15 +192,33 @@ function levelText(level: HintLevel): string {
   return "Level 3, a similar example. Give a worked example of count_list, a function that counts the items in a list. count_list is not sum_list. Do not write sum_list. Walk through count_list on a small list in words: what it gives back for a list with nothing in it, and how the count of a longer list is built from the count of the rest. Tell it as a trace, not as a block of code, because code shaped like the assignment is held before the student sees it. End by asking which step of their own function matches.";
 }
 
+// Two searches are enough to find a line and try one other word for it. A third is the model circling.
+const MAX_NOTE_SEARCHES = 2;
+
+/**
+ * The level-2 tool, with a count of how many times this turn has used it.
+ * A deepagent keeps calling a tool until it decides to stop, and each call is another model request on the shared credit. On a turn where the student demands the code, the model searched the notes again and again and ran into the graph's step limit, and the student got an error instead of a hint.
+ * After the allowed searches the tool stops returning lines and tells the model to write the hint. The count lives in this closure, so it is per turn and starts at zero for the next student message.
+ */
 function citeNotesTool(notes: string) {
-  return tool(async ({ query }) => searchNotes(notes, query), {
-    name: "cite_notes",
-    description:
-      "Search the professor's pasted lecture notes and return the lines that match. The query is the concept the student is stuck on, in a few plain words such as \"base case\". Cite the lecture and slide numbers exactly as returned. If the result says no line matches, there is nothing to cite.",
-    schema: z.object({
-      query: z.string(),
-    }),
-  });
+  let searches = 0;
+  return tool(
+    async ({ query }) => {
+      searches += 1;
+      if (searches > MAX_NOTE_SEARCHES) {
+        return "No more searches this turn. Write the hint now, citing a line you already found, or ask one guiding question if you found none.";
+      }
+      return searchNotes(notes, query);
+    },
+    {
+      name: "cite_notes",
+      description:
+        "Search the professor's pasted lecture notes and return the lines that match. The query is the concept the student is stuck on, in a few plain words such as \"base case\". Call it once, or twice if the first query finds nothing. Cite the lecture and slide numbers exactly as returned. If the result says no line matches, there is nothing to cite.",
+      schema: z.object({
+        query: z.string(),
+      }),
+    },
+  );
 }
 
 // Longer than one model request, because a level-2 turn is two: the tool call, then the hint.
@@ -209,7 +227,7 @@ const TURN_TIMEOUT_MS = 45_000;
 /**
  * The production runner. Tests do not call this.
  * streaming is off because the guard has to see the whole draft before the student does.
- * The recursion cap stops a tool loop from spending the shared trial credit on one turn.
+ * The recursion cap is the backstop for a tool loop. It counts graph steps, not model requests, and a deepagent spends several steps per tool round on its own middleware, so the cap has to leave room for two searches and the answer. The search count in citeNotesTool is what actually bounds the requests.
  * StateBackend keeps the agent's files in memory. A filesystem backend would be rooted on the repo, where the answer key is not supposed to be readable or writable.
  * subagents is empty. The general-purpose subagent is disabled on the Google profile, so the model cannot delegate writing the solution.
  * maxRetries is 1. The chat class retries a failed request six times by default, and the guard can ask for three drafts a turn, so one bad minute at the provider would be eighteen calls on the shared credit for a single student message.
@@ -240,7 +258,7 @@ async function runDeepAgent(call: TutorCall): Promise<string> {
   });
   const result = await agent.invoke(
     { messages: [{ role: "user", content: call.user }] },
-    { recursionLimit: 8, signal: AbortSignal.timeout(TURN_TIMEOUT_MS) },
+    { recursionLimit: 24, signal: AbortSignal.timeout(TURN_TIMEOUT_MS) },
   );
   return messageText(result.messages.at(-1)?.content);
 }

@@ -85,6 +85,20 @@ export function stripIdentity(text: string): string {
   return text.replace(EMAIL, "[redacted]").replace(PHONE, "[redacted]").replace(LONG_ID, "[redacted]");
 }
 
+/**
+ * How many pieces of identity stripIdentity would remove from this text.
+ * The student page shows this count as a receipt: "1 detail removed before the model saw your message". It is counted with the same three patterns, in the same order, so the receipt cannot claim a removal the strip did not make.
+ */
+export function countIdentity(text: string): number {
+  let count = 0;
+  const tally = () => {
+    count += 1;
+    return "[redacted]";
+  };
+  text.replace(EMAIL, tally).replace(PHONE, tally).replace(LONG_ID, tally);
+  return count;
+}
+
 /** The model answered, and the answer is not the schema. Retry once, then this error. The message does not include the payload, because the guard's prompt contains the answer key. */
 export class PayloadError extends Error {
   constructor(message: string) {

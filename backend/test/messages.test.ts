@@ -100,10 +100,11 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
     assert.ok(!text.includes("sum_list(xs[1:])"), "the response contains the recursive line");
   }
 
-  test("a text turn returns the four fields and is stored", async () => {
+  test("a text turn returns the reply fields and is stored", async () => {
     // Case: a student pastes a try with no base case. The scribe sees an
-    // attempt, so the policy climbs from 1 to 2. The response is exactly
-    // reply, level, verdict, retries, and the database holds the student
+    // attempt, so the policy climbs from 1 to 2. The response is reply,
+    // level, verdict, retries, the privacy receipt, and the student's own
+    // label, and the database holds the student
     // message, the tutor message, one scribe event, and the new level.
     const sessionId = await startSession("Ada");
     scribeReply = JSON.stringify(label({ attempt_made: true, evidence: "it crashes" }));
@@ -115,7 +116,11 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
     });
     assert.equal(status, 200);
     const body = JSON.parse(text);
-    assert.deepEqual(Object.keys(body).sort(), ["level", "reply", "retries", "verdict"]);
+    assert.deepEqual(Object.keys(body).sort(), ["label", "level", "reply", "retries", "sent", "verdict"]);
+    // The receipt says the name was not sent. The label carries the scribe's read for the page and the drawer.
+    assert.deepEqual(body.sent, { redactions: 0, name_sent: false });
+    assert.deepEqual(Object.keys(body.label).sort(), ["answer_request", "attempt_made", "concept", "struggle_type"]);
+    assert.equal(body.label.answer_request, false);
     assert.equal(body.level, 2);
     assert.equal(body.retries, 0);
     assert.equal(body.verdict.leaks, false);
