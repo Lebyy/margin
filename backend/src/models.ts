@@ -124,6 +124,17 @@ const assignmentSchema = new Schema(
     // field of a subdocument while a student query projects the other.
     questions: { type: [{ prompt: { type: String, required: true }, _id: false }], default: [] },
     question_keys: { type: [String], default: [], select: false },
+    // When it is due. Null means no due date, and the course page lists it after the dated ones.
+    due_at: { type: Date, default: null },
+    // The professor opts in per assignment. Off, the student sees the prompt
+    // and the due date and no tutor: every tutor route refuses the session
+    // before any model is called. The default is on, so every assignment saved
+    // before this field existed (the demo included) behaves exactly as before.
+    margin_enabled: { type: Boolean, default: true },
+    // The lectures this assignment covers. When set, the level-2 pointer
+    // searches those lectures' slides, page by page, and cites them as
+    // "Lecture n, slide p". Empty means the pasted notes are searched, as before.
+    lecture_ids: { type: [{ type: Schema.Types.ObjectId, ref: "LectureFile" }], default: [] },
     // The class this belongs to. Set when the assignment is saved, from its course name. Null only on a row saved before courses existed, until the course list is next read.
     course_id: { type: Schema.Types.ObjectId, ref: "Course", default: null },
   },
@@ -171,6 +182,8 @@ export const STUDENT_ASSIGNMENT_FIELDS = Object.freeze([
   "concepts",
   "hint_ceiling",
   "questions",
+  "due_at",
+  "margin_enabled",
 ] as const);
 
 /** The shape a student receives for an assignment. It has no key and no canary. */
@@ -187,6 +200,9 @@ export type StudentAssignmentView = {
   hint_ceiling: number;
   /** Every question's prompt in order. Item 0 is `prompt`. Never a key. */
   questions: string[];
+  /** ISO time, or null for no due date. */
+  due_at: string | null;
+  margin_enabled: boolean;
 };
 
 /**
@@ -215,6 +231,8 @@ export async function findStudentAssignment(id: string): Promise<StudentAssignme
     concepts: doc.concepts ?? [],
     hint_ceiling: doc.hint_ceiling ?? 3,
     questions: [doc.prompt, ...(doc.questions ?? []).map((q) => q.prompt)],
+    due_at: doc.due_at ? new Date(doc.due_at).toISOString() : null,
+    margin_enabled: doc.margin_enabled !== false,
   };
 }
 
@@ -417,6 +435,19 @@ export const ProfessorMessage = mongoose.model("ProfessorMessage", professorMess
 // courses and course_materials
 // ---------------------------------------------------------------------------
 
+/** The accent tokens a course can use. Each has a light and a dark value in frontend/app/globals.css. */
+export const COURSE_ACCENTS = ["red", "blue", "green", "amber", "teal", "slate"] as const;
+export type CourseAccent = (typeof COURSE_ACCENTS)[number];
+
+/** A course's accent: the one the professor chose, or one picked from the id so it stays the same on every load. */
+export function accentFor(course: { _id: unknown; accent?: string | null }): CourseAccent {
+  if (course.accent && (COURSE_ACCENTS as readonly string[]).includes(course.accent)) return course.accent as CourseAccent;
+  const id = String(course._id);
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return COURSE_ACCENTS[h % COURSE_ACCENTS.length];
+}
+
 // A class: the thing a professor teaches and a student is in. It holds what
 // is shared across every assignment and lesson in it: a description and the
 // professor's classroom notes. A course exists because a professor created
@@ -429,6 +460,13 @@ const courseSchema = new Schema(
     professor: { type: String, default: "", trim: true },
     // Notes for the whole class, such as the syllabus or a running summary. The tutor reads these along with an assignment's own notes.
     notes: { type: String, default: "" },
+    // The catalogue code ("PHYS 101") and the term ("Fall 2026") shown on the course card. Both are optional labels.
+    code: { type: String, default: "", trim: true },
+    term: { type: String, default: "", trim: true },
+    // The card band and header colour. A name from a fixed set of theme
+    // tokens, never a colour value, so every class reads in light and dark.
+    // Null means "pick from the id", which is stable without being stored.
+    accent: { type: String, enum: [...COURSE_ACCENTS, null], default: null },
   },
   { collection: "courses", timestamps: { createdAt: "created_at", updatedAt: "updated_at" } as const },
 );
@@ -466,6 +504,54 @@ const postSchema = new Schema(
 );
 postSchema.index({ course_id: 1, created_at: 1 });
 export const Post = mongoose.model("Post", postSchema);
+
+// A student in a class. It exists because the student pressed Join, or
+// started a session on one of the class's assignments; no script enrolls
+// anyone. My courses is the list of these rows for one student.
+const enrollmentSchema = new Schema(
+  {
+    student_id: { type: Schema.Types.ObjectId, ref: "Student", required: true },
+    course_id: { type: Schema.Types.ObjectId, ref: "Course", required: true },
+  },
+  { collection: "enrollments", timestamps: { createdAt: "created_at", updatedAt: false } as const },
+);
+// One row per pair, so joining twice is an upsert and not a second enrollment.
+enrollmentSchema.index({ student_id: 1, course_id: 1 }, { unique: true });
+export const Enrollment = mongoose.model("Enrollment", enrollmentSchema);
+
+// A lecture's slides as the professor uploaded them. The PDF itself is in
+// GridFS (bucket `lecture_pdfs`, see slides.ts) under `file_id`, a random id:
+// the uploaded file name is never a path, only a default title. It is kept
+// so students can read the real slides in the browser. The text the tutor
+// searches is in slide_pages, one row per page.
+const lectureFileSchema = new Schema(
+  {
+    course_id: { type: Schema.Types.ObjectId, ref: "Course", required: true },
+    lecture_number: { type: Number, required: true, min: 0 },
+    title: { type: String, required: true, trim: true },
+    lecture_date: { type: Date, default: null },
+    file_id: { type: Schema.Types.ObjectId, required: true },
+    page_count: { type: Number, required: true, min: 0 },
+  },
+  { collection: "lecture_files", timestamps: { createdAt: "uploaded_at", updatedAt: false } as const },
+);
+lectureFileSchema.index({ course_id: 1, lecture_number: 1 });
+export const LectureFile = mongoose.model("LectureFile", lectureFileSchema);
+
+// The text of one page of a lecture PDF, read once at upload. A page with no
+// text layer (a scanned slide) is stored as "", and the professor is told; it
+// is not guessed at. The tutor cites a page as "Lecture n, slide p", where p
+// is this page number, so a citation opens the same page in the viewer.
+const slidePageSchema = new Schema(
+  {
+    lecture_file_id: { type: Schema.Types.ObjectId, ref: "LectureFile", required: true },
+    page_number: { type: Number, required: true, min: 1 },
+    text: { type: String, default: "" },
+  },
+  { collection: "slide_pages" },
+);
+slidePageSchema.index({ lecture_file_id: 1, page_number: 1 }, { unique: true });
+export const SlidePage = mongoose.model("SlidePage", slidePageSchema);
 
 // ---------------------------------------------------------------------------
 // student_notes

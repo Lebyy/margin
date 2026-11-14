@@ -8,8 +8,10 @@ import {
   ASSIGNMENT_KINDS,
   Assignment,
   CANARY,
+  COURSE_ACCENTS,
   Course,
   CourseMaterial,
+  LectureFile,
   Message,
   Post,
   ProfessorMessage,
@@ -33,6 +35,7 @@ import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
 import { studentFlashcards } from "./flashcards.ts";
 import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import { reflectOn, type Reflection } from "./reflect.ts";
+import { courseCard, createCourseRouter, enroll, listItem, statusByAssignment } from "./course-routes.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { AssignmentKind, GuardVerdict, HintLevel } from "./types.ts";
 
@@ -115,6 +118,12 @@ const assignmentFields = z.object({
   // key. Matching by `from` rather than by position is what keeps a key with
   // its question when the professor removes or reorders one. Ten questions in
   // all is far more than one sitting needs, and bounds the work per save.
+  // When it is due, as an ISO time, or null for no due date.
+  due_at: z.iso.datetime({ offset: true }).nullable().default(null),
+  // The professor's opt-in for this assignment. Off, students see the work and no tutor.
+  margin_enabled: z.boolean().default(true),
+  // Lectures of this assignment's class whose slides the level-2 pointer searches. Checked against the class on save.
+  lecture_ids: z.array(z.string().refine((s) => mongoose.isValidObjectId(s), "not a lecture id")).max(50).default([]),
   questions: z
     .array(
       z.object({
@@ -149,6 +158,12 @@ const assignmentInput = assignmentFields
 const assignmentUpdate = assignmentFields.extend({
   id: z.string().refine((s) => mongoose.isValidObjectId(s), "id is not an assignment id"),
   answer_key: z.string().trim().min(1).optional(),
+  // On an edit these keep their stored values when left out, rather than
+  // falling back to the create defaults: a form that does not know about a
+  // field must not clear the due date or switch Margin back on.
+  due_at: z.iso.datetime({ offset: true }).nullable().optional(),
+  margin_enabled: z.boolean().optional(),
+  lecture_ids: z.array(z.string().refine((s) => mongoose.isValidObjectId(s), "not a lecture id")).max(50).optional(),
 });
 
 /** A string that Mongoose can cast to an ObjectId, checked before any query. */
@@ -412,6 +427,17 @@ function publicReflection(r: { why: string; what_if: string; what_if_index: numb
 }
 
 /**
+ * True when every lecture id names a lecture of this class. An assignment
+ * that pointed at another class's slides would cite that class's lectures to
+ * its students, so a save that tries is refused rather than trimmed.
+ */
+async function lecturesBelong(ids: string[], courseId: mongoose.Types.ObjectId): Promise<boolean> {
+  if (ids.length === 0) return true;
+  const unique = [...new Set(ids)];
+  return (await LectureFile.countDocuments({ _id: { $in: unique.map((id) => new mongoose.Types.ObjectId(id)) }, course_id: courseId })) === unique.length;
+}
+
+/**
  * The course an assignment belongs to, by name, created on first use.
  * A professor types a course name on the setup form. Saving under a new name is what creates the class, so there is no separate step before the first assignment, and two assignments with the same name land in the same class.
  */
@@ -450,6 +476,18 @@ const studyCache = new Map<string, StudyCard[]>();
 export function createRouter(deps: RouteDeps = {}): Router {
   const router = Router();
   router.use(requireDb);
+  router.use(createCourseRouter());
+
+  /**
+   * True when the professor has turned Margin off for this session's
+   * assignment. Every tutor route checks this before the scribe, the tutor,
+   * or the guard runs, so an assignment that is not opted in never spends a
+   * model call and never shows a hint, whatever the page sends.
+   */
+  async function marginOff(assignmentId: unknown): Promise<boolean> {
+    const a = await Assignment.findById(assignmentId).select("margin_enabled").lean();
+    return a?.margin_enabled === false;
+  }
 
   /**
    * POST /api/prof/assignments: a professor saves an assignment.
@@ -472,7 +510,12 @@ export function createRouter(deps: RouteDeps = {}): Router {
       const { questions, ...first } = parsed.data;
       const later = laterQuestions(questions, [], first.kind);
       // The refine above already required every key, so `later` is only null for a topic, which this never is.
-      const saved = await new Assignment({ ...first, ...(later ?? { questions: [], question_keys: [] }), canary: CANARY, course_id: await courseIdFor(first.course_name) }).save();
+      const courseId = await courseIdFor(first.course_name);
+      if (!(await lecturesBelong(first.lecture_ids, courseId))) {
+        res.status(400).json({ error: "invalid_assignment", issues: [{ path: "lecture_ids", message: "a lecture is not in this class" }] });
+        return;
+      }
+      const saved = await new Assignment({ ...first, ...(later ?? { questions: [], question_keys: [] }), canary: CANARY, course_id: courseId }).save();
       res.status(201).json(saved.toJSON());
       return;
     }
@@ -489,8 +532,15 @@ export function createRouter(deps: RouteDeps = {}): Router {
 
     // The canary is never in `fields`, so an edit cannot change it. The key is
     // only written when the form sent one; otherwise the stored key stays.
+    const courseId = await courseIdFor(fields.course_name);
+    // Fields left out of the edit are dropped here, so `doc.set` keeps what is stored.
+    for (const k of ["due_at", "margin_enabled", "lecture_ids"] as const) if (fields[k] === undefined) delete fields[k];
+    if (!(await lecturesBelong(fields.lecture_ids ?? [], courseId))) {
+      res.status(400).json({ error: "invalid_assignment", issues: [{ path: "lecture_ids", message: "a lecture is not in this class" }] });
+      return;
+    }
     doc.set(fields);
-    doc.set("course_id", await courseIdFor(fields.course_name));
+    doc.set("course_id", courseId);
     if (answer_key !== undefined) doc.set("answer_key", answer_key);
     const later = laterQuestions(questions, doc.question_keys ?? [], fields.kind);
     if (!later) {
@@ -527,8 +577,14 @@ export function createRouter(deps: RouteDeps = {}): Router {
 
     // Checked before the student is created, so a bad assignment link does not
     // leave a student behind with no session.
-    if (!(await Assignment.exists({ _id: assignment_id }))) {
+    const target = await Assignment.findById(assignment_id).select("course_id margin_enabled").lean();
+    if (!target) {
       res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    // An assignment the professor has not opted in has no tutor, so there is no session to start.
+    if (target.margin_enabled === false) {
+      res.status(403).json({ error: "margin_disabled" });
       return;
     }
 
@@ -549,6 +605,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
       current_question: 0,
       question_times: [{ index: 0, started_at: new Date(), finished_at: null }],
     }).save();
+    // Working on a class's assignment puts the class in the student's My courses.
+    await enroll(studentId, target.course_id);
 
     res.status(201).json({
       session_id: String(session._id),
@@ -595,6 +653,10 @@ export function createRouter(deps: RouteDeps = {}): Router {
     const session = await Session.findById(req.params.id).lean();
     if (!session) {
       res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    if (await marginOff(session.assignment_id)) {
+      res.status(403).json({ error: "margin_disabled" });
       return;
     }
 
@@ -760,6 +822,10 @@ export function createRouter(deps: RouteDeps = {}): Router {
       res.status(404).json({ error: "session_not_found" });
       return;
     }
+    if (assignment.margin_enabled === false) {
+      res.status(403).json({ error: "margin_disabled" });
+      return;
+    }
     if (assignment.kind === "topic" || (assignment.hint_ceiling ?? 3) < 3) {
       res.status(409).json({ error: "not_offered" });
       return;
@@ -859,6 +925,11 @@ export function createRouter(deps: RouteDeps = {}): Router {
     const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary +question_keys").lean();
     if (!assignment) {
       res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    // Finishing writes the reflection with a model, so it is refused like any other tutor call.
+    if (assignment.margin_enabled === false) {
+      res.status(403).json({ error: "margin_disabled" });
       return;
     }
     const now = new Date();
@@ -1370,10 +1441,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
       courses: courses.map((c) => {
         const mine = items.filter((a) => String(a.course_id) === String(c._id));
         return {
-          id: String(c._id),
-          name: c.name,
-          description: c.description ?? "",
-          professor: c.professor ?? "",
+          ...courseCard(c),
           assignments: mine.filter((a) => (a.kind ?? "code") !== "topic").length,
           lessons: mine.filter((a) => a.kind === "topic").length,
         };
@@ -1394,16 +1462,17 @@ export function createRouter(deps: RouteDeps = {}): Router {
       res.status(404).json({ error: "course_not_found" });
       return;
     }
-    const docs = await Assignment.find({ course_id: course._id }).sort({ created_at: 1, _id: 1 }).select("course_name title kind concepts").lean();
+    const docs = await Assignment.find({ course_id: course._id }).sort({ created_at: 1, _id: 1 }).select("course_id course_name title kind concepts due_at margin_enabled").lean();
+    // Dated work first, nearest due first; undated work after, in the order it was saved.
+    docs.sort((a, b) => (a.due_at ? new Date(a.due_at).getTime() : Infinity) - (b.due_at ? new Date(b.due_at).getTime() : Infinity));
     const materials = await CourseMaterial.find({ course_id: course._id }).sort({ created_at: 1 }).lean();
+    // With ?student_id= each item carries that student's status. Without it, everything reads not started.
+    const status = await statusByAssignment(typeof req.query.student_id === "string" ? req.query.student_id : null, docs.map((d) => d._id));
     res.json({
-      id: String(course._id),
-      name: course.name,
-      description: course.description ?? "",
-      professor: course.professor ?? "",
+      ...courseCard(course),
       notes: course.notes ?? "",
       materials: materials.map((m) => ({ id: String(m._id), title: m.title, body: m.body })),
-      items: docs.map((d) => ({ id: String(d._id), course_name: d.course_name, title: d.title, kind: d.kind ?? "code", concepts: d.concepts ?? [], course_id: String(course._id) })),
+      items: docs.map((d) => listItem(d, status.get(String(d._id)) ?? "not_started")),
     });
   });
 
@@ -1413,7 +1482,19 @@ export function createRouter(deps: RouteDeps = {}): Router {
    */
   router.post("/api/prof/courses", async (req, res) => {
     const body = z
-      .object({ id: objectId.optional(), name: z.string().trim().min(1).max(120), description: z.string().max(600).default(""), notes: z.string().max(20000).default(""), professor: z.string().trim().max(80).optional() })
+      .object({
+        id: objectId.optional(),
+        name: z.string().trim().min(1).max(120),
+        // Left out, the stored text stays. A default of "" here once wiped a
+        // class's notes on an edit that only meant to rename it.
+        description: z.string().max(600).optional(),
+        notes: z.string().max(20000).optional(),
+        professor: z.string().trim().max(80).optional(),
+        // Card labels and colour. Left out, the stored values stay.
+        code: z.string().trim().max(24).optional(),
+        term: z.string().trim().max(40).optional(),
+        accent: z.enum(COURSE_ACCENTS).optional(),
+      })
       .safeParse(req.body);
     if (!body.success) {
       res.status(400).json({ error: "invalid_course" });
@@ -1428,7 +1509,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
     }
     // Assignments carry the class name for display. Renaming the class renames it on them too.
     await Assignment.updateMany({ course_id: saved._id }, { course_name: saved.name });
-    res.status(id ? 200 : 201).json({ id: String(saved._id), name: saved.name, description: saved.description ?? "", notes: saved.notes ?? "" });
+    res.status(id ? 200 : 201).json({ ...courseCard(saved), notes: saved.notes ?? "" });
   });
 
   /**

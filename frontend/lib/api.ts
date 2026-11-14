@@ -38,18 +38,48 @@ export type Assignment = {
   hint_ceiling: number;
   /** Every question's prompt in order. Item 0 is `prompt`. Older servers leave it out, and the page then treats `prompt` as the only question. */
   questions?: string[];
+  /** ISO time, or null for no due date. */
+  due_at?: string | null;
+  /** False when the professor has not turned Margin on for this assignment. Every tutor route then answers 403. */
+  margin_enabled?: boolean;
 };
 
-export type AssignmentListItem = { id: string; course_name: string; title: string; kind: AssignmentKind; concepts: string[]; course_id: string | null };
+/** Not started is no session; in progress is a session; submitted is a session that pressed Submit on the last question. */
+export type AssignmentStatus = "not_started" | "in_progress" | "submitted";
 
-/** A class in the list: its name and how much is in it. */
-export type CourseListItem = { id: string; name: string; description: string; professor: string; assignments: number; lessons: number };
+export type AssignmentListItem = {
+  id: string;
+  course_name: string;
+  title: string;
+  kind: AssignmentKind;
+  concepts: string[];
+  course_id: string | null;
+  due_at?: string | null;
+  margin_enabled?: boolean;
+  status?: AssignmentStatus;
+};
+
+/** The accent tokens a class can use. Each is a theme token in globals.css (`--course-<name>`), never a colour value. */
+export const COURSE_ACCENTS = ["red", "blue", "green", "amber", "teal", "slate"] as const;
+export type CourseAccent = (typeof COURSE_ACCENTS)[number];
+
+/** The fields every course card shows. */
+export type CourseCard = { id: string; name: string; code: string; term: string; professor: string; description: string; accent: CourseAccent };
+
+/** A class in the list: its card and how much is in it. */
+export type CourseListItem = CourseCard & { assignments: number; lessons: number };
+
+/** My courses for one student: the classes they joined, and the next five things due. */
+export type MyCourses = { courses: (CourseCard & { due_this_week: number })[]; due_soon: (AssignmentListItem & { due_at: string })[] };
+
+/** The professor's card: the class, its counts, and the weakest concept from its newest Thursday card, or null before any card. */
+export type ProfCourseCard = CourseListItem & { weakest: { concept: string; percent_struggling: number | null; assignment_title: string } | null };
 
 /** One post in a class discussion. `parent_id` is null on a question. A post by Margin has role "margin". */
 export type Post = { id: string; parent_id: string | null; author: string; role: "student" | "prof" | "margin"; body: string; created_at: string };
 
 /** One class opened: its classroom notes, the files the professor added (stored as text), and everything to do or learn in it. */
-export type Course = { id: string; name: string; description: string; professor: string; notes: string; materials: { id: string; title: string; body: string }[]; items: AssignmentListItem[] };
+export type Course = CourseCard & { notes: string; materials: { id: string; title: string; body: string }[]; items: AssignmentListItem[] };
 
 /** One self-check question. The right answer is in the response, because the page checks it locally and nothing about a student's answers is stored. */
 export type QuizQuestion = { concept: string; question: string; choices: string[]; answer: number; why: string };
@@ -226,6 +256,11 @@ export type AssignmentForm = {
   notes: string;
   concepts: string[];
   hint_ceiling: number;
+  /** ISO time or null. Left out on an older form, the server stores null. */
+  due_at?: string | null;
+  margin_enabled?: boolean;
+  /** Lectures of this class whose slides the level-2 pointer searches. */
+  lecture_ids?: string[];
   /** Questions 2 and on. On an edit, `from` is the 1-based place a question had when the form loaded, and no `answer_key` keeps its stored key. */
   questions: { prompt: string; answer_key?: string; from?: number }[];
 };
@@ -297,7 +332,12 @@ export const api = {
   /** Speech for a reply already on screen, as a WAV file in base64. */
   speak: (text: string) => request<{ mimeType: string; base64: string }>("POST", "/api/speak", { text }),
   courses: () => request<{ courses: CourseListItem[] }>("GET", "/api/courses"),
-  course: (id: string) => request<Course>("GET", `/api/courses/${q(id)}`),
+  /** With `studentId`, each item carries that student's status. */
+  course: (id: string, studentId?: string | null) => request<Course>("GET", `/api/courses/${q(id)}${studentId ? `?student_id=${q(studentId)}` : ""}`),
+  myCourses: (studentId: string) => request<MyCourses>("GET", `/api/students/${q(studentId)}/courses`),
+  /** A returning student sends their id; a first visit sends the name they typed, and the server creates the student. */
+  joinCourse: (courseId: string, who: { student_id: string } | { display_name: string }) => request<{ student_id: string; course_id: string }>("POST", `/api/courses/${q(courseId)}/join`, who),
+  profCourses: () => request<{ courses: ProfCourseCard[] }>("GET", "/api/prof/courses"),
   posts: (courseId: string) => request<{ posts: Post[] }>("GET", `/api/courses/${q(courseId)}/posts`),
   addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),
   /** Asks Margin to answer a question in the discussion. 422 `held` means the answer was checked against the class's answer keys and not posted. */
