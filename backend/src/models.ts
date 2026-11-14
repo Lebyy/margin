@@ -61,7 +61,10 @@ const hintLevelField = {
   min: 1,
   max: 3,
   validate: {
-    validator: (n: number) => Number.isInteger(n),
+    // null passes: a student message has no hint level, and its field defaults
+    // to null. Assignments and sessions still require a number through their
+    // defaults, so null never reaches the policy.
+    validator: (n: number | null) => n === null || Number.isInteger(n),
     message: "A hint level is a whole number from 1 to 3.",
   },
 };
@@ -99,7 +102,10 @@ const assignmentSchema = new Schema(
   },
   {
     collection: "assignments",
-    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+    // `as const` on every timestamps option in this file: without it Mongoose's
+    // types widen the field names to `string` and give each model an index
+    // signature of dates, which makes ordinary query filters fail to compile.
+    timestamps: { createdAt: "created_at", updatedAt: "updated_at" } as const,
     toJSON: {
       // Defense in depth: even if a route loads the key with `+answer_key` and
       // then calls `res.json(doc)`, serialization drops the key and the canary.
@@ -184,7 +190,7 @@ const studentSchema = new Schema(
   {
     display_name: { type: String, required: true, trim: true },
   },
-  { collection: "students", timestamps: { createdAt: "created_at", updatedAt: false } },
+  { collection: "students", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
 
 export type StudentDoc = InferSchemaType<typeof studentSchema>;
@@ -209,7 +215,7 @@ const sessionSchema = new Schema(
     // disagree about where a new student begins.
     current_level: { ...hintLevelField, default: START_LEVEL },
   },
-  { collection: "sessions", timestamps: { createdAt: "created_at", updatedAt: false } },
+  { collection: "sessions", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
 
 // The professor drill-down lists sessions per assignment, and a student's own
@@ -254,7 +260,7 @@ const messageSchema = new Schema(
     guard_verdict: { type: guardVerdictSchema, default: null },
     retries: { type: Number, default: 0, min: 0 },
   },
-  { collection: "messages", timestamps: { createdAt: "created_at", updatedAt: false } },
+  { collection: "messages", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
 
 // Transcripts are always read as one session in time order.
@@ -287,7 +293,7 @@ const scribeEventSchema = new Schema(
     // One short quote from the student that justifies the label.
     evidence: { type: String, default: "" },
   },
-  { collection: "scribe_events", timestamps: { createdAt: "created_at", updatedAt: false } },
+  { collection: "scribe_events", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
 
 // The class summary groups by assignment then concept; progress reads by student.
@@ -310,7 +316,7 @@ const thursdayCardSchema = new Schema(
     assignment_id: { type: Schema.Types.ObjectId, ref: "Assignment", required: true },
     payload: { type: Schema.Types.Mixed, required: true },
   },
-  { collection: "thursday_cards", timestamps: { createdAt: "generated_at", updatedAt: false } },
+  { collection: "thursday_cards", timestamps: { createdAt: "generated_at", updatedAt: false } as const },
 );
 
 thursdayCardSchema.index({ assignment_id: 1, generated_at: -1 });
@@ -331,7 +337,7 @@ const professorMessageSchema = new Schema(
     assignment_id: { type: Schema.Types.ObjectId, ref: "Assignment", required: true },
     body: { type: String, required: true },
   },
-  { collection: "professor_messages", timestamps: { createdAt: "created_at", updatedAt: false } },
+  { collection: "professor_messages", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
 
 professorMessageSchema.index({ assignment_id: 1, created_at: -1 });

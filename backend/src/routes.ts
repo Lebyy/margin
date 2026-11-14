@@ -2,8 +2,13 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
-import { Assignment, CANARY, Session, Student, findStudentAssignment } from "./models.ts";
+import type { TextGenerator } from "./llm.ts";
+import { Assignment, CANARY, Message, Session, Student, findStudentAssignment } from "./models.ts";
 import { START_LEVEL } from "./policy.ts";
+import { labelTurn, saveScribeEvent } from "./scribe.ts";
+import { runTurn } from "./turn.ts";
+import type { TutorRunner } from "./tutor.ts";
+import type { GuardVerdict, HintLevel } from "./types.ts";
 
 // The HTTP routes David owns (board contract: routes.ts). Every record the
 // product shows exists because a request here created it. There is no seed
@@ -85,6 +90,63 @@ const sessionInput = z
     message: "send either student_id or display_name, not both",
   });
 
+/**
+ * One student turn. Exactly one of `text` or `image`.
+ *
+ * Text is the demo path. An image is snap-your-work, which stays a 501 until
+ * D-R1's vision call is reliable (board contract). The 8000-character cap is
+ * far above a pasted function and stops a whole file from being sent as one
+ * message, which would also be sent to two models.
+ */
+const messageInput = z
+  .object({
+    text: z.string().trim().min(1).max(8000).optional(),
+    image: z.object({ mimeType: z.string().min(1), base64: z.string().min(1) }).optional(),
+  })
+  .refine((b) => (b.text === undefined) !== (b.image === undefined), {
+    message: "send either text or image, not both",
+  });
+
+/** How many earlier messages the scribe and the tutor see. Enough for "I tried that", short enough to stay cheap. */
+const HISTORY_TURNS = 10;
+
+/**
+ * Key lines shorter than this are not checked in the verdict reason. Lines
+ * like `return 0` are too common to mean the reason quotes the solution.
+ */
+const MIN_KEY_LINE = 12;
+
+/**
+ * The verdict as the student response carries it.
+ *
+ * The guard already strips the key from its reason, but the board says
+ * reasons that quote the key stay on the server, so this checks again at the
+ * last point before the wire. A reason that contains a key line or the canary
+ * is blanked rather than edited, and the full verdict is still stored on the
+ * tutor message for the professor's transcript.
+ */
+function studentVerdict(verdict: GuardVerdict, answerKey: string, canary: string): GuardVerdict {
+  const squash = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  const reason = squash(verdict.reason);
+  const keyLines = answerKey
+    .split("\n")
+    .map(squash)
+    .filter((line) => line.length >= MIN_KEY_LINE);
+  const quotesKey = keyLines.some((line) => reason.includes(line)) || reason.includes(squash(canary));
+  return { ...verdict, reason: quotesKey ? "" : verdict.reason };
+}
+
+/**
+ * Model stand-ins for tests. Production passes nothing and every call goes to
+ * Gemini. The scribe and the guard judge both use completeJson, so each gets
+ * its own generator to keep their answers apart in a test.
+ */
+export type RouteDeps = {
+  scribe?: TextGenerator;
+  judge?: TextGenerator;
+  tutor?: TutorRunner;
+};
+
 /** Answers a zod failure with field paths only, never the submitted values. */
 function rejectInvalid(res: Response, error: z.ZodError): void {
   // zod issues name the path and the rule, not the value, so a rejected
@@ -95,7 +157,7 @@ function rejectInvalid(res: Response, error: z.ZodError): void {
   });
 }
 
-export function createRouter(): Router {
+export function createRouter(deps: RouteDeps = {}): Router {
   const router = Router();
   router.use(requireDb);
 
@@ -189,6 +251,139 @@ export function createRouter(): Router {
       student_id: studentId,
       assignment_id,
       level: session.current_level,
+    });
+  });
+
+  /**
+   * POST /api/sessions/:id/messages: one student turn.
+   *
+   * The order follows the per-turn pipeline in project.mdc:
+   *   1. Load the session, the assignment (with the key, for the guard only),
+   *      and the last few messages.
+   *   2. The scribe labels the student's text. It never fails: a bad label is
+   *      the closed label, which cannot raise the level.
+   *   3. The student message and its scribe event are stored before the tutor
+   *      runs, so a turn the student really took is recorded even if the tutor
+   *      is down.
+   *   4. runTurn picks the level (policy), drafts (tutor), and checks (guard).
+   *      This route does not touch the level or the draft itself.
+   *   5. The tutor message keeps the full verdict and retries; the session keeps
+   *      the new level, which the next message starts from.
+   * The response is exactly reply, level, verdict, and retries. No streaming:
+   * the guard needs the whole draft before anything is shown.
+   */
+  router.post("/api/sessions/:id/messages", async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    const parsed = messageInput.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_message",
+        issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+      });
+      return;
+    }
+
+    const session = await Session.findById(req.params.id).lean();
+    if (!session) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+
+    // Snap-your-work is not built yet (D-R1). The answer is the fixed 501 the
+    // page knows to ignore, with no model text and nothing stored.
+    if (parsed.data.image !== undefined) {
+      res.status(501).json({ error: "vision_unavailable" });
+      return;
+    }
+    const text = parsed.data.text as string;
+
+    // The key and canary are selected here and passed only to the scribe's
+    // local evidence scrub and to runTurn's guard. They never go into a
+    // response, and runTurn keeps them out of the tutor's prompt.
+    const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean();
+    if (!assignment) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    const answerKey = assignment.answer_key;
+    const canary = assignment.canary ?? CANARY;
+    const concepts = assignment.concepts ?? [];
+
+    // Newest first for the limit, then flipped so the models read in order.
+    // `_id` breaks ties when two messages share a millisecond.
+    const history = (
+      await Message.find({ session_id: session._id })
+        .sort({ created_at: -1, _id: -1 })
+        .limit(HISTORY_TURNS)
+        .lean()
+    )
+      .reverse()
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    const label = await labelTurn({
+      prompt: assignment.prompt,
+      concepts,
+      studentText: text,
+      recentTurns: history,
+      answerKey,
+      generate: deps.scribe,
+    });
+
+    const studentMessage = await new Message({
+      session_id: session._id,
+      role: "student",
+      content: text,
+    }).save();
+    await saveScribeEvent({
+      label,
+      messageId: studentMessage._id,
+      studentId: session.student_id,
+      assignmentId: assignment._id,
+      concepts,
+    });
+
+    let result;
+    try {
+      result = await runTurn(
+        {
+          level: session.current_level as HintLevel,
+          hintCeiling: assignment.hint_ceiling as HintLevel,
+          prompt: assignment.prompt,
+          notes: assignment.notes ?? "",
+          turns: history.map((m) => ({ role: m.role, text: m.content })),
+          answerKey,
+          canary,
+        },
+        text,
+        label,
+        { run: deps.tutor, generate: deps.judge },
+      );
+    } catch (error) {
+      // The tutor's model call failed. The student sees a fixed error, never a
+      // partial draft, and the session level does not move.
+      console.error("runTurn failed:", (error as Error).name);
+      res.status(503).json({ error: "tutor_unavailable" });
+      return;
+    }
+
+    await new Message({
+      session_id: session._id,
+      role: "tutor",
+      content: result.reply,
+      hint_level: result.level,
+      guard_verdict: result.verdict,
+      retries: result.retries,
+    }).save();
+    await Session.updateOne({ _id: session._id }, { current_level: result.level });
+
+    res.json({
+      reply: result.reply,
+      level: result.level,
+      verdict: studentVerdict(result.verdict, answerKey, canary),
+      retries: result.retries,
     });
   });
 
