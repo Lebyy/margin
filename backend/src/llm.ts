@@ -19,6 +19,15 @@ export const STRONG_MODEL = "gemini-4-carbon";
  */
 export const FAST_MODEL = "gemini-3.8-flash";
 
+/**
+ * Where those two models live. Carbon returns 404 from us-central1. That 404 is the region, not a missing model.
+ * Dropping this sends the next call to a regional host the project cannot use.
+ */
+export const MODEL_LOCATION = "global";
+
+/** The Cloud project that holds the express key. The SDK puts this in the Agent Platform path. */
+const CLOUD_PROJECT = "project-9f1acacd-fa08-4a3e-9e0";
+
 /** Who is asking. There is no tutor role. Adding one would route the tutor through this file. */
 export type ModelRole = "guard" | "scribe" | "vision";
 
@@ -124,7 +133,8 @@ function unwrapFence(text: string): string {
 
 /**
  * The production generator. Tests never call this.
- * The key is LLM_API_KEY. The SDK's own default name is a different variable, and reading that one would mean a second key.
+ * The key is LLM_API_KEY, sent to the Agent Platform. The AI Studio host rejects this key with 402, because the trial credit does not cover that host.
+ * Constructing the client without vertexai, or with a regional location, spends a call on an endpoint that cannot answer.
  */
 async function generateWithGemini<T>(
   request: { model: string; system: string; user: string },
@@ -136,7 +146,12 @@ async function generateWithGemini<T>(
     throw new Error("LLM_API_KEY is empty");
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({
+    vertexai: true,
+    apiKey,
+    project: CLOUD_PROJECT,
+    location: MODEL_LOCATION,
+  });
   const response = await ai.models.generateContent({
     model: request.model,
     contents: image
