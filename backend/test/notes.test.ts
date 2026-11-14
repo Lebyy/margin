@@ -65,3 +65,48 @@ describe("searchNotes", () => {
     assert.equal(searchNotes("Week 2\nWorking with a list of numbers.", "last"), NO_MATCH);
   });
 });
+
+// D-R5: a whole lecture pasted at once. Twelve lectures with slide headings
+// and filler sentences, about 60 KB. The base case is explained on one slide
+// deep inside Lecture 7.
+const FILLER = "This slide repeats the main point with another example from the reading and a short exercise to try at home. ";
+const LONG_LECTURES = Array.from({ length: 12 }, (_, l) => {
+  const lecture = l + 1;
+  const slides = Array.from({ length: 10 }, (_, k) => {
+    const slide = k + 10;
+    const body =
+      lecture === 7 && slide === 13
+        ? "A recursive function needs a base case: an input small enough to answer without recursing, so the calls stop."
+        : `Topic ${lecture}.${slide} covers loops, strings, and dictionaries in Python.`;
+    return `Slide ${slide}\n${body} ${FILLER.repeat(4)}`;
+  });
+  return [`Lecture ${lecture}: ${lecture === 7 ? "Recursion" : "Python basics"}`, ...slides].join("\n");
+}).join("\n\n");
+
+describe("searchNotes on a pasted lecture (D-R5)", () => {
+  it("finds the base case slide deep in a long paste and names its lecture", () => {
+    assert.ok(LONG_LECTURES.length > 50_000);
+    const first = searchNotes(LONG_LECTURES, "base case").split("\n\n")[0];
+    assert.ok(first.startsWith("Lecture 7, Slide 13"), first.slice(0, 80));
+    assert.match(first, /needs a base case/);
+  });
+
+  it("keeps the matching sentence when the paste is one long paragraph", () => {
+    // Case: notes pasted with no line breaks at all. The base case sentence is
+    // past character 6000, far beyond what one clipped section would show,
+    // and the passage that holds it still names the lecture.
+    const blob = `Lecture 7, slides 12-16: recursion. ${FILLER.repeat(60)}Every recursive function needs a base case that returns without recursing. ${FILLER.repeat(20)}`;
+    assert.ok(blob.indexOf("needs a base case") > 6000);
+    const first = searchNotes(blob, "base case").split("\n\n")[0];
+    assert.ok(first.startsWith("Lecture 7, slides 12-16, "), first.slice(0, 80));
+    assert.match(first, /needs a base case that returns without recursing/);
+  });
+
+  it("does not put a long first line in front of every passage", () => {
+    // Case: the saved sum_list notes start with a 300-character line. Only its
+    // name, "Lecture 7, slides 12-16", labels later passages.
+    for (const passage of noteSections(`${PARAGRAPH} ${PARAGRAPH} ${PARAGRAPH}`).slice(1)) {
+      assert.ok(passage.length <= 650, `${passage.length} characters`);
+    }
+  });
+});

@@ -5,6 +5,8 @@ import { after, before, describe, test } from "node:test";
 import { createApp } from "../src/app.ts";
 import { connectDb, disconnectDb } from "../src/db.ts";
 import { Assignment, CANARY } from "../src/models.ts";
+import { searchNotes } from "../src/notes.ts";
+import { MAX_NOTES_CHARS } from "../src/routes.ts";
 import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // D-B3 done-when: GET /api/assignments/:id is read as raw text, and the test
@@ -153,6 +155,34 @@ describe("assignment routes (D-B3)", { skip }, () => {
     assert.equal(missing.status, 404);
     const malformed = await call("POST", "/api/prof/assignments", { ...SUM_LIST, id: "nope" });
     assert.equal(malformed.status, 400);
+    assert.equal(await Assignment.countDocuments(), count);
+  });
+
+  test("a long notes paste is saved whole and searched for the citation (D-R5)", async () => {
+    // Case: a lecture pasted at once, about 120 KB, with the base case slide
+    // near the end. It saves, comes back unchanged on both reads, and the
+    // level-2 search finds "Lecture 7" in the stored copy. One character over
+    // the cap is a 400 naming the notes field, and nothing is stored.
+    const filler = "This slide repeats the main point with another example from the reading. ";
+    const lectures = Array.from({ length: 12 }, (_, l) =>
+      [`Lecture ${l + 1}`, ...Array.from({ length: 12 }, (_, k) => `Slide ${k + 1}\n${filler.repeat(10)}`)].join("\n"),
+    );
+    lectures[6] += "\nSlide 13\nEvery recursive function needs a base case that returns without recursing.";
+    const notes = lectures.join("\n\n");
+    assert.ok(notes.length > 100_000);
+
+    const created = await call("POST", "/api/prof/assignments", { ...SUM_LIST, notes });
+    assert.equal(created.status, 201);
+    const id = JSON.parse(created.text)._id;
+    assert.equal(JSON.parse((await call("GET", `/api/assignments/${id}`)).text).notes, notes);
+    assert.equal(JSON.parse((await call("GET", `/api/prof/assignments/${id}`)).text).notes, notes);
+    const stored = await Assignment.findById(id).lean();
+    assert.match(searchNotes(stored?.notes ?? "", "base case").split("\n\n")[0], /^Lecture 7, Slide 13/);
+
+    const count = await Assignment.countDocuments();
+    const tooLong = await call("POST", "/api/prof/assignments", { ...SUM_LIST, notes: "x".repeat(MAX_NOTES_CHARS + 1) });
+    assert.equal(tooLong.status, 400);
+    assert.ok(JSON.parse(tooLong.text).issues.some((i: { path: string }) => i.path === "notes"));
     assert.equal(await Assignment.countDocuments(), count);
   });
 });

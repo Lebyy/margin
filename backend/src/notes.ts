@@ -10,11 +10,12 @@
 // professor pasted, so there is no vector database, no embeddings service,
 // and no model call (board: D-R3 "Do not").
 //
-// What gets indexed is a section, not a line. Professors write a heading
+// What gets indexed is a passage, not a line. Professors write a heading
 // such as "Lecture 7, slides 12-16" and put the explanation under it; a
 // line-by-line match returns the explanation without the slide numbers, and
-// the tutor then has nothing to cite. A section is returned whole, so the
-// heading travels with the text that matched.
+// the tutor then has nothing to cite. A short section is one passage, heading
+// included. A long paste (D-R5) is cut into passages that each carry their
+// lecture and heading name, so the citation survives however deep the match is.
 
 import MiniSearch from "minisearch";
 
@@ -34,7 +35,40 @@ const MAX_SECTION_CHARS = 800;
  */
 const HEADING = /^\s*(#+\s|(lecture|lec|slides?|week|chapter|section|unit|topic)\b)/i;
 
-/** The notes as sections: split at blank lines and at heading lines, each heading kept with the lines under it. */
+/**
+ * A heading that names a whole lecture (or week, chapter, unit). Slide and
+ * section headings under it are lower-level: a pasted lecture usually reads
+ * "Lecture 7" once and then "Slide 12", "Slide 13". Each slide is its own
+ * section, and without the lecture's name the tutor could only cite "Slide 13".
+ */
+const TOP_HEADING = /^\s*(#\s|(lecture|lec|week|chapter|unit)\b)/i;
+
+/** A passage of a long section, kept under the clip so the matching sentence is not cut off. */
+const PASSAGE_CHARS = 600;
+
+/**
+ * The short name in a heading line: "Lecture 7, slides 12-16" from
+ * "Lecture 7, slides 12-16: recursion. Every recursive function ...". Only
+ * this goes in front of later passages, not the whole first line.
+ */
+function headingName(line: string): string {
+  const cut = line.search(/[:.]\s/);
+  return (cut === -1 ? line : line.slice(0, cut)).slice(0, 80).trim();
+}
+
+/**
+ * The notes as searchable passages.
+ *
+ * 1. Sections: split at blank lines and at heading lines, each heading kept
+ *    with the lines under it.
+ * 2. A section under a lecture heading that does not start with it (a slide,
+ *    a sub-section, a paragraph after a blank line) gets the lecture's short
+ *    name in front, so a match anywhere in Lecture 7 can be cited as Lecture 7.
+ * 3. A section longer than PASSAGE_CHARS is split at sentence ends into
+ *    passages, each with the section's heading name in front. A long paste
+ *    often has no blank lines at all, and clipping it from the start would
+ *    drop the sentence that matched.
+ */
 export function noteSections(notes: string): string[] {
   const sections: string[][] = [];
   let current: string[] = [];
@@ -47,7 +81,38 @@ export function noteSections(notes: string): string[] {
     if (line.length > 0) current.push(line);
   }
   if (current.length > 0) sections.push(current);
-  return sections.map((lines) => lines.join("\n"));
+
+  const passages: string[] = [];
+  let lecture: string | null = null;
+  for (const lines of sections) {
+    if (TOP_HEADING.test(lines[0])) lecture = headingName(lines[0]);
+    const own = HEADING.test(lines[0]) ? headingName(lines[0]) : null;
+    const context = [lecture && !lines[0].startsWith(lecture) ? lecture : null, own].filter(Boolean).join(", ");
+    const text = lines.join("\n");
+    const prefix = lecture && !lines[0].startsWith(lecture) ? `${lecture}, ` : "";
+    if (text.length + prefix.length <= PASSAGE_CHARS) {
+      passages.push(prefix + text);
+      continue;
+    }
+    // Sentences, grouped up to PASSAGE_CHARS. The first passage starts with
+    // the section's own first line; later ones are labelled with its heading.
+    const sentences = text.match(/[^.!?\n]+(?:[.!?]+|\n|$)/g) ?? [text];
+    let chunk = "";
+    let first = true;
+    const flush = () => {
+      if (chunk.trim().length === 0) return;
+      const label = first ? prefix : context ? `${context}, ` : "";
+      passages.push(label + chunk.trim());
+      chunk = "";
+      first = false;
+    };
+    for (const sentence of sentences) {
+      if (chunk.length + sentence.length > PASSAGE_CHARS) flush();
+      chunk += sentence;
+    }
+    flush();
+  }
+  return passages;
 }
 
 /**

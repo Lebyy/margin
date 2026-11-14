@@ -46,6 +46,9 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+/** The longest notes paste the setup form may save. Exported so the form and the tests use the same number. */
+export const MAX_NOTES_CHARS = 200_000;
+
 /**
  * What a professor submits from the setup form.
  *
@@ -59,7 +62,11 @@ const assignmentInput = z.object({
   title: z.string().trim().min(1),
   prompt: z.string().trim().min(1),
   answer_key: z.string().trim().min(1),
-  notes: z.string().default(""),
+  // A whole lecture pasted at once (D-R5). 200,000 characters is about 50
+  // pages of text: room for a term's notes, and a clear 400 instead of a
+  // silent cut when something far larger (a binary file, a whole textbook)
+  // lands in the field.
+  notes: z.string().max(MAX_NOTES_CHARS, `notes must be at most ${MAX_NOTES_CHARS} characters`).default(""),
   // The scribe may only label turns with these, and the heatmap gets one row
   // per concept. Duplicates would give the professor two rows for one idea.
   concepts: z

@@ -5,7 +5,7 @@ import { ArrowRight, Check, FilePlus2, Lock } from "lucide-react";
 import NextLink from "next/link";
 import { useEffect, useState } from "react";
 import { Paper } from "@/components/paper";
-import { api, ApiError, LEVEL_HELP, LEVEL_NAME, type HintLevel } from "@/lib/api";
+import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, type HintLevel } from "@/lib/api";
 import { browser } from "@/lib/browser";
 
 /** The form's fields as the page holds them. Concepts are one per line while typing and become a list when sent. */
@@ -222,12 +222,21 @@ export default function SetupPage() {
               </p>
             </div>
 
-            <TextField value={form.notes} onChange={set("notes")} fullWidth name="notes">
+            {/* A whole lecture can be pasted here (D-R5). The server caps notes at
+                MAX_NOTES_CHARS (routes.ts); maxLength stops the paste at the same
+                number so the save is not refused after the fact. The box grows to a
+                tall, scrollable field so a long paste can still be read and edited. */}
+            <TextField value={form.notes} onChange={set("notes")} fullWidth name="notes" maxLength={MAX_NOTES_CHARS}>
               <Label>Lecture notes</Label>
-              <TextArea rows={5} placeholder={"Lecture 7, slides 12-16: base cases and recursive calls.\nOne line per idea works best."} />
+              <TextArea
+                rows={10}
+                className="max-h-[32rem] min-h-40 resize-y"
+                placeholder={"Lecture 7, slides 12-16: recursion\nEvery recursive function needs a base case...\n\nPaste a whole lecture: headings like \"Lecture 7\" or \"Slide 13\" are kept with the text under them."}
+              />
               <Description>
-                Paste them in. A level-2 hint points students to a line here, and their revision cards are cut from these
-                lines.
+                Paste a whole lecture or just the key points. A level-2 hint cites the lecture and slide where a student&rsquo;s
+                concept is covered, and revision cards are written from the same text. {form.notes.length.toLocaleString()} of{" "}
+                {MAX_NOTES_CHARS.toLocaleString()} characters.
               </Description>
             </TextField>
 

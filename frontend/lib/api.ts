@@ -12,6 +12,9 @@
 /** Where the Express API listens. The dev server is on 3000 and the API on 4000, and the API's CORS allows only that origin. */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
 
+/** The longest notes paste the server saves. Must equal MAX_NOTES_CHARS in backend/src/routes.ts, or the form would allow a paste the save refuses. */
+export const MAX_NOTES_CHARS = 200_000;
+
 export type HintLevel = 1 | 2 | 3;
 
 export type StruggleType = "misconception" | "stuck_starting" | "syntax_or_mechanics" | "careless_error" | "none";
