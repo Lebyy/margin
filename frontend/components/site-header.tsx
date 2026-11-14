@@ -3,13 +3,14 @@
 import { Chip } from "@heroui/react";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
+import { ProfileMenu } from "@/components/profile-menu";
 
 /**
  * The header on every screen: the name, which side you are on, and the sign-in side.
  *
- * The side is read from the path. There is no account behind it. The two
- * hard-coded sign-ins are the words `student` and `prof`, and the chip shows
- * which one this page is. The debug drawer is not reachable from here, because
+ * The side is read from the path. There is no account behind it; the chip
+ * shows which side this page is, and the profile menu at the right picks who
+ * you are on that side. The debug drawer is not reachable from here, because
  * it belongs to the student page and must not appear on the professor's.
  */
 export function SiteHeader() {
@@ -40,6 +41,8 @@ export function SiteHeader() {
             </>
           ) : null}
         </nav>
+        {/* The profile switcher. Student profiles everywhere but the "I teach" side, where only professor profiles are offered. */}
+        <ProfileMenu side={side === "prof" ? "prof" : "student"} />
       </div>
     </header>
   );

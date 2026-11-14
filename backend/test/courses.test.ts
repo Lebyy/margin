@@ -188,6 +188,18 @@ describe("the course portal", { skip }, () => {
     assert.ok(view.due_at);
   });
 
+  test("a named profile is one student, enrolled in its class, however often it is chosen", async () => {
+    // Case: choosing the profile twice returns the same student and one enrollment. An unknown class is a 404 and creates no student.
+    const first = await call("POST", "/api/profiles/students", { display_name: "Grace McKinney", course_name: ELECTRO.course_name });
+    assert.equal(first.status, 200, first.text);
+    const again = await call("POST", "/api/profiles/students", { display_name: "Grace McKinney", course_name: ELECTRO.course_name });
+    assert.equal(JSON.parse(again.text).student_id, JSON.parse(first.text).student_id);
+    const mine = JSON.parse((await call("GET", `/api/students/${JSON.parse(first.text).student_id}/courses`)).text);
+    assert.deepEqual(mine.courses.map((c: { id: string }) => c.id), [courseId]);
+    const missing = await call("POST", "/api/profiles/students", { display_name: "Nobody Yet", course_name: "No Such Class" });
+    assert.equal(missing.status, 404);
+  });
+
   test("an assignment cannot name a lecture that is not in its class", async () => {
     const res = await call("POST", "/api/prof/assignments", { ...ELECTRO, title: "Bad link", lecture_ids: ["6af8ba55c4d65a2cd5c63304"] });
     assert.equal(res.status, 400);

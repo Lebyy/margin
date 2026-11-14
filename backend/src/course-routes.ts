@@ -270,6 +270,36 @@ export function createCourseRouter(): Router {
   });
 
   /**
+   * POST /api/profiles/students: the student behind a named profile in the
+   * header's profile menu, enrolled in that profile's class.
+   *
+   * The profile menu lists a few fixed student names, the way the app once had
+   * the fixed logins `student` and `prof`. Choosing one has to land on the
+   * same student every time, on every browser, so this finds the student by
+   * the exact name (the oldest one, if a classroom happens to share a name)
+   * and creates them only when none exists. The class is named by its exact
+   * name and must already exist: a profile never creates a class. The
+   * enrollment is the same upsert Join uses, so choosing the profile twice is
+   * harmless. No model is called.
+   */
+  router.post("/api/profiles/students", async (req, res) => {
+    const body = z.object({ display_name: z.string().trim().min(1).max(80), course_name: z.string().trim().min(1).max(120) }).safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "invalid_profile" });
+      return;
+    }
+    const course = await Course.findOne({ name: body.data.course_name }).select("_id").lean();
+    if (!course) {
+      res.status(404).json({ error: "course_not_found" });
+      return;
+    }
+    const found = await Student.findOne({ display_name: body.data.display_name }).sort({ created_at: 1, _id: 1 }).select("_id").lean();
+    const studentId = found ? String(found._id) : String((await new Student({ display_name: body.data.display_name }).save())._id);
+    await enroll(studentId, course._id);
+    res.json({ student_id: studentId, course_id: String(course._id), display_name: body.data.display_name });
+  });
+
+  /**
    * POST /api/courses/:id/join: a student joins a class.
    *
    * The same identity rule as starting a session: a returning student sends

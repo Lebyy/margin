@@ -26,6 +26,10 @@ export default function Home() {
   const [all, setAll] = useState<CourseListItem[] | null>(null);
   const [mine, setMine] = useState<MyCourses | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // Set when a named student profile is chosen in the header. That student's
+  // portal shows their own classes only, the way a real student's would; the
+  // list of other classes to join is for a browser with no profile.
+  const [profile, setProfile] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -37,6 +41,7 @@ export default function Home() {
     ])
       .then(([c, m]) => {
         if (!live) return;
+        setProfile(browser.studentProfile());
         setAll(c.courses);
         setMine(m);
       })
@@ -58,7 +63,7 @@ export default function Home() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-2xl">
           <p className="text-sm font-medium text-margin-red">The AI tutor your professor approves of</p>
-          <h1 className="mt-2 font-serif text-4xl font-semibold tracking-tight sm:text-5xl">My courses</h1>
+          <h1 className="mt-2 font-serif text-4xl font-semibold tracking-tight sm:text-5xl">{profile ? `${profile.split(" ")[0]}'s courses` : "My courses"}</h1>
           <p className="mt-3 text-lg leading-7 text-muted">Open a class and start the assignment. Write your own attempt, then ask. Margin will not give you the answer.</p>
         </div>
         <NextLink href="/prof/courses" className="shrink-0 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">
@@ -95,6 +100,7 @@ export default function Home() {
             </>
           ) : null}
 
+          {profile ? null : (
           <section aria-labelledby="other-courses-heading">
             <h2 id="other-courses-heading" className="mb-1 font-serif text-2xl font-semibold tracking-tight">
               {mine && mine.courses.length > 0 ? "Other classes" : "Classes"}
@@ -112,6 +118,8 @@ export default function Home() {
               </ul>
             )}
           </section>
+          )}
+          {profile && (!mine || mine.courses.length === 0) ? <p className="text-lg text-muted">{profile} is not in a class yet.</p> : null}
         </>
       )}
 

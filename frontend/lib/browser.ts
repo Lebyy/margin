@@ -16,6 +16,8 @@ const KEY = {
   name: "margin.name",
   profName: "margin.prof.name",
   plan: (assignmentId: string) => `margin.plan.${assignmentId}`,
+  studentProfile: "margin.profile.student",
+  profProfile: "margin.profile.prof",
 };
 
 /** localStorage throws in a private window with storage blocked. A page that could not remember an id should still work, so a failure reads as "nothing stored". */
@@ -57,5 +59,32 @@ export const browser = {
   /** Forget this browser's student, for "I am someone else". The records stay in the database, since they are a real person's sessions. */
   forgetStudent: () => {
     write(KEY.student, null);
+  },
+  /** The name of the student or professor profile chosen in the header menu, or null when none has been chosen. */
+  studentProfile: () => read(KEY.studentProfile),
+  profProfile: () => read(KEY.profProfile),
+  /**
+   * Switches this browser to another student. Every per-assignment key is
+   * dropped first: the open session, the code in the editor, and the "say
+   * what it asks" text all belong to the student who typed them, and a
+   * session left behind would put the next student's turns on the previous
+   * student's record. The database keeps everyone's sessions.
+   */
+  chooseStudent: (studentId: string, name: string) => {
+    try {
+      for (const k of Object.keys(window.localStorage)) {
+        if (k.startsWith("margin.session.") || k.startsWith("margin.code.") || k.startsWith("margin.plan.")) window.localStorage.removeItem(k);
+      }
+    } catch {
+      // Storage blocked: nothing was stored to clear.
+    }
+    write(KEY.student, studentId);
+    write(KEY.name, name);
+    write(KEY.studentProfile, name);
+  },
+  /** Chooses a professor profile. The name is also the professor label the class list sorts and filters by. */
+  chooseProf: (name: string) => {
+    write(KEY.profName, name);
+    write(KEY.profProfile, name);
   },
 };

@@ -375,6 +375,9 @@ export const api = {
   },
   updateLecture: (lectureId: string, fields: { title?: string; lecture_number?: number; lecture_date?: string }) => request<Lecture>("PATCH", `/api/prof/lectures/${q(lectureId)}`, fields),
   deleteLecture: (lectureId: string) => request<null>("DELETE", `/api/prof/lectures/${q(lectureId)}`),
+  /** The student behind a named profile, found or created by name and enrolled in that class. */
+  profileStudent: (displayName: string, courseName: string) =>
+    request<{ student_id: string; course_id: string; display_name: string }>("POST", "/api/profiles/students", { display_name: displayName, course_name: courseName }),
   profCourses: () => request<{ courses: ProfCourseCard[] }>("GET", "/api/prof/courses"),
   posts: (courseId: string) => request<{ posts: Post[] }>("GET", `/api/courses/${q(courseId)}/posts`),
   addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),

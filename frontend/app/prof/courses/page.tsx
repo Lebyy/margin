@@ -27,6 +27,8 @@ export default function CoursesPage() {
   const [saving, setSaving] = useState(false);
   /** The name this professor teaches under. A new class is saved with it, and their classes are listed first. It is a label, not a login. */
   const [me, setMe] = useState("");
+  /** The professor profile chosen in the header, or null. */
+  const [profProfile, setProfProfile] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -36,6 +38,7 @@ export default function CoursesPage() {
         if (!live) return;
         setCourses(r.courses);
         setMe(browser.profName());
+        setProfProfile(browser.profProfile());
       })
       .catch(() => live && setCourses([]));
     return () => {
@@ -90,6 +93,8 @@ export default function CoursesPage() {
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[...courses]
+            // A chosen professor profile sees only the classes under their name, as a professor's own portal would.
+            .filter((c) => !profProfile || c.professor === profProfile)
             .sort((a, b) => Number(b.professor === me && me !== "") - Number(a.professor === me && me !== ""))
             .map((c, i) => (
               <CourseCardLink key={c.id} course={{ ...c, professor: c.professor === me && me !== "" ? "You teach this" : c.professor }} href={`/prof/courses/${c.id}`} index={i}>
