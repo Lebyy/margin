@@ -30,6 +30,19 @@
   --margin-red-soft: oklch(0.56 0.21 25 / 0.1);
   --margin-green: oklch(0.55 0.14 150);
   --margin-green-soft: oklch(0.55 0.14 150 / 0.12);
+
+  /*
+   * Course accents: the band on a course card and the rule under a course
+   * header. A course stores one of these names, never a colour, so every
+   * class reads in both themes. Each is dark enough in light mode, and light
+   * enough in dark mode, to stand as a 3:1 graphic on the card it sits on.
+   */
+  --course-red: oklch(0.56 0.19 25);
+  --course-blue: oklch(0.53 0.17 255);
+  --course-green: oklch(0.52 0.13 150);
+  --course-amber: oklch(0.62 0.15 70);
+  --course-teal: oklch(0.55 0.1 195);
+  --course-slate: oklch(0.5 0.03 265);
   --paper: oklch(0.992 0.006 85);
   --paper-line: oklch(0.6 0.03 250 / 0.14);
   --paper-shadow: 0 1px 2px oklch(0.2 0.02 60 / 0.06), 0 12px 32px -12px oklch(0.2 0.02 60 / 0.18);
@@ -64,6 +77,13 @@
   --margin-red-soft: oklch(0.7 0.19 25 / 0.14);
   --margin-green: oklch(0.74 0.15 150);
   --margin-green-soft: oklch(0.74 0.15 150 / 0.14);
+
+  --course-red: oklch(0.7 0.17 25);
+  --course-blue: oklch(0.72 0.13 255);
+  --course-green: oklch(0.74 0.13 150);
+  --course-amber: oklch(0.8 0.13 75);
+  --course-teal: oklch(0.76 0.1 195);
+  --course-slate: oklch(0.72 0.03 265);
   --paper: oklch(0.225 0.008 260);
   --paper-line: oklch(0.85 0.02 250 / 0.07);
   --paper-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 16px 40px -16px oklch(0 0 0 / 0.6);
@@ -93,6 +113,12 @@
   --color-margin-red-soft: var(--margin-red-soft);
   --color-margin-green: var(--margin-green);
   --color-margin-green-soft: var(--margin-green-soft);
+  --color-course-red: var(--course-red);
+  --color-course-blue: var(--course-blue);
+  --color-course-green: var(--course-green);
+  --color-course-amber: var(--course-amber);
+  --color-course-teal: var(--course-teal);
+  --color-course-slate: var(--course-slate);
   --color-paper: var(--paper);
   --color-paper-line: var(--paper-line);
   --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
