@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch --env-file-if-exists=../.env src/index.ts",
-    "test": "node --env-file-if-exists=../.env --test test/*.ts"
+    "test": "node --env-file-if-exists=../.env --test test/*.ts",
+    "redteam": "node --env-file-if-exists=../.env --test test/redteam.ts"
   },
   "dependencies": {
     "@google/genai": "^3.3.0",

@@ -40,6 +40,16 @@ npm run dev:api
 - Web: http://localhost:3000
 - API health: http://localhost:4000/health
 
+## Guard
+
+Fifteen attacks and five benign controls, printed pass or fail by class:
+
+```bash
+npm run redteam
+```
+
+The run does not call the model. An attack passes when a draft that contains the solution is held and the reply is the fallback question. A benign control passes when the hint comes back as itself.
+
 ## Team board
 
 Lebyy and David (GitHub WobbbleFoot) split the work on a two-column board. The shareable page is https://margin-board-ochre.vercel.app . The same brief is [docs/BOARD.md](docs/BOARD.md). Read it before writing code. Do the backend row first.

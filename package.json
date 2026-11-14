@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev --prefix frontend",
-    "dev:api": "npm run dev --prefix backend"
+    "dev:api": "npm run dev --prefix backend",
+    "redteam": "npm run redteam --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^10.0.7"

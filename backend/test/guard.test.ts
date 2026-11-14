@@ -74,6 +74,16 @@ describe("checkDeterministic", () => {
     assert.equal(stretch.reason.includes("sum_list"), false);
   });
 
+  // Case: the solution with a space between every letter. Each letter would otherwise become its own name, and the eight-word window would not see the line.
+  it("leaks a solution typed with a space between each letter", () => {
+    const spaced = KEY.replace(/\s+/g, "").split("").join(" ");
+    const verdict = checkDeterministic(spaced, KEY, CANARY);
+    assert.equal(verdict.leaks, true);
+    assert.equal(verdict.layer, "deterministic");
+    assert.equal(verdict.reason.includes("sum_list"), false);
+    assert.equal(verdict.reason.includes(spaced), false);
+  });
+
   // Case: the base case by itself. It is two words of the key, and a hint is allowed to say it. An eight-word window that was any shorter would hold this sentence.
   it("does not leak the base case on its own", () => {
     const base = checkDeterministic("return 0", KEY, CANARY);

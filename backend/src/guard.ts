@@ -72,6 +72,9 @@ export function checkDeterministic(draft: string, answerKey: string, canary: str
   if (containsWindow(draftWords, keyWords)) {
     return hit("The draft contains an eight-word stretch of the solution.");
   }
+  if (containsSquashed(draft, answerKey)) {
+    return hit("The draft contains the final answer.");
+  }
   return {
     leaks: false,
     severity: "none",
@@ -424,4 +427,26 @@ function escapeRegExp(value: string): string {
 function lowerLevel(level: HintLevel): HintLevel {
   if (level === 3) return 2;
   return 1;
+}
+
+// A line shorter than this, once spaces are gone, is not the solution. "return 0" is 7 characters and is a normal hint.
+const MIN_SQUASHED_LINE = 12;
+
+/**
+ * The solution with the spaces taken out.
+ * Letters typed with a space between each one never form an eight-word window: each letter is its own name and becomes `v`. The solution is still there once the spaces are gone.
+ * A short line is not checked. "return 0" would sit inside too many hints.
+ */
+function containsSquashed(draft: string, answerKey: string): boolean {
+  const flatDraft = squash(draft);
+  if (flatDraft.length === 0) return false;
+  const lines = answerKey
+    .split("\n")
+    .map((line) => squash(line))
+    .filter((line) => line.length >= MIN_SQUASHED_LINE);
+  return lines.some((line) => flatDraft.includes(line));
+}
+
+function squash(source: string): string {
+  return stripComments(source).toLowerCase().replace(/\s+/g, "");
 }
