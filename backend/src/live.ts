@@ -16,8 +16,8 @@ import { Assignment, CANARY, Course, CourseMaterial, Message, Session } from "./
 import { NO_MATCH, searchNotes } from "./notes.ts";
 import type { AssignmentKind, HintLevel } from "./types.ts";
 
-/** How long to wait for a transcript that arrives after the model says the turn is over. Past this the audio is dropped. */
-const TRANSCRIPT_WAIT_MS = 1_500;
+/** How long to wait for a transcript that arrives after the model says the turn is over. Past this the audio is dropped. Short, because the student is already waiting, and a transcript that is coming usually arrives inside this window. */
+const TRANSCRIPT_WAIT_MS = 600;
 
 /** About twenty seconds of 24 kHz 16-bit audio. A longer turn is dropped rather than held in memory. */
 const MAX_AUDIO_BYTES = 1_000_000;
@@ -62,7 +62,7 @@ export function liveInstructions(input: {
 
   const system = [
     "You are Margin, a tutor the professor has approved. You are speaking with a student, out loud.",
-    "Say one or two short sentences, then stop. End with a question. Do not spell code, and do not read a function aloud.",
+    "Start speaking as soon as you understand them. One short sentence, then one question, then stop. Do not spell code, and do not read a function aloud.",
     input.kind === "topic"
       ? "Teach from the notes first. If the notes do not cover the question, say so and then explain it."
       : "Do not speak the solution, any line of it, a corrected version of the student's work, or a translation of it. You do not have the answer key.",
@@ -142,6 +142,11 @@ export function createLiveBridge(input: {
   let heard = "";
   let phase: "open" | "waiting" | "settled" = "open";
   let searches = 0;
+  // Audio already sent this turn. A later leak has to stop the browser, because those bytes are on their way.
+  let playing = false;
+  let captionSent = false;
+  // The reply was refused. Later audio from the same reply is dropped until the turn ends, so the next reply can play.
+  let blocked = false;
 
   function emitStudent() {
     const text = heard.trim();
@@ -149,28 +154,54 @@ export function createLiveBridge(input: {
     if (text) input.emit({ type: "caption", role: "student", text, speak: false, held: false });
   }
 
-  function settle() {
-    const caption = output.trim();
-    const pcm = Buffer.concat(audio);
+  function clearAudio() {
     audio = [];
     audioBytes = 0;
+  }
+
+  function flushAudio() {
+    if (audioBytes === 0) return;
+    const pcm = Buffer.concat(audio);
+    clearAudio();
+    playing = true;
+    input.emit({ type: "audio", pcm });
+  }
+
+  function hold() {
+    blocked = true;
+    clearAudio();
+    if (playing) input.emit({ type: "stop" });
+    playing = false;
+    if (!captionSent) {
+      captionSent = true;
+      emitStudent();
+      input.emit({ type: "caption", role: "tutor", text: fallbackFor(input.kind), speak: true, held: true });
+    }
     output = "";
     phase = "settled";
-    emitStudent();
-    const decision = judgeSpeech(caption, pcm, input.kind, input.answerKey, input.canary);
-    if (decision.release === "play" && decision.audio.length > 0) {
-      input.emit({ type: "audio", pcm: decision.audio });
-      input.emit({ type: "caption", role: "tutor", text: decision.caption, speak: false, held: false });
-      return;
+  }
+
+  function finishClean() {
+    const caption = output.trim();
+    flushAudio();
+    if (!captionSent) {
+      captionSent = true;
+      emitStudent();
+      if (caption) {
+        input.emit({ type: "caption", role: "tutor", text: caption, speak: !playing, held: false });
+      }
     }
-    // A clean transcript with no audio is read by the browser. A hold is the fallback sentence, also read, and `held` is what gets stored.
-    input.emit({
-      type: "caption",
-      role: "tutor",
-      text: decision.caption,
-      speak: true,
-      held: decision.release === "hold",
-    });
+    output = "";
+    playing = false;
+    captionSent = false;
+    phase = "settled";
+  }
+
+  /** True when the words so far are safe to play. An empty transcript is not a pass: there is nothing to check. */
+  function clean(): boolean {
+    const text = output.trim();
+    if (!text) return false;
+    return judgeSpeech(text, Buffer.alloc(0), input.kind, input.answerKey, input.canary).release === "play";
   }
 
   function onTool(event: Extract<LiveEvent, { type: "tool" }>) {
@@ -199,39 +230,59 @@ export function createLiveBridge(input: {
         return false;
       }
       if (event.type === "interrupted") {
-        audio = [];
-        audioBytes = 0;
+        clearAudio();
         output = "";
+        playing = false;
+        captionSent = false;
+        blocked = false;
         phase = "settled";
         input.emit({ type: "stop" });
         emitStudent();
         return false;
       }
       if (event.type === "audio") {
+        if (blocked) return false;
         if (phase === "settled") phase = "open";
         if (event.pcm.length === 0) return false;
         audio.push(event.pcm);
         audioBytes += event.pcm.length;
-        if (audioBytes > MAX_AUDIO_BYTES) {
-          audio = [];
-          audioBytes = 0;
-          output = "";
-          settle();
+        if (audioBytes > MAX_AUDIO_BYTES && !clean()) {
+          hold();
+          return false;
         }
+        // Play what we already have once the words so far are clean, instead of waiting for the model to finish the sentence.
+        if (clean()) flushAudio();
         return false;
       }
       if (event.type === "outputText") {
+        if (blocked) return false;
         if (phase === "settled") phase = "open";
         output = extendTranscript(output, event.text);
-        if (phase === "waiting" && output.trim()) {
-          settle();
+        if (!clean()) {
+          hold();
           return false;
         }
-        return phase === "waiting";
+        flushAudio();
+        if (phase === "waiting") {
+          finishClean();
+          return false;
+        }
+        return false;
+      }
+      if (blocked) {
+        blocked = false;
+        captionSent = false;
+        playing = false;
+        phase = "settled";
+        return false;
       }
       if (phase === "settled" && output.trim().length === 0 && audioBytes === 0) return false;
+      if (clean()) {
+        finishClean();
+        return false;
+      }
       if (output.trim()) {
-        settle();
+        hold();
         return false;
       }
       phase = "waiting";
@@ -239,7 +290,8 @@ export function createLiveBridge(input: {
     },
     expire() {
       if (phase !== "waiting") return;
-      settle();
+      if (clean()) finishClean();
+      else hold();
     },
   };
 }

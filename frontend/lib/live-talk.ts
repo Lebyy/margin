@@ -1,8 +1,9 @@
 // Talk, in the browser.
 //
 // The microphone is turned into 16 kHz PCM and sent to our API. The API holds
-// the key and the answer, and it only sends audio after it has checked the
-// transcript. This file plays that audio. It does not call Gemini itself.
+// the key and the answer. It starts playback once the transcript so far is
+// clean, and a later hit stops it. This file plays that audio. It does not
+// call Gemini itself.
 
 import { API_BASE } from "@/lib/api";
 
@@ -61,7 +62,9 @@ export function startLive(
     const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";
     let settled = false;
-    let playback: AudioContext | null = null;
+    // Created during the click, then resumed, so the first reply is not stuck behind a suspended audio device.
+    const playback = new AudioContext({ sampleRate: 24000 });
+    void playback.resume();
     let playAt = 0;
     const sources: AudioBufferSourceNode[] = [];
     let stopMic: (() => void) | null = null;
@@ -85,7 +88,7 @@ export function startLive(
     }
 
     function play(pcm: ArrayBuffer) {
-      if (!playback) playback = new AudioContext({ sampleRate: 24000 });
+      if (playback.state === "suspended") void playback.resume();
       const view = new Int16Array(pcm);
       const floats = new Float32Array(view.length);
       for (let i = 0; i < view.length; i++) floats[i] = view[i] / 32768;
@@ -94,7 +97,7 @@ export function startLive(
       const source = playback.createBufferSource();
       source.buffer = buffer;
       source.connect(playback.destination);
-      const start = Math.max(playback.currentTime + 0.05, playAt);
+      const start = Math.max(playback.currentTime + 0.02, playAt);
       source.start(start);
       playAt = start + buffer.duration;
       sources.push(source);
@@ -110,7 +113,7 @@ export function startLive(
       } else if (socket.readyState === WebSocket.CONNECTING) {
         socket.close();
       }
-      void playback?.close();
+      void playback.close();
       handlers.onEnd();
     }
 
@@ -165,6 +168,7 @@ export function startLive(
 async function startMic(socket: WebSocket): Promise<() => void> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const context = new AudioContext();
+  void context.resume();
   const blob = new Blob([WORKLET], { type: "application/javascript" });
   const workletUrl = URL.createObjectURL(blob);
   await context.audioWorklet.addModule(workletUrl);

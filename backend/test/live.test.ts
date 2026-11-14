@@ -89,16 +89,46 @@ describe("live talk", () => {
     assert.equal(tutorText(messages), "What happens when the list is empty?");
   });
 
-  // Case: the student starts talking over the model. Playback stops, and the unfinished audio is not released.
+  // Case: the student starts talking over the model before any transcript. The audio was never cleared, so it is not sent.
   it("drops the turn when the model is interrupted", () => {
     const { messages, onEvent } = bridge();
     onEvent({ type: "audio", pcm: Buffer.from([1, 2]) });
-    onEvent({ type: "outputText", text: "What happens when the list is empty?" });
     onEvent({ type: "interrupted" });
     onEvent({ type: "turn" });
     if (messages.some((message) => message.type === "audio")) throw new Error("interrupted audio was sent");
     assert.equal(messages.some((message) => message.type === "stop"), true);
     assert.equal(tutorText(messages), "");
+  });
+
+  // Case: the transcript is clean before the model says the turn is over. The audio goes out then, so the student is not waiting on the rest of the sentence.
+  it("plays as soon as the transcript is clean", () => {
+    const { messages, onEvent } = bridge();
+    const first = Buffer.from([1, 2]);
+    const rest = Buffer.from([3, 4]);
+    onEvent({ type: "audio", pcm: first });
+    assert.equal(messages.some((message) => message.type === "audio"), false);
+    onEvent({ type: "outputText", text: "What happens when the list is empty?" });
+    const played = messages.find((message) => message.type === "audio");
+    assert.equal(played?.type === "audio" && played.pcm.equals(first), true);
+    onEvent({ type: "audio", pcm: rest });
+    const chunks = messages.filter((message) => message.type === "audio");
+    assert.equal(chunks.length, 2);
+    onEvent({ type: "turn" });
+    assert.equal(tutorText(messages), "What happens when the list is empty?");
+  });
+
+  // Case: the reply starts as a question and then becomes the solution. Playback stops, and the rest of the audio is not sent.
+  it("stops playback when a later transcript hits", () => {
+    const { messages, onEvent } = bridge();
+    onEvent({ type: "audio", pcm: Buffer.from([1, 2]) });
+    onEvent({ type: "outputText", text: "What happens when the list is empty?" });
+    onEvent({ type: "outputText", text: KEY });
+    onEvent({ type: "audio", pcm: Buffer.from([9, 9, 9, 9]) });
+    const chunks = messages.filter((message) => message.type === "audio");
+    assert.equal(chunks.length, 1);
+    assert.equal(chunks[0]?.type === "audio" && chunks[0].pcm.equals(Buffer.from([1, 2])), true);
+    assert.equal(messages.some((message) => message.type === "stop"), true);
+    assert.equal(tutorText(messages), FALLBACK_REPLY);
   });
 
   // Case: level 1 does not get the notes in the prompt, and it refuses a search. Level 2 may search, and a result that is the solution is replaced.

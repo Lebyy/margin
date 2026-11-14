@@ -3,7 +3,7 @@
 // The tutor does not. tutor.ts calls createDeepAgent. Importing the SDK from that file would make two model doors, and the identity strip would be optional on one of them.
 // Talk calls openLive. The live session stays in this file so the key, the project, and the host are not copied into a second client.
 
-import { GoogleGenAI, Modality, ThinkingLevel, Type, type LiveServerMessage } from "@google/genai";
+import { EndSensitivity, GoogleGenAI, Modality, StartSensitivity, ThinkingLevel, Type, type LiveServerMessage } from "@google/genai";
 import { z } from "zod";
 
 /**
@@ -358,6 +358,15 @@ export async function openLive(input: {
       systemInstruction: stripIdentity(input.system),
       inputAudioTranscription: {},
       outputAudioTranscription: {},
+      // Agent Platform's default is to wait a long time before it decides the student has stopped. High sensitivity and a half-second of silence start the reply while the pause is still short. A shorter silence cuts them off mid-thought.
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+          endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+          prefixPaddingMs: 200,
+          silenceDurationMs: 500,
+        },
+      },
       ...(input.search
         ? {
             tools: [
