@@ -114,6 +114,8 @@ Do not. Do not log the raw key. If a log needs an identifier, hash it.
 
 ### D-B1 · Mongoose models
 
+Done on main, `2de8e3f` and `0859fc4`. `backend/src/db.ts`, `backend/src/models.ts`, and `backend/test/models.test.ts`.
+
 Connect with Mongoose using MONGODB_URI from the environment. Add an empty MONGODB_URI= line to .env.example. Define models for assignments, students, sessions, messages, scribe_events, and thursday_cards with the fields in .cursor/rules/project.mdc. answer_key is a field on the assignment. A second boot keeps the documents from the first boot.
 
 Done when. Starting the API twice keeps those documents, and a student query cannot select answer_key.
