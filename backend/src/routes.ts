@@ -20,7 +20,7 @@ import { roster, transcript } from "./roster.ts";
 import { classSummary, generateThursdayCard } from "./coach.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
 import { runTurn } from "./turn.ts";
-import { IMAGE_TYPES, findStep } from "./vision.ts";
+import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { GuardVerdict, HintLevel } from "./types.ts";
 
@@ -218,9 +218,12 @@ function rejectInvalid(res: Response, error: z.ZodError): void {
 /**
  * Snap-your-work: marks one step on the student's photo, or answers 501.
  *
- * On a 200 the body is exactly `{ step, box }`. The step went through the leak
- * check in vision.ts, and the key and canary are read here only to feed that
- * check. Any failure is the fixed 501 `vision_unavailable` with no model text,
+ * On a 200 the body is `{ step, box, question, level }`. The step went through
+ * the leak check in vision.ts, and the question went through the guard (the
+ * key-line check, the deterministic layer, and the judge); a held question is
+ * the fallback sentence. The key and canary are read here only to feed those
+ * checks. `level` is the session's level, unchanged, so the page's ladder
+ * does not move on a photo. Any failure is the fixed 501 `vision_unavailable` with no model text,
  * and nothing is stored, so a photo the model could not read leaves no trace
  * on the dashboard.
  *
@@ -236,6 +239,8 @@ async function answerPhoto(
   session: { _id: mongoose.Types.ObjectId; student_id: mongoose.Types.ObjectId; assignment_id: mongoose.Types.ObjectId },
   image: { mimeType: string; base64: string },
   vision: TextGenerator | undefined,
+  judge: TextGenerator | undefined,
+  level: number,
 ): Promise<void> {
   const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean();
   if (!assignment) {
@@ -278,7 +283,20 @@ async function answerPhoto(
     concepts,
   });
 
-  res.json({ step: marked.step, box: marked.box });
+  const asked = await guardQuestion(marked.question, assignment.answer_key, assignment.canary ?? CANARY, judge);
+  // Stored like a tutor reply, at the level the session is already on, so the
+  // professor's transcript and the student's log pair the photo with the
+  // question that answered it.
+  await new Message({
+    session_id: session._id,
+    role: "tutor",
+    content: asked.question,
+    hint_level: level,
+    guard_verdict: asked.verdict,
+    retries: 0,
+  }).save();
+
+  res.json({ step: marked.step, box: marked.box, question: asked.question, level });
 }
 
 export function createRouter(deps: RouteDeps = {}): Router {
@@ -421,7 +439,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
     // does not run the scribe, the tutor, or the policy, so it never moves the
     // hint level.
     if (parsed.data.image !== undefined) {
-      await answerPhoto(res, session, parsed.data.image, deps.vision);
+      await answerPhoto(res, session, parsed.data.image, deps.vision, deps.judge, session.current_level);
       return;
     }
     const attempt = parsed.data.attempt ?? "";

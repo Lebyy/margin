@@ -54,6 +54,16 @@ export type TurnReply = {
   label: { concept: string; attempt_made: boolean; struggle_type: StruggleType; answer_request: boolean };
 };
 
+/** Where the mistake is on the photo, in 0-to-1 units from the top left of the image that was sent. */
+export type PhotoBox = { x: number; y: number; w: number; h: number };
+
+/**
+ * The reply to a photo of the student's work (snap-your-work). `question`
+ * already passed the server's guard. `level` is the session's level, which a
+ * photo does not change. Any failure is a 501 `vision_unavailable` instead.
+ */
+export type PhotoReply = { step: string; box: PhotoBox; question: string; level: HintLevel };
+
 export type SessionStart = { session_id: string; student_id: string; assignment_id: string; level: HintLevel };
 
 export type SessionMessages = {
@@ -213,6 +223,9 @@ export const api = {
   /** `attempt` is sent only when the student wrote one. There is no flag that claims an attempt. The server's scribe reads the words. */
   sendTurn: (sessionId: string, text: string, attempt?: string) =>
     request<TurnReply>("POST", `/api/sessions/${q(sessionId)}/messages`, attempt ? { text, attempt } : { text }),
+  /** The photo as base64 without a data: prefix, in the type it was encoded as. */
+  sendPhoto: (sessionId: string, image: { mimeType: string; base64: string }) =>
+    request<PhotoReply>("POST", `/api/sessions/${q(sessionId)}/messages`, { image }),
   progress: (studentId: string) => request<StudentProgress>("GET", `/api/students/${q(studentId)}/progress`),
   classSummary: (assignmentId: string) => request<ClassSummary>("GET", `/api/prof/class-summary?assignment_id=${q(assignmentId)}`),
   roster: (assignmentId: string) => request<Roster>("GET", `/api/prof/students?assignment_id=${q(assignmentId)}`),

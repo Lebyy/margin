@@ -1,7 +1,7 @@
 "use client";
 
 import { Alert, Button, Card, Chip, Description, Input, Kbd, Label, Spinner, TextArea, TextField, Tooltip } from "@heroui/react";
-import { Bug, CornerDownLeft, Minimize2, ShieldCheck, Sparkles } from "lucide-react";
+import { Bug, Camera, CornerDownLeft, Minimize2, ShieldCheck, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -10,8 +10,10 @@ import { MarginMark, Paper } from "@/components/paper";
 import { AttemptCode } from "@/components/student/attempt-code";
 import { DebugDrawer, type DebugTurn } from "@/components/student/debug-drawer";
 import { HintLadder } from "@/components/student/hint-ladder";
+import { PhotoMark } from "@/components/student/photo-mark";
 import { SidePanels } from "@/components/student/side-panels";
-import { api, ApiError, type Assignment, type HintLevel, type StudentProgress, type TurnReply } from "@/lib/api";
+import { api, ApiError, type Assignment, type HintLevel, type PhotoBox, type StudentProgress, type TurnReply } from "@/lib/api";
+import { PHOTO_ACCEPT, preparePhoto } from "@/lib/photo";
 import { splitTurn } from "@/lib/attempt";
 import { browser } from "@/lib/browser";
 
@@ -35,6 +37,13 @@ type ChatTurn = {
   content: string;
   /** The hint level of a tutor turn. */
   level?: number | null;
+  /**
+   * A photo the vision route marked, with the box and step it returned. Only
+   * set after a 200, so a turn with a photo always has a real ellipse. After a
+   * reload the photo is gone (the server does not keep it) and the stored text
+   * of the turn, which names the marked step, is shown instead.
+   */
+  photo?: { src: string; box: PhotoBox; step: string };
 };
 
 /**
@@ -70,6 +79,7 @@ export default function StudentAssignmentPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const endRef = useRef<HTMLDivElement>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
 
   /** The student's own log, re-read after each turn so the panel matches the progress route. */
   const refreshProgress = useCallback((id: string) => {
@@ -210,6 +220,42 @@ export default function StudentAssignmentPage() {
     }
   }
 
+  /**
+   * Sends a photo of the student's work (snap-your-work, D-R1 and D-R2).
+   *
+   * Nothing is added to the chat until the server answers 200. Then the photo
+   * appears with the red ellipse where the server's box says, and the guarded
+   * question appears as the tutor's turn. A 501 `vision_unavailable`, or a
+   * file the browser cannot decode, leaves the page exactly as it was: no
+   * ellipse, no turn, and no banner, because the typed path is the product and
+   * the photo is an extra that either works or stays out of the way. Only an
+   * unreachable API is reported, since that also breaks the typed path.
+   */
+  async function sendPhoto(file: File) {
+    if (!sessionId || sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const photo = await preparePhoto(file);
+      const result = await api.sendPhoto(sessionId, { mimeType: photo.mimeType, base64: photo.base64 });
+      const stamp = `${Date.now()}`;
+      setTurns((prev) => [
+        ...prev,
+        { id: `p-${stamp}`, role: "student", content: "Photo of my work.", photo: { src: photo.src, box: result.box, step: result.step } },
+        { id: `t-${stamp}`, role: "tutor", content: result.question, level: result.level },
+      ]);
+      setLevel(result.level);
+      if (studentId) refreshProgress(studentId);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "api_unreachable") {
+        setSendError("That message did not go through. Check that the API is running.");
+      }
+    } finally {
+      setSending(false);
+      if (photoInput.current) photoInput.current.value = "";
+    }
+  }
+
   if (loadError) {
     return (
       <Alert status="danger" className="mx-auto mt-10 max-w-xl">
@@ -286,7 +332,7 @@ export default function StudentAssignmentPage() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.24, ease: "easeOut" }}
                       >
-                        {turn.role === "student" ? <StudentTurn content={turn.content} /> : <TutorTurn turn={turn} isLatest={turn.id === lastTutor?.id} />}
+                        {turn.role === "student" ? <StudentTurn content={turn.content} photo={turn.photo} /> : <TutorTurn turn={turn} isLatest={turn.id === lastTutor?.id} />}
                       </motion.li>
                     ))}
                   </AnimatePresence>
@@ -347,6 +393,26 @@ export default function StudentAssignmentPage() {
                     <Button type="submit" variant="primary" isDisabled={sending || question.trim().length === 0} isPending={sending}>
                       Ask <CornerDownLeft className="size-4" aria-hidden />
                     </Button>
+                    <Tooltip delay={300}>
+                      <Button variant="secondary" isDisabled={sending} onPress={() => photoInput.current?.click()}>
+                        <Camera className="size-4" aria-hidden /> Snap your work
+                      </Button>
+                      <Tooltip.Content>Send a photo of your written work. I circle the step to look at.</Tooltip.Content>
+                    </Tooltip>
+                    {/* The native picker, opened by the button above. It is not a control of its own, so it is out of the tab order. */}
+                    <input
+                      ref={photoInput}
+                      type="file"
+                      accept={PHOTO_ACCEPT}
+                      capture="environment"
+                      className="sr-only"
+                      tabIndex={-1}
+                      aria-hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void sendPhoto(file);
+                      }}
+                    />
                     <Tooltip delay={300}>
                       <Button variant="secondary" isDisabled={sending} onPress={() => void send(SMALLER_PROBLEM, "")}>
                         <Minimize2 className="size-4" aria-hidden /> Try a smaller problem
@@ -438,14 +504,15 @@ function StartCard({
   );
 }
 
-/** A student's message: the question in their words, and the pasted try with its margin mark. */
-function StudentTurn({ content }: { content: string }) {
+/** A student's message: the question in their words, the pasted try with its margin mark, or a marked photo. */
+function StudentTurn({ content, photo }: { content: string; photo?: ChatTurn["photo"] }) {
   const { question, attempt } = splitTurn(content);
   return (
     <div>
       <p className="text-xs font-medium uppercase tracking-wide text-muted">You</p>
       <p className="whitespace-pre-wrap leading-7">{question}</p>
       {attempt ? <AttemptCode code={attempt} /> : null}
+      {photo ? <PhotoMark src={photo.src} box={photo.box} step={photo.step} /> : null}
     </div>
   );
 }

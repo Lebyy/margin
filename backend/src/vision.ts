@@ -15,6 +15,8 @@
 //   - A box is drawn only where the model put it. A box outside the image or
 //     with no area is a failure, not something to clamp, because a clamped
 //     ellipse is a guessed position (board: do not draw at a guessed position).
+//   - The question the student reads beside the ellipse is a draft, and the
+//     guard checks it like every other draft (guardQuestion).
 //   - Every failure is the same failure. A provider error, bad JSON, a step that
 //     leaks, a bad box, or "no mistake found" all become `null`, and the route
 //     answers 501 vision_unavailable with no model text. The page draws nothing.
@@ -24,14 +26,19 @@
 // student's name (no prompt here has a name field).
 
 import { z } from "zod";
-import { checkDeterministic } from "./guard.ts";
+import { FALLBACK_REPLY, assessDraft, checkDeterministic } from "./guard.ts";
 import { completeJson, type TextGenerator } from "./llm.ts";
+import type { GuardVerdict } from "./types.ts";
 
 /** Where the mistake is on the photo, in 0-to-1 units from the top left. */
 export type StepBox = { x: number; y: number; w: number; h: number };
 
-/** What the route returns on a 200, plus the concept the scribe event is logged under. */
-export type VisionResult = { step: string; box: StepBox; concept: string };
+/**
+ * What the model marked, plus the concept the scribe event is logged under.
+ * `question` is still a draft here: the route runs it through the guard
+ * before the student sees it, the same as any tutor draft.
+ */
+export type VisionResult = { step: string; box: StepBox; concept: string; question: string };
 
 /**
  * Photo types Gemini reads. Anything else is refused at the route with a 400,
@@ -65,6 +72,7 @@ function visionSchema(concepts: [string, ...string[]]) {
   return z.object({
     found: z.boolean(),
     step: z.string().trim().max(240),
+    question: z.string().trim().max(240),
     concept: z.enum(concepts),
     box: z.object({ x: unit, y: unit, w: unit, h: unit }),
   });
@@ -75,6 +83,7 @@ const VISION_SYSTEM = `You look at a photo of a student's attempt at an intro pr
 Return JSON with:
 - found: true if you can see the student's code and a specific mistake in it. false if the photo is not readable code, or you cannot see a mistake. Do not invent one.
 - step: one short sentence that names what is wrong or missing in the student's work. Describe the problem only. Never write the corrected code, any line of the solution, or the final answer. No code, no backticks.
+- question: one short question for the student about that step, the way a tutor would ask it at the first hint level. It points the student at the problem so they can find the fix themselves. It is not the fix, not a line of the solution, and contains no code.
 - concept: which concept from the list the mistake is about.
 - box: the region of the photo that shows the step, as fractions of the image from the top left: x and y are the top-left corner, w and h the width and height, each between 0 and 1. If something is missing, box the place where it should have been.
 
@@ -137,6 +146,34 @@ export type FindStepInput = {
  * logged: a provider message could echo the request, and the request is the
  * student's work.
  */
+/**
+ * The question the student is allowed to see, and the guard's verdict on it.
+ *
+ * The question is a model draft like any tutor reply, so it gets both guard
+ * layers: the key-line check above (a one-sentence question is shorter than
+ * the guard's eight-word window), then assessDraft, which is the
+ * deterministic layer plus the judge. A held question is replaced by the
+ * guard's fallback sentence, which is itself the level-1 question about the
+ * empty list. There is no regeneration loop here: a second vision call would
+ * spend the strong model again to rewrite one sentence.
+ */
+export async function guardQuestion(
+  question: string,
+  answerKey: string,
+  canary: string,
+  judge?: TextGenerator,
+): Promise<{ question: string; verdict: GuardVerdict }> {
+  if (stepLeaks(question, answerKey, canary)) {
+    return {
+      question: FALLBACK_REPLY,
+      verdict: { leaks: true, severity: "full", reason: "The question carried part of the solution.", layer: "fallback" },
+    };
+  }
+  const verdict = await assessDraft(question, answerKey, canary, judge);
+  if (verdict.leaks) return { question: FALLBACK_REPLY, verdict: { ...verdict, layer: "fallback" } };
+  return { question, verdict };
+}
+
 export async function findStep(input: FindStepInput): Promise<VisionResult | null> {
   const [first, ...rest] = input.concepts;
   if (first === undefined) return null;
@@ -156,11 +193,11 @@ export async function findStep(input: FindStepInput): Promise<VisionResult | nul
     return null;
   }
 
-  if (!answer.found || answer.step.length === 0) return null;
+  if (!answer.found || answer.step.length === 0 || answer.question.length === 0) return null;
   if (!boxOnImage(answer.box)) return null;
   // Thrown away, not trimmed: a step with part of the fix removed is still
   // pointing at the fix, and an edited step would no longer be the model's.
   if (stepLeaks(answer.step, input.answerKey, input.canary)) return null;
 
-  return { step: answer.step, box: answer.box, concept: answer.concept };
+  return { step: answer.step, box: answer.box, concept: answer.concept, question: answer.question };
 }

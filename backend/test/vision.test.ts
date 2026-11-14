@@ -5,14 +5,17 @@ import type { Server } from "node:http";
 import { after, before, describe, it, test } from "node:test";
 import { createApp } from "../src/app.ts";
 import { connectDb, disconnectDb } from "../src/db.ts";
+import { FALLBACK_REPLY } from "../src/guard.ts";
 import { CANARY, Message, ScribeEvent, Session } from "../src/models.ts";
 import { boxOnImage, stepLeaks } from "../src/vision.ts";
 import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
-// D-R1 done-when:
+// D-R1 and D-R2 (server half) done-when:
 //   - a photo of a sum_list missing its base case returns a step and a box,
 //     and the step does not contain the solution;
-//   - a forced provider error returns 501.
+//   - a forced provider error returns 501;
+//   - the question shown beside the ellipse went through the guard, and a
+//     question that leaks is replaced by the fallback sentence.
 // The photo is test/fixtures/sum_list_no_base_case.png, sent through the real
 // route. The vision model is a stand-in here, so the suite spends no credit;
 // the same photo was sent to Gemini once by hand (see the commit message).
@@ -63,6 +66,8 @@ const PHOTO = {
 
 const STEP = "There is no base case, so sum_list never stops when the list is empty.";
 const BOX = { x: 0.03, y: 0.15, w: 0.7, h: 0.4 };
+const QUESTION = "What should sum_list return when xs is empty?";
+const CLEAN = JSON.stringify({ leaks: false, severity: "none", reason: "A question." });
 
 describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => {
   let server: Server;
@@ -73,6 +78,8 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
   let visionReply: () => Promise<string> = async () => "";
   let visionSent = "";
   let visionCalls = 0;
+  let judgeReply: () => Promise<string> = async () => CLEAN;
+  let judgeCalls = 0;
 
   before(async () => {
     await connectDb(uri);
@@ -82,6 +89,10 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
         visionCalls += 1;
         visionSent = `${system}\n${user}`;
         return visionReply();
+      },
+      judge: async () => {
+        judgeCalls += 1;
+        return judgeReply();
       },
       // A photo must not reach the text pipeline. These throw so a test fails
       // loudly if it does.
@@ -121,15 +132,19 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
     // Case: the done-when line. The step names the missing base case without
     // the fix, the box is on the photo, and one student message and one
     // misconception event on base_case are stored. The level does not move.
-    visionReply = async () => JSON.stringify({ found: true, step: STEP, concept: "base_case", box: BOX });
+    visionReply = async () => JSON.stringify({ found: true, step: STEP, question: QUESTION, concept: "base_case", box: BOX });
+    judgeReply = async () => CLEAN;
     const sessionId = await startSession("Grace");
     const { status, text } = await post(`/api/sessions/${sessionId}/messages`, { image: PHOTO });
     assert.equal(status, 200);
-    assert.deepEqual(JSON.parse(text), { step: STEP, box: BOX });
+    assert.deepEqual(JSON.parse(text), { step: STEP, box: BOX, question: QUESTION, level: 1 });
     assert.ok(!text.includes("if not xs") && !text.includes("return 0") && !text.includes(CANARY));
 
-    const message = await Message.findOne({ session_id: sessionId }).lean();
+    const [message, reply] = await Message.find({ session_id: sessionId }).sort({ created_at: 1, _id: 1 }).lean();
     assert.equal(message?.role, "student");
+    assert.equal(reply?.role, "tutor");
+    assert.equal(reply?.content, QUESTION);
+    assert.equal(reply?.hint_level, 1);
     assert.ok(message?.content.includes(STEP));
     const event = await ScribeEvent.findOne({ message_id: message?._id }).lean();
     assert.equal(event?.struggle_type, "misconception");
@@ -161,10 +176,10 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
     // nothing; the leaking step's text never reaches the response.
     const sessionId = await startSession("Ada");
     const answers = [
-      { found: true, step: "Add if not xs: return 0 before the recursive call.", concept: "base_case", box: BOX },
-      { found: true, step: STEP, concept: "base_case", box: { x: 0.6, y: 0.2, w: 0.7, h: 0.2 } },
-      { found: false, step: "", concept: "base_case", box: { x: 0, y: 0, w: 0, h: 0 } },
-      { found: true, step: STEP, concept: "not_a_concept", box: BOX },
+      { found: true, step: "Add if not xs: return 0 before the recursive call.", question: QUESTION, concept: "base_case", box: BOX },
+      { found: true, step: STEP, question: QUESTION, concept: "base_case", box: { x: 0.6, y: 0.2, w: 0.7, h: 0.2 } },
+      { found: false, step: "", question: "", concept: "base_case", box: { x: 0, y: 0, w: 0, h: 0 } },
+      { found: true, step: STEP, question: QUESTION, concept: "not_a_concept", box: BOX },
     ];
     for (const answer of answers) {
       visionReply = async () => JSON.stringify(answer);
@@ -173,6 +188,32 @@ describe("POST /api/sessions/:id/messages with a photo (D-R1)", { skip }, () => 
       assert.ok(!text.includes("return 0"));
     }
     assert.equal(await Message.countDocuments({ session_id: sessionId }), 0);
+  });
+
+  test("a question that leaks, or a judge that fails, shows the fallback sentence", async () => {
+    // Cases: the question writes the base case (caught in code, the judge is
+    // not asked), the judge says it leaks, and the judge answers garbage. In
+    // each the ellipse still has its step and box, and the question is the
+    // guard's fallback, never the held draft.
+    const sessionId = await startSession("Katherine");
+    const cases: [string, () => Promise<string>, number][] = [
+      ["Did you write if not xs: return 0 yet?", async () => CLEAN, 0],
+      [QUESTION, async () => JSON.stringify({ leaks: true, severity: "partial", reason: "Gives the fix." }), 1],
+      [QUESTION, async () => "not json", 2],
+    ];
+    for (const [question, judge, calls] of cases) {
+      visionReply = async () => JSON.stringify({ found: true, step: STEP, question, concept: "base_case", box: BOX });
+      judgeReply = judge;
+      judgeCalls = 0;
+      const { status, text } = await post(`/api/sessions/${sessionId}/messages`, { image: PHOTO });
+      assert.equal(status, 200);
+      const body = JSON.parse(text);
+      assert.equal(body.question, FALLBACK_REPLY);
+      assert.equal(body.step, STEP);
+      assert.ok(!text.includes("return 0"));
+      assert.equal(judgeCalls, calls);
+    }
+    judgeReply = async () => CLEAN;
   });
 
   test("garbage twice is a 501 after exactly two calls", async () => {
