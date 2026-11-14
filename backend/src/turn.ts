@@ -4,7 +4,7 @@
 // This file does not import the database. The message route loads the session and writes the result. A query here would hide a read of the answer key inside the turn.
 // The answer key and the canary are arguments of the guard only. They are not fields of the object passed to the tutor. Spreading `state` into that object would put the solution in the prompt.
 
-import { guardDraft } from "./guard.ts";
+import { checkDeterministic, FALLBACK_REPLY, guardDraft, type GuardedReply } from "./guard.ts";
 import type { TextGenerator } from "./llm.ts";
 import { nextHintLevel } from "./policy.ts";
 import { draftHint, type DraftHintInput, type TutorRunner, type TutorTurn } from "./tutor.ts";
@@ -60,12 +60,42 @@ export async function runTurn(
     generate: hooks?.generate,
     redraft: (nextLevel, feedback) => draftHint(hintInput(state, studentText, nextLevel, feedback), hooks?.run),
   });
+  return forStudent(guarded, state);
+}
+
+/**
+ * The strings the student can read: the reply and the verdict reason.
+ * The guard is supposed to hold a solution before this point. This is the last look, because the message route renders both strings.
+ * A normalized line still teaches the solution, so a draft the word check would hold is not allowed out under different names either.
+ * Nothing here is logged. A log of either string would be a copy of the key when this check is the thing that stopped it.
+ */
+function forStudent(guarded: GuardedReply, state: TurnState): TurnResult {
+  let reply = guarded.reply;
+  let reason = guarded.verdict.reason;
+  let layer = guarded.verdict.layer;
+  let leaks = guarded.verdict.leaks;
+  if (exposesSolution(reply, state.answerKey, state.canary)) {
+    reply = FALLBACK_REPLY;
+    layer = "fallback";
+    leaks = true;
+  }
+  if (exposesSolution(reason, state.answerKey, state.canary)) {
+    reason = "The draft was held.";
+  }
   return {
-    reply: guarded.reply,
+    reply,
     level: guarded.level,
-    verdict: guarded.verdict,
+    verdict: { ...guarded.verdict, reason, layer, leaks },
     retries: guarded.retries,
   };
+}
+
+/**
+ * The same check the guard uses on a draft.
+ * The reason is student-facing too, so a line that would hold a draft holds the reason as well.
+ */
+function exposesSolution(text: string, answerKey: string, canary: string): boolean {
+  return checkDeterministic(text, answerKey, canary).leaks;
 }
 
 /**

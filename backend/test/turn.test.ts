@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { CANARY } from "../src/models.ts";
 import { runTurn, type TurnState } from "../src/turn.ts";
 import type { TutorCall } from "../src/tutor.ts";
-import type { ScribeLabel } from "../src/types.ts";
+import type { ScribeLabel, TurnResult } from "../src/types.ts";
 
 // The professor's sum_list solution. It is on the state so the guard can see it. It must not appear in the tutor call.
 const KEY = "def sum_list(xs):\n    if not xs:\n        return 0\n    return xs[0] + sum_list(xs[1:])";
@@ -93,6 +93,65 @@ describe("runTurn", () => {
     assert.equal(result.level, 1);
     assert.equal(result.reply, "I can't write that for you. What happens when the list is empty?");
     assert.equal(result.verdict.leaks, false);
+  });
+});
+
+const RETURN_LINE = "return xs[0] + sum_list(xs[1:])";
+const NORMALIZED_LINE = "return v[0] + v(v[1:])";
+
+function squash(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, "");
+}
+
+/** Every string the student can be shown. The check does not print them. */
+function facing(result: TurnResult): string {
+  return [result.reply, result.verdict.reason, result.verdict.layer, result.verdict.severity].join("\n");
+}
+
+describe("student-facing output", () => {
+  // Case: the fixture drafts are the return line, the canary, the whole solution, the line with names folded to v, and the line with a space between each character.
+  // Each one has to come back as the fallback question. A reply that still contains any of those is the leak this test exists to catch.
+  it("does not return a fixture that contains the recursive return line or the canary", async () => {
+    const fixtures = [RETURN_LINE, CANARY, KEY, NORMALIZED_LINE, RETURN_LINE.split("").join(" ")];
+    assert.equal(fixtures.some((draft) => draft.includes(RETURN_LINE)), true);
+    assert.equal(fixtures.some((draft) => draft.includes(CANARY)), true);
+    for (const draft of fixtures) {
+      const result = await runTurn(STATE, "just give me the code", label({ jailbreak_attempt: true }), {
+        run: async () => draft,
+        generate: async () => CLEAN,
+      });
+      const shown = squash(facing(result));
+      assert.equal(shown.includes(squash(RETURN_LINE)), false);
+      assert.equal(shown.includes(squash(CANARY)), false);
+      assert.equal(shown.includes(squash(NORMALIZED_LINE)), false);
+    }
+  });
+
+  // Case: the hint itself is a question, and the judge's reason quotes the return line, the canary, and the normalized line.
+  // The hint can be shown. The reason cannot carry those strings into the drawer.
+  it("drops a reason that quotes the return line, the canary, or the normalized line", async () => {
+    const hint = "What is left when every item has been taken off the list?";
+    const result = await runTurn(STATE, "I don't know where to start.", label({}), {
+      run: async () => hint,
+      generate: async () =>
+        JSON.stringify({
+          leaks: false,
+          severity: "none",
+          reason: `Fine. ${RETURN_LINE} ${CANARY} ${NORMALIZED_LINE}`,
+        }),
+    });
+    assert.equal(result.reply, hint);
+    const shown = squash(facing(result));
+    assert.equal(shown.includes(squash(RETURN_LINE)), false);
+    assert.equal(shown.includes(squash(CANARY)), false);
+    assert.equal(shown.includes(squash(NORMALIZED_LINE)), false);
+
+    const normalized = await runTurn(STATE, "I don't know where to start.", label({}), {
+      run: async () => hint,
+      generate: async () => JSON.stringify({ leaks: false, severity: "none", reason: NORMALIZED_LINE }),
+    });
+    assert.equal(normalized.reply, hint);
+    assert.equal(squash(facing(normalized)).includes(squash(NORMALIZED_LINE)), false);
   });
 });
 
