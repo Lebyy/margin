@@ -12,6 +12,7 @@ import {
   Course,
   CourseMaterial,
   LectureFile,
+  SlidePage,
   Message,
   Post,
   ProfessorMessage,
@@ -35,6 +36,7 @@ import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
 import { studentFlashcards } from "./flashcards.ts";
 import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import { reflectOn, type Reflection } from "./reflect.ts";
+import { slideNotes } from "./slides.ts";
 import { courseCard, createCourseRouter, enroll, listItem, statusByAssignment } from "./course-routes.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { AssignmentKind, GuardVerdict, HintLevel } from "./types.ts";
@@ -451,10 +453,25 @@ const MAX_CLASS_NOTES = 12_000;
 
 /**
  * Everything the professor has written for this assignment's class, as one text.
- * It is the assignment's own notes first, then the classroom notes, then each added file under its title. The tutor's note search, the study cards, the quiz, and the canvas all read this, so a handout added to the class is something Margin can point to on every assignment in it.
+ *
+ * When the assignment names the lectures it covers, their slides come first,
+ * one section per page headed "Lecture n, slide p" (slides.ts), so the
+ * level-2 search finds a slide before anything else and cites the page the
+ * viewer opens. Only the linked lectures are read, which keeps the context
+ * small. Then the assignment's own notes, the classroom notes, and each
+ * added file under its title, as before; with no linked lecture this is
+ * exactly the old text. The tutor's note search, the study cards, the quiz,
+ * and the canvas all read this.
  */
-async function classNotes(assignment: { notes?: string | null; course_id?: unknown }): Promise<string> {
-  const parts = [assignment.notes ?? ""];
+async function classNotes(assignment: { notes?: string | null; course_id?: unknown; lecture_ids?: unknown[] | null }): Promise<string> {
+  const parts: string[] = [];
+  const linked = (assignment.lecture_ids ?? []).map(String).filter((id) => mongoose.isValidObjectId(id));
+  if (linked.length > 0) {
+    const lectures = await LectureFile.find({ _id: { $in: linked.map((id) => new mongoose.Types.ObjectId(id)) }, course_id: assignment.course_id as mongoose.Types.ObjectId }).select("lecture_number").lean();
+    const pages = await SlidePage.find({ lecture_file_id: { $in: lectures.map((l) => l._id) } }).select("lecture_file_id page_number text").lean();
+    parts.push(slideNotes(lectures.map((l) => ({ lecture_number: l.lecture_number, pages: pages.filter((p) => String(p.lecture_file_id) === String(l._id)) }))));
+  }
+  parts.push(assignment.notes ?? "");
   if (assignment.course_id) {
     const course = await Course.findById(assignment.course_id).select("notes").lean();
     if (course?.notes) parts.push(course.notes);

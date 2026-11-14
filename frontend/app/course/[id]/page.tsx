@@ -7,15 +7,16 @@ import { useEffect, useState } from "react";
 import { AssignmentList } from "@/components/assignment-list";
 import { Discussion } from "@/components/discussion";
 import { Paper } from "@/components/paper";
-import { api, ApiError, type Course } from "@/lib/api";
+import { SlideViewer } from "@/components/slide-viewer";
+import { api, ApiError, type Course, type Lecture } from "@/lib/api";
 import { browser } from "@/lib/browser";
 import { ACCENT_BG, courseShortName } from "@/lib/courses";
 import { cn } from "@/lib/utils";
 
 /** The tabs of a course page, in order. The URL's `?tab=` picks one, so a link can open a class straight at its slides. */
-const TABS = ["overview", "assignments", "discussion"] as const;
+const TABS = ["overview", "slides", "assignments", "discussion"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABEL: Record<Tab, string> = { overview: "Overview", assignments: "Assignments", discussion: "Discussion" };
+const TAB_LABEL: Record<Tab, string> = { overview: "Overview", slides: "Lecture slides", assignments: "Assignments", discussion: "Discussion" };
 
 /**
  * One class, as a student opens it: Overview, Assignments, Discussion.
@@ -37,6 +38,10 @@ export default function CoursePage() {
   const [studentId, setStudentId] = useState<string | null>(null);
   const [joined, setJoined] = useState<boolean | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  const [lectures, setLectures] = useState<Lecture[]>([]);
+  // The open lecture and page. A citation link in Margin's reply sets both through the URL: ?tab=slides&lecture=<id>&page=<n>.
+  const [lectureId, setLectureId] = useState<string | null>(null);
+  const [page, setPage] = useState<number | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -44,15 +49,24 @@ export default function CoursePage() {
     // render, and applied with the course when it arrives, so the server render
     // and the first client render agree and the page needs no Suspense boundary.
     const known = browser.studentId();
-    const asked = new URLSearchParams(window.location.search).get("tab");
-    Promise.all([api.course(id, known), known ? api.myCourses(known).catch((e: unknown) => (e instanceof ApiError && e.status === 404 ? null : undefined)) : Promise.resolve(undefined)])
-      .then(([c, mine]) => {
+    const params = new URLSearchParams(window.location.search);
+    const asked = params.get("tab");
+    const askedPage = Number(params.get("page"));
+    Promise.all([
+      api.course(id, known),
+      known ? api.myCourses(known).catch((e: unknown) => (e instanceof ApiError && e.status === 404 ? null : undefined)) : Promise.resolve(undefined),
+      api.lectures(id).catch(() => ({ lectures: [] as Lecture[] })),
+    ])
+      .then(([c, mine, l]) => {
         if (!live) return;
         // A stored student this database answers 404 for is forgotten, so Join
         // asks for a name instead of failing. Any other error keeps the id.
         if (known && mine === null) browser.forgetStudent();
         setStudentId(known && mine !== null ? known : null);
         if (asked && (TABS as readonly string[]).includes(asked)) setTab(asked as Tab);
+        setLectures(l.lectures);
+        setLectureId(params.get("lecture"));
+        setPage(Number.isInteger(askedPage) && askedPage > 0 ? askedPage : null);
         setCourse(c);
         setJoined(!!mine?.courses.some((m) => m.id === c.id));
       })
@@ -125,6 +139,7 @@ export default function CoursePage() {
               <Tabs.Tab key={t} id={t}>
                 {TAB_LABEL[t]}
                 {t === "assignments" && work.length > 0 ? <span className="ml-1.5 text-muted">{work.length}</span> : null}
+                {t === "slides" && lectures.length > 0 ? <span className="ml-1.5 text-muted">{lectures.length}</span> : null}
                 <Tabs.Indicator />
               </Tabs.Tab>
             ))}
@@ -179,6 +194,24 @@ export default function CoursePage() {
               ))}
             </section>
           ) : null}
+        </Tabs.Panel>
+
+        <Tabs.Panel id="slides" className="pt-5">
+          <SlideViewer
+            courseId={course.id}
+            lectures={lectures}
+            selectedId={lectureId}
+            page={page}
+            onSelect={(lid) => {
+              // Choosing a lecture from the list opens it at its first page.
+              setLectureId(lid);
+              setPage(null);
+              const url = new URL(window.location.href);
+              url.searchParams.set("lecture", lid);
+              url.searchParams.delete("page");
+              window.history.replaceState(null, "", url);
+            }}
+          />
         </Tabs.Panel>
 
         <Tabs.Panel id="assignments" className="flex flex-col gap-8 pt-5">

@@ -200,7 +200,7 @@ function generalPrompt(level: HintLevel, kind: AssignmentKind): string {
     level === 1
       ? "Level 1, a nudge. Ask one guiding question that points at the idea the student is missing, and stop there. Do not answer your own question."
       : level === 2
-        ? "Level 2, a pointer. Call cite_notes with the concept the student is stuck on. Then tell the student where in the professor's notes to look, and cite the line it returns exactly as returned. Do not invent a lecture or a slide number. If the tool finds no matching line, say the notes do not cover it and ask one guiding question."
+        ? "Level 2, a pointer. Call cite_notes with the concept the student is stuck on. Then tell the student where in the professor's notes to look, and cite the line it returns exactly as returned. When the line names one slide, as in \"Lecture 3, slide 9\", write that place in square brackets exactly as [Lecture 3, slide 9], so the student can open that slide; use the numbers the tool returned. Do not invent a lecture or a slide number. If the tool finds no matching line, say the notes do not cover it and ask one guiding question."
         : "Level 3, a similar example. Walk through a different, smaller problem of the same kind, in words. It must not be the assigned problem with the names or numbers changed. End by asking which step of their own work matches.",
   ].join("\n");
 }
@@ -227,6 +227,7 @@ function lessonPrompt(): string {
  * What the tutor writes at this rung.
  * Level 1 ends at the question. A model left to continue answers its own question, and that answer is the base case.
  * Level 2 quotes the citation from the tool. The lecture and slide numbers are the professor's, so a number the model made up would send the student to the wrong slide with the professor's authority behind it.
+ * A single slide is written as [Lecture n, slide p]. The student page turns exactly that shape into a link that opens the slide viewer at page p, and leaves any other text alone, so a citation in another shape is still read but is not a link.
  * Level 3 is count_list told as a trace. A count_list written out as a Python function shares its opening and its recursive step with the key, and the string check holds it on purpose. Asking for the trace gets the student a level-3 hint in place of the fallback sentence.
  */
 function levelText(level: HintLevel): string {
@@ -234,7 +235,7 @@ function levelText(level: HintLevel): string {
     return "Level 1, a nudge. Ask one guiding question that points at the idea the student is missing, and stop there. Do not answer your own question. On a list recursion problem, ask what happens when the list is empty.";
   }
   if (level === 2) {
-    return "Level 2, a pointer. Call cite_notes with the concept the student is stuck on, for example \"base case\". Then tell the student where in the professor's notes to look, and cite the line it returns, with the lecture and slide numbers exactly as returned. Do not invent a lecture or a slide number. If the tool finds no matching line, say the notes do not cover it and ask one guiding question. You may add one question that ties the notes to their attempt.";
+    return "Level 2, a pointer. Call cite_notes with the concept the student is stuck on, for example \"base case\". Then tell the student where in the professor's notes to look, and cite the line it returns, with the lecture and slide numbers exactly as returned. When the line names one slide, as in \"Lecture 3, slide 9\", write that place in square brackets exactly as [Lecture 3, slide 9], so the student can open that slide; use the numbers the tool returned. Do not invent a lecture or a slide number. If the tool finds no matching line, say the notes do not cover it and ask one guiding question. You may add one question that ties the notes to their attempt.";
   }
   return "Level 3, a similar example. Give a worked example of count_list, a function that counts the items in a list. count_list is not sum_list. Do not write sum_list. Walk through count_list on a small list in words: what it gives back for a list with nothing in it, and how the count of a longer list is built from the count of the rest. Tell it as a trace, not as a block of code, because code shaped like the assignment is held before the student sees it. End by asking which step of their own function matches.";
 }

@@ -243,6 +243,32 @@ export type StudyCard = { concept: string; question: string; answer: string; sou
 /** What Margin drew: a kind, a title, and up to six labelled items. The page lays it out. It is never an image and never code. */
 export type Drawing = { kind: "map" | "steps" | "summary"; title: string; items: { label: string; detail: string }[]; /** Names this drawing for the picture route. */ picture_id?: string };
 
+/** One lecture's slides. `unreadable_pages` counts pages with no text layer, which the tutor cannot cite. */
+export type Lecture = {
+  id: string;
+  course_id: string;
+  lecture_number: number;
+  title: string;
+  /** A calendar day, "2026-11-10", or null. */
+  lecture_date: string | null;
+  page_count: number;
+  unreadable_pages: number;
+  uploaded_at: string | null;
+};
+
+/** The largest lecture PDF the server accepts. Must equal MAX_PDF_BYTES in backend/src/slides.ts. */
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Where the browser's own PDF viewer opens a lecture, at a page. `#page=` is
+ * the open PDF fragment every built-in viewer understands. The file route
+ * checks the lecture belongs to the class, so a link cannot reach another
+ * class's slides.
+ */
+export function lectureFileUrl(courseId: string, lectureId: string, page?: number): string {
+  return `${API_BASE}/api/courses/${encodeURIComponent(courseId)}/lectures/${encodeURIComponent(lectureId)}/file${page ? `#page=${page}` : ""}`;
+}
+
 export type ProfessorMessage = { id: string; body: string; created_at: string };
 
 /** What the setup form posts. `answer_key` is left out on an edit to keep the stored key. */
@@ -286,14 +312,15 @@ export class ApiError extends Error {
  * One JSON request.
  * A failed connection becomes `api_unreachable`, so a page can say the API is not running instead of showing a stack trace. `cache: "no-store"` is set because every screen shows live records, and a cached class summary would show yesterday's percent as today's.
  */
-async function request<T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown, raw?: { type: string; data: Blob }): Promise<T> {
   let res: Response;
   try {
     res = await fetch(API_BASE + path, {
       method,
       cache: "no-store",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      // A raw body (a lecture PDF) is sent as its own bytes with its own type; everything else is JSON.
+      headers: raw ? { "content-type": raw.type } : body === undefined ? undefined : { "content-type": "application/json" },
+      body: raw ? raw.data : body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, "api_unreachable");
@@ -337,6 +364,17 @@ export const api = {
   myCourses: (studentId: string) => request<MyCourses>("GET", `/api/students/${q(studentId)}/courses`),
   /** A returning student sends their id; a first visit sends the name they typed, and the server creates the student. */
   joinCourse: (courseId: string, who: { student_id: string } | { display_name: string }) => request<{ student_id: string; course_id: string }>("POST", `/api/courses/${q(courseId)}/join`, who),
+  lectures: (courseId: string) => request<{ lectures: Lecture[] }>("GET", `/api/courses/${q(courseId)}/lectures`),
+  /** The PDF goes as raw bytes. The name only becomes the default title; the server stores the file under a random id. */
+  uploadLecture: (courseId: string, file: File, meta: { title?: string; lecture_number?: number; lecture_date?: string }) => {
+    const params = new URLSearchParams({ filename: file.name });
+    if (meta.title) params.set("title", meta.title);
+    if (meta.lecture_number !== undefined) params.set("lecture_number", String(meta.lecture_number));
+    if (meta.lecture_date) params.set("lecture_date", meta.lecture_date);
+    return request<Lecture>("POST", `/api/prof/courses/${q(courseId)}/lectures?${params}`, undefined, { type: "application/pdf", data: file });
+  },
+  updateLecture: (lectureId: string, fields: { title?: string; lecture_number?: number; lecture_date?: string }) => request<Lecture>("PATCH", `/api/prof/lectures/${q(lectureId)}`, fields),
+  deleteLecture: (lectureId: string) => request<null>("DELETE", `/api/prof/lectures/${q(lectureId)}`),
   profCourses: () => request<{ courses: ProfCourseCard[] }>("GET", "/api/prof/courses"),
   posts: (courseId: string) => request<{ posts: Post[] }>("GET", `/api/courses/${q(courseId)}/posts`),
   addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),

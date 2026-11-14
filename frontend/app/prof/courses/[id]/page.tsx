@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, type Course } from "@/lib/api";
 import { Discussion } from "@/components/discussion";
+import { SlidesManager } from "@/components/prof/slides-manager";
 import { KIND } from "@/lib/kinds";
 
 /**
@@ -168,6 +169,15 @@ export default function ManageCoursePage() {
               </li>
             ))}
           </ul>
+        </Card.Content>
+      </Card>
+
+      <Card>
+        <Card.Header>
+          <Card.Title>Lecture slides</Card.Title>
+        </Card.Header>
+        <Card.Content>
+          <SlidesManager courseId={course.id} />
         </Card.Content>
       </Card>
 

@@ -7,10 +7,11 @@
 // rows are read with an explicit field list that never includes the key, the
 // question keys, or the canary, so no response built here can carry them.
 
-import { Router } from "express";
+import express, { Router } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
-import { accentFor, Assignment, Course, Enrollment, Session, Student, ThursdayCard } from "./models.ts";
+import { accentFor, Assignment, Course, Enrollment, LectureFile, Session, SlidePage, Student, ThursdayCard } from "./models.ts";
+import { deletePdf, extractPages, looksLikePdf, MAX_PDF_BYTES, openPdf, storePdf, titleFromFilename } from "./slides.ts";
 
 /** The assignment fields the course pages read. Never the key, the question keys, or the canary. */
 const LIST_FIELDS = "course_id course_name title kind concepts due_at margin_enabled created_at";
@@ -79,8 +80,162 @@ export async function enroll(studentId: unknown, courseId: unknown): Promise<voi
   await Enrollment.updateOne({ student_id: studentId, course_id: courseId }, { $setOnInsert: { student_id: studentId, course_id: courseId } }, { upsert: true });
 }
 
+/** One lecture as the lists show it. `unreadable_pages` is for the professor: pages that had no text to read. */
+async function lectureView(l: { _id: mongoose.Types.ObjectId; course_id: unknown; lecture_number: number; title: string; lecture_date?: Date | null; page_count: number; uploaded_at?: Date | null }) {
+  const unreadable = await SlidePage.countDocuments({ lecture_file_id: l._id, text: "" });
+  return {
+    id: String(l._id),
+    course_id: String(l.course_id),
+    lecture_number: l.lecture_number,
+    title: l.title,
+    lecture_date: l.lecture_date ? new Date(l.lecture_date).toISOString().slice(0, 10) : null,
+    page_count: l.page_count,
+    unreadable_pages: unreadable,
+    uploaded_at: l.uploaded_at ? new Date(l.uploaded_at).toISOString() : null,
+  };
+}
+
+/** A lecture's editable fields, from a query string on upload or a JSON body on edit. */
+const lectureFields = z.object({
+  title: z.string().trim().min(1).max(120).optional(),
+  lecture_number: z.coerce.number().int().min(0).max(999).optional(),
+  // A calendar day, "2026-11-10". Empty clears it.
+  lecture_date: z.union([z.iso.date(), z.literal("")]).optional(),
+});
+
 export function createCourseRouter(): Router {
   const router = Router();
+
+  /**
+   * POST /api/prof/courses/:id/lectures: a professor uploads one lecture PDF.
+   *
+   * The body is the raw file with `Content-Type: application/pdf`, so a 20 MB
+   * deck is not inflated by base64 into a JSON body. The title, number, and
+   * date come in the query string; `filename` is only used for a default
+   * title. In order: the course must exist (404), the type must be PDF (415),
+   * the size at most MAX_PDF_BYTES (413, from the body limit), the bytes must
+   * start with %PDF- (415), and pdf.js must be able to open it (422). Only
+   * then is anything stored: the file under a random id, one lecture row, and
+   * one text row per page. A page with no text is stored empty, and the
+   * response counts those pages so the professor is told.
+   */
+  router.post(
+    "/api/prof/courses/:id/lectures",
+    // Any type is read as raw bytes here, so a wrong type gets the 415 below rather than an empty body.
+    express.raw({ type: () => true, limit: MAX_PDF_BYTES }),
+    async (req, res) => {
+      const course = mongoose.isValidObjectId(req.params.id) ? await Course.findById(req.params.id).select("_id").lean() : null;
+      if (!course) {
+        res.status(404).json({ error: "course_not_found" });
+        return;
+      }
+      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (!/^application\/pdf\b/i.test(req.get("content-type") ?? "") || !looksLikePdf(body)) {
+        res.status(415).json({ error: "not_a_pdf" });
+        return;
+      }
+      const fields = lectureFields.safeParse(req.query);
+      if (!fields.success) {
+        res.status(400).json({ error: "invalid_lecture" });
+        return;
+      }
+      let pages: string[];
+      try {
+        pages = await extractPages(body);
+      } catch (error) {
+        console.error("lecture PDF could not be read:", (error as Error).name);
+        res.status(422).json({ error: "unreadable_pdf" });
+        return;
+      }
+      const last = await LectureFile.findOne({ course_id: course._id }).sort({ lecture_number: -1 }).select("lecture_number").lean();
+      const fileId = await storePdf(body);
+      const lecture = await new LectureFile({
+        course_id: course._id,
+        lecture_number: fields.data.lecture_number ?? (last ? last.lecture_number + 1 : 1),
+        title: fields.data.title ?? titleFromFilename(String(req.query.filename ?? "")),
+        lecture_date: fields.data.lecture_date ? new Date(fields.data.lecture_date) : null,
+        file_id: fileId,
+        page_count: pages.length,
+      }).save();
+      await SlidePage.insertMany(pages.map((text, i) => ({ lecture_file_id: lecture._id, page_number: i + 1, text })));
+      res.status(201).json(await lectureView(lecture.toObject()));
+    },
+  );
+
+  /** PATCH /api/prof/lectures/:id: rename, renumber, or redate a lecture. The file and its pages are not touched. */
+  router.patch("/api/prof/lectures/:id", async (req, res) => {
+    const fields = lectureFields.safeParse(req.body);
+    const lecture = mongoose.isValidObjectId(req.params.id) ? await LectureFile.findById(req.params.id) : null;
+    if (!lecture) {
+      res.status(404).json({ error: "lecture_not_found" });
+      return;
+    }
+    if (!fields.success) {
+      res.status(400).json({ error: "invalid_lecture" });
+      return;
+    }
+    if (fields.data.title !== undefined) lecture.title = fields.data.title;
+    if (fields.data.lecture_number !== undefined) lecture.lecture_number = fields.data.lecture_number;
+    if (fields.data.lecture_date !== undefined) lecture.lecture_date = fields.data.lecture_date ? new Date(fields.data.lecture_date) : null;
+    await lecture.save();
+    res.json(await lectureView(lecture.toObject()));
+  });
+
+  /**
+   * DELETE /api/prof/lectures/:id: removes the lecture, its PDF, and its page
+   * text, and unlinks it from every assignment that covered it, so no hint
+   * can cite a slide that is gone. The page asks the professor to confirm first.
+   */
+  router.delete("/api/prof/lectures/:id", async (req, res) => {
+    const lecture = mongoose.isValidObjectId(req.params.id) ? await LectureFile.findById(req.params.id).lean() : null;
+    if (!lecture) {
+      res.status(404).json({ error: "lecture_not_found" });
+      return;
+    }
+    await Assignment.updateMany({ lecture_ids: lecture._id }, { $pull: { lecture_ids: lecture._id } });
+    await SlidePage.deleteMany({ lecture_file_id: lecture._id });
+    await deletePdf(lecture.file_id);
+    await LectureFile.deleteOne({ _id: lecture._id });
+    res.status(204).end();
+  });
+
+  /** GET /api/courses/:id/lectures: the class's lectures in order, for the slide list and the setup form. */
+  router.get("/api/courses/:id/lectures", async (req, res) => {
+    const course = mongoose.isValidObjectId(req.params.id) ? await Course.findById(req.params.id).select("_id").lean() : null;
+    if (!course) {
+      res.status(404).json({ error: "course_not_found" });
+      return;
+    }
+    const lectures = await LectureFile.find({ course_id: course._id }).sort({ lecture_number: 1, uploaded_at: 1 }).lean();
+    res.json({ lectures: await Promise.all(lectures.map(lectureView)) });
+  });
+
+  /**
+   * GET /api/courses/:id/lectures/:lid/file: the PDF itself, for the viewer.
+   *
+   * Served only when the lecture belongs to the class in the URL, so a link
+   * cannot be edited into another class's slides. Sent inline as
+   * application/pdf with nosniff, so the browser opens its own PDF viewer
+   * and never treats the bytes as anything else.
+   */
+  router.get("/api/courses/:id/lectures/:lid/file", async (req, res) => {
+    const ok = mongoose.isValidObjectId(req.params.id) && mongoose.isValidObjectId(req.params.lid);
+    const lecture = ok ? await LectureFile.findOne({ _id: req.params.lid, course_id: req.params.id }).lean() : null;
+    if (!lecture) {
+      res.status(404).json({ error: "lecture_not_found" });
+      return;
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="lecture-${lecture.lecture_number}.pdf"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    const stream = openPdf(lecture.file_id);
+    stream.on("error", () => {
+      if (!res.headersSent) res.status(404).json({ error: "lecture_not_found" });
+      else res.end();
+    });
+    stream.pipe(res);
+  });
 
   /**
    * GET /api/students/:id/courses: My courses and Due soon for one student.
