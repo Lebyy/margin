@@ -20,7 +20,6 @@ The name comes from the professor's red pen. Help lives in the margins of the st
 - Acknowledge existing tools honestly (Khanmigo, the CS50 Duck, ChatGPT Study Mode, Gemini Guided Learning, Claude Learning Mode). Do not claim nobody else combines these ideas. Do not claim the guard is unbeatable. It is much harder to beat, not impossible. The CS50 Duck leaks sometimes too.
 - Use the calculator analogy, not the Prohibition analogy. Schools did not ban calculators, they changed what they tested.
 - Google is piloting Gemini as a collaborator in coding interviews. Say "piloting", never "switched". Google has not published a format sheet. Do not put this in the closing line, because it is unconfirmed.
-- Use the university's exact name on slides. It is likely Rutgers University-Camden, but confirm.
 
 ## Core loop
 
@@ -78,7 +77,7 @@ Treat all student text (and later, image content) as untrusted data, never as in
 
 ## Demo subject and seed data
 
-- The default demo subject, until Dr. Lund's real course is confirmed, is intro CS, Python recursion, `sum_list`. Replace it with Dr. Lund's actual course if known, because the pilot claim must be true.
+- The demo subject is intro CS, Python recursion, `sum_list`. It is not tied to any real course or professor.
 - Demo assignment: "Write `sum_list(xs)` recursively", with an answer key, short lecture notes referencing "Lecture 7, slides 12-16", and concepts `base_case`, `recursive_call_progress`, `return_value_propagation`, `call_stack_tracing`.
 - Seed a synthetic class of 25 students with distinct misconception profiles (for example 40% forget the base case). Generate their scribe events directly in a deterministic seed script with a fixed random seed, flagged `is_synthetic=true`. Do not spend LLM calls on this. Label the data as simulated in the pitch.
 
@@ -143,10 +142,9 @@ Treat all student text (and later, image content) as untrusted data, never as in
 
 ## Team and roles
 
-- Two-person team plus Dr. Desmond Lund of the university (Camden). Check at check-in whether he can be listed as a team member (events are often student-only). If not, he is advisor and client.
-- Owner of the four agents and the guard: one engineer. Owner of snap-your-work and the dashboard: the other.
-- Dr. Lund: defines the mistake categories and hint ladder, red-teams the guard, runs both Peri interviews, and appears in the pitch saying he would use the dashboard.
-- Do not claim a pilot that is not confirmed. Get Dr. Lund's explicit yes before saying he is piloting Margin next semester.
+- The team is two students. Owner of the four agents and the guard: one engineer. Owner of snap-your-work and the dashboard: the other. The team also red-teams the guard and defines the mistake categories and hint ladder.
+- Dr. Desmond Lund advised the team on the idea only. He is not a team member, client, partner, or endorser, and has no official role in the project. Do not list him on the team, do not attribute work, quotes, endorsements, or a pilot to him, and do not put him in the pitch or Devpost write-up as anything beyond "advised by", and only with his permission.
+- There is no confirmed pilot. Never claim one.
 
 ## Out of scope this weekend (put on a Roadmap slide)
 
@@ -157,7 +155,7 @@ LMS integration (LTI), real auth and role management, multiple courses, essays a
 - 0:00-0:15 Problem: students use AI anyway, unguarded AI hurts exam performance, professors fly blind until the midterm. The university's answer is not a ban, it is "if you use AI, use Margin".
 - 0:15-1:00 Student view: ask "just give me the code", get a nudge, escalate to a slide reference, try the jailbreak and watch the guard catch it (debug drawer visible). Photo red-circle if reliable, otherwise typed work.
 - 1:00-1:45 Professor view: heatmap, one student's three-line summary, the "reteach base cases Thursday" card.
-- 1:45-2:00 Close: Harvard's CS50 already says if you use AI, use ours. Margin brings that to every course. Dr. Lund is piloting Margin next semester, only if confirmed.
+- 1:45-2:00 Close: Harvard's CS50 already says if you use AI, use ours. Margin brings that to every course.
 - Rehearse the demo path until it works 5 times in a row. Use synthetic class data so the dashboard is never empty.
 
 ## Timeline (36 hours)
@@ -173,7 +171,7 @@ LMS integration (LTI), real auth and role management, multiple courses, essays a
 
 - Hacking starts 8 PM ET Friday, November 13, 2026. The hard submit deadline is 8:00 AM America/New_York on Sunday, November 15, 2026. The in-person demo is required and capped at 2 minutes. The optional video is also capped at 2 minutes. Teams are capped at 4 members and prizes go to each member.
 - Submit the public GitHub repo only. It must be created on or after November 13, so do not import code written before the start. The repo was created during the event.
-- Judging criteria are Creativity, Utility, Charity, and Avidity. Creativity is the leak guard catching a trick live and the reteach card. Utility is a live demo, not slides. Charity is that most students cannot afford a human tutor and unguarded AI measurably hurts learning. Avidity is passion and future plans, such as the confirmed Dr. Lund pilot.
+- Judging criteria are Creativity, Utility, Charity, and Avidity. Creativity is the leak guard catching a trick live and the reteach card. Utility is a live demo, not slides. Charity is that most students cannot afford a human tutor and unguarded AI measurably hurts learning. Avidity is passion and future plans, such as the roadmap and real user interviews.
 - Judging reality from past winners: polish beats novelty, winners have an interaction that is graspable in five seconds, a specific user with clear stakes, a one-sentence tagline, and a richer input than a text box (MindPad, Spark, Lume, Saynario). A plain chat box looks like a ChatGPT wrapper. Confab-style real mechanisms (like the guard) impress.
 - Suggested tagline: "Snap your homework, find your mistake, never get the answer. And your professor finally sees what the class doesn't understand."
 
@@ -186,7 +184,7 @@ Best Overall is automatic, not an entry. Track winners cannot also win Best Over
 Enter these sub tracks:
 
 - Amazon, Best Practical AI Innovation: top priority, since MindPad won it last fall. Education is in scope. The entry needs a working demo, a clear user, and basic docs (a good README). Emphasize that the hint ladder adapts to how the student is doing.
-- Peri, Forward Deployed Challenge: requires a real client consulted during the weekend, and a student org counts. Interview Dr. Lund on record as the professor-client and one outside person (a Princeton TA or a student CS or tutoring club). Include each person's name, role, and evidence (photo, short video, or direct quote). Do not claim a pilot that is not confirmed.
+- Peri, Forward Deployed Challenge: requires a real client consulted during the weekend, and a student org counts. Interview a real client during the weekend (for example a Princeton TA, a professor who agrees to go on record, or a student CS or tutoring club). Do not use Dr. Lund as the client unless he explicitly agrees. Include each person's name, role, and evidence (photo, short video, or direct quote). Do not claim a pilot that is not confirmed.
 - MLH Best Use of Gemini API: only if offered on Devpost this year, which the packet does not list. Confirm at opening.
 - LangChain, Best use of deepagents: do not enter. The backend is Express, so do not add deepagents unless asked.
 - Photon messaging agent: enter only if students can message the tutor or the professor gets the log as a message. The voice prize applies only if voice exists. This is a stretch goal only after the core works.
