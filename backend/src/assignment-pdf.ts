@@ -293,7 +293,13 @@ export function createAssignmentPdfRouter(deps: { reader?: TextGenerator } = {})
     }
     if (draft) {
       const old = doc.question_pdf_id;
+      // An assignment that already has concepts keeps them. They are the rows
+      // of the dashboard and the labels on every turn students have already
+      // taken; new PDFs for the same assignment replace the questions and
+      // keys, not the vocabulary its history is counted in.
+      const keep = (doc.concepts ?? []).length > 0 ? [...doc.concepts] : null;
       doc.set(await fieldsFromDraft(draft));
+      if (keep) doc.set("concepts", keep);
       if (old) await deletePdf(old);
       drafts.delete(form.data.draft_id as string);
     }

@@ -135,6 +135,7 @@ describe("assignments from two PDFs", { skip }, () => {
     assert.equal(doc?.title, "Renamed");
     assert.equal(doc?.answer_key, ANSWER_1);
     assert.equal(doc?.margin_enabled, false);
+    assert.deepEqual(doc?.concepts, ["capacitance"], "an existing assignment keeps its concepts when its PDFs are replaced");
     // Now it has a sheet, a title-only edit is allowed and keeps the questions.
     assert.equal((await json("PATCH", `/api/prof/assignments/${old._id}`, { title: "Renamed again" })).status, 200);
     assert.equal((await Assignment.findById(old._id).select("+answer_key").lean())?.answer_key, ANSWER_1);
