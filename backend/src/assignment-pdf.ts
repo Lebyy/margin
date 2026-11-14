@@ -39,7 +39,7 @@ const DRAFT_TTL_MS = 30 * 60 * 1000;
 const MAX_DRAFTS = 50;
 
 /** The most questions one assignment may have. The same number as MAX_QUESTIONS in routes.ts (not imported, to keep the two files from importing each other). */
-const MAX_PDF_QUESTIONS = 10;
+const MAX_PDF_QUESTIONS = 20;
 
 /** The most text read from either PDF. A problem set is a few pages; this bounds the one model call. */
 const MAX_PDF_TEXT = 60_000;

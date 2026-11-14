@@ -117,4 +117,24 @@ describe("POST /api/prof/assignments (D-B2)", { skip }, () => {
     assert.equal(bad.status, 400);
     assert.equal(await Assignment.countDocuments(), before);
   });
+
+  test("twenty questions save and a twenty-first is refused", async () => {
+    // The case: a full intro problem set is twenty questions, question 1 plus
+    // nineteen later ones, and must save with every key kept in order. One
+    // more is a 400 that stores nothing, so the cap the form shows is the cap
+    // the server enforces.
+    const later = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ prompt: `Question ${i + 2}: write f${i + 2}(x).`, answer_key: `def f${i + 2}(x):\n    return x * ${i + 2}` }));
+
+    const ok = await post("/api/prof/assignments", { ...SUM_LIST, questions: later(19) });
+    assert.equal(ok.status, 201);
+    const stored = await Assignment.findById(JSON.parse(ok.text)._id).select("+question_keys").lean();
+    assert.equal(stored?.questions.length, 19);
+    assert.equal(stored?.question_keys?.[18], "def f20(x):\n    return x * 20");
+
+    const before = await Assignment.countDocuments();
+    const over = await post("/api/prof/assignments", { ...SUM_LIST, questions: later(20) });
+    assert.equal(over.status, 400);
+    assert.equal(await Assignment.countDocuments(), before);
+  });
 });

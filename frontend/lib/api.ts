@@ -13,7 +13,7 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
 
 /** The most questions one assignment may have, question 1 included. Must equal MAX_QUESTIONS in backend/src/routes.ts. */
-export const MAX_QUESTIONS = 10;
+export const MAX_QUESTIONS = 20;
 
 /** The longest notes paste the server saves. Must equal MAX_NOTES_CHARS in backend/src/routes.ts, or the form would allow a paste the save refuses. */
 export const MAX_NOTES_CHARS = 200_000;

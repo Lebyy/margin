@@ -70,7 +70,7 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
 }
 
 /** The most questions one assignment may have, question 1 included. Exported so the form and the tests use the same number. */
-export const MAX_QUESTIONS = 10;
+export const MAX_QUESTIONS = 20;
 
 /**
  * The stored `questions` and `question_keys` for a saved form.
@@ -125,8 +125,10 @@ const assignmentFields = z.object({
   // question may leave its key out and send `from`, the index (1-based within
   // this list) it had when the form loaded, to keep that question's stored
   // key. Matching by `from` rather than by position is what keeps a key with
-  // its question when the professor removes or reorders one. Ten questions in
-  // all is far more than one sitting needs, and bounds the work per save.
+  // its question when the professor removes or reorders one. Twenty questions
+  // fits a full intro problem set in one assignment and still bounds the work
+  // per save. Every later key is checked by leaksAnotherQuestion on each turn,
+  // so this number is also how many string checks a reply costs.
   // When it is due, as an ISO time, or null for no due date.
   due_at: z.iso.datetime({ offset: true }).nullable().default(null),
   // The professor's opt-in for this assignment. Off, students see the work and no tutor.
