@@ -1,15 +1,11 @@
 "use client";
 
-import { Button, Chip, Tooltip } from "@heroui/react";
-import { Moon, Sun } from "lucide-react";
+import { Chip } from "@heroui/react";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { useTheme } from "next-themes";
-import { useSyncExternalStore } from "react";
-import { ThemeToggler } from "@/components/animate-ui/primitives/effects/theme-toggler";
 
 /**
- * The header on every screen: the name, which side you are on, and the theme toggle.
+ * The header on every screen: the name, which side you are on, and the sign-in side.
  *
  * The side is read from the path. There is no account behind it. The two
  * hard-coded sign-ins are the words `student` and `prof`, and the chip shows
@@ -41,7 +37,6 @@ export function SiteHeader() {
               <NavLink href="/prof/messages" current={pathname}>Messages</NavLink>
             </>
           ) : null}
-          <ThemeButton />
         </nav>
       </div>
     </header>
@@ -59,45 +54,5 @@ function NavLink({ href, current, children }: { href: string; current: string; c
     >
       {children}
     </NextLink>
-  );
-}
-
-/**
- * The dark and light switch.
- *
- * Animate UI's ThemeToggler wipes the new theme across the page with a view
- * transition, and the button itself is HeroUI's. Until the page has mounted
- * the resolved theme is unknown on the server, so the button renders in a
- * fixed state first. Rendering the sun or moon from the server's guess would
- * flash the wrong icon for anyone whose system is dark.
- */
-function ThemeButton() {
-  const { theme, resolvedTheme, setTheme } = useTheme();
-  // False while rendering on the server and during hydration, true after. There is nothing to subscribe to, so the subscribe function is empty.
-  const mounted = useSyncExternalStore(
-    () => () => undefined,
-    () => true,
-    () => false,
-  );
-
-  const resolved = mounted && resolvedTheme === "dark" ? "dark" : "light";
-  const next = resolved === "dark" ? "light" : "dark";
-
-  return (
-    <ThemeToggler
-      theme={(theme as "light" | "dark" | "system") ?? "system"}
-      resolvedTheme={resolved}
-      setTheme={setTheme}
-      direction="ttb"
-    >
-      {({ toggleTheme }) => (
-        <Tooltip delay={400}>
-          <Button isIconOnly size="sm" variant="ghost" aria-label={`Switch to ${next} theme`} onPress={() => toggleTheme(next)}>
-            {resolved === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-          <Tooltip.Content>Switch to {next}</Tooltip.Content>
-        </Tooltip>
-      )}
-    </ThemeToggler>
   );
 }

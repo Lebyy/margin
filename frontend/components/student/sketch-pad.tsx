@@ -23,9 +23,8 @@ export type Stroke = { ink: "pen" | "red" | "erase"; points: [number, number][] 
  *
  * Strokes are kept as data, in the parent, and redrawn. That is what makes
  * undo possible, keeps the drawing when the student switches tabs and comes
- * back, and lets the ink follow the theme: "pen" is drawn in the current
- * foreground color, so a sketch made in light mode is still visible after
- * switching to dark.
+ * back. The pen is drawn in the page's foreground color, which is the same
+ * dark ink on the light sheet every time.
  */
 /** A picture the student put on the canvas: where it sits and how wide it is, in canvas CSS pixels. `src` is a data URL, so the picture lives in this page and is not uploaded. */
 export type CanvasImage = { id: string; src: string; x: number; y: number; w: number; annotation?: Annotation; reading?: boolean };
@@ -215,18 +214,15 @@ export function SketchPad({
     [strokes],
   );
 
-  // Repaint when the strokes change, when the panel is resized, and when the theme flips (the pen color is the theme's foreground).
+  // Repaint when the strokes change and when the panel is resized.
   useEffect(() => {
     paint();
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = new ResizeObserver(() => paint());
     resize.observe(canvas);
-    const theme = new MutationObserver(() => paint());
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
     return () => {
       resize.disconnect();
-      theme.disconnect();
     };
   }, [paint]);
 

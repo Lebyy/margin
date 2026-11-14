@@ -7,13 +7,6 @@
 @import "@heroui/styles";
 
 /*
- * `dark:` follows the attribute next-themes writes on <html>, not the system
- * setting alone. Without this line the header toggle would change HeroUI's
- * tokens while every `dark:` utility kept following the operating system.
- */
-@custom-variant dark (&:is(.dark *, [data-theme="dark"] *));
-
-/*
  * Margin's own tokens. Everything else on screen uses HeroUI's tokens
  * (background, surface, muted, border, accent, danger).
  *
@@ -21,11 +14,12 @@
  * student's line, and the current rung of the hint ladder. --paper is the
  * sheet the work sits on, and --paper-line its ruling.
  *
- * Each token has a light and a dark value. A component reads the token and
- * never a hex color, which is what keeps a screen readable in both themes.
+ * Margin ships light only. A component reads the token and never a hex color,
+ * so a later theme change would still be one edit here.
  */
-:root,
-[data-theme="light"] {
+:root {
+  /* Native controls (scrollbars, date pickers) stay light even when the OS is dark. */
+  color-scheme: light;
   --margin-red: oklch(0.56 0.21 25);
   --margin-red-soft: oklch(0.56 0.21 25 / 0.1);
   --margin-green: oklch(0.55 0.14 150);
@@ -34,8 +28,8 @@
   /*
    * Course accents: the band on a course card and the rule under a course
    * header. A course stores one of these names, never a colour, so every
-   * class reads in both themes. Each is dark enough in light mode, and light
-   * enough in dark mode, to stand as a 3:1 graphic on the card it sits on.
+   * class reads on the card. Each is dark enough to stand as a 3:1 graphic on
+   * the card it sits on.
    */
   --course-red: oklch(0.56 0.19 25);
   --course-blue: oklch(0.53 0.17 255);
@@ -69,43 +63,6 @@
    */
   --field-border-width: 1px;
   --field-border: oklch(0.62 0.01 286);
-}
-
-.dark,
-[data-theme="dark"] {
-  --margin-red: oklch(0.7 0.19 25);
-  --margin-red-soft: oklch(0.7 0.19 25 / 0.14);
-  --margin-green: oklch(0.74 0.15 150);
-  --margin-green-soft: oklch(0.74 0.15 150 / 0.14);
-
-  --course-red: oklch(0.7 0.17 25);
-  --course-blue: oklch(0.72 0.13 255);
-  --course-green: oklch(0.74 0.13 150);
-  --course-amber: oklch(0.8 0.13 75);
-  --course-teal: oklch(0.76 0.1 195);
-  --course-slate: oklch(0.72 0.03 265);
-  --paper: oklch(0.225 0.008 260);
-  --paper-line: oklch(0.85 0.02 250 / 0.07);
-  --paper-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 16px 40px -16px oklch(0 0 0 / 0.6);
-
-  /*
-   * In dark mode a blue dark enough for white text would be too dark to read
-   * as text on the near-black page, so the button turns lighter and its label
-   * turns dark: 7.13:1 on the button, 8.17:1 as text on the page (D-R6).
-   */
-  --accent: oklch(0.72 0.15 253.83);
-  --accent-foreground: oklch(0.2103 0.0059 285.89);
-
-  /*
-   * HeroUI's own dark grey, restated. The light-theme --muted above sits on
-   * :root outside any layer, so without this line it would also win in dark
-   * mode and drop muted text on the dark page to 3.21:1.
-   */
-  --muted: oklch(70.5% 0.015 286.067);
-
-  /* The same field edge in dark mode, where fields share the card's colour: 3.80:1 on the card. */
-  --field-border-width: 1px;
-  --field-border: oklch(0.56 0.01 286);
 }
 
 @theme inline {

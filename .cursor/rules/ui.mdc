@@ -1,5 +1,5 @@
 ---
-description: UI rule for the Margin frontend. Where components come from, dark and light, and motion.
+description: UI rule for the Margin frontend. Where components come from, light only, and motion.
 alwaysApply: true
 ---
 
@@ -21,13 +21,13 @@ A layout wrapper, a page section, and the paper sheet with its red margin line a
 
 Before using a HeroUI component, read its types in `frontend/node_modules/@heroui/react`. Version 3 uses compound components such as `Card.Header`, and it is not the version 2 API. Before using a Next.js API, read `frontend/node_modules/next/dist/docs/`, as `frontend/AGENTS.md` says.
 
-## Dark and light
+## Light only
 
-Every screen works in both themes. The theme follows the system at first, and the toggle in the header changes it. `next-themes` sets the `class` and `data-theme` attributes on `<html>`.
+Margin ships in light mode only. There is no dark theme, no theme toggle, and no `next-themes`. `<html>` carries no theme class or `data-theme` attribute, and `globals.css` sets `color-scheme: light` so native controls stay light when the OS is dark.
 
-Use theme tokens: `bg-background`, `text-foreground`, `bg-surface`, `text-muted`, `border-border`, `bg-accent`, `text-danger`, and the Margin tokens in `frontend/app/globals.css` (`--margin-red`, `--paper`, `--paper-line`). Do not write a raw hex color or `bg-white` or `text-black` in a component. A color that is right in one theme and unreadable in the other is the failure this rule exists to stop.
+Use theme tokens: `bg-background`, `text-foreground`, `bg-surface`, `text-muted`, `border-border`, `bg-accent`, `text-danger`, and the Margin tokens in `frontend/app/globals.css` (`--margin-red`, `--paper`, `--paper-line`). Do not write a raw hex color or `bg-white` or `text-black` in a component. Tokens keep one place to change the palette, so a color is defined once in `globals.css`.
 
-Check both themes before calling a screen done.
+Check the screen in light mode, at 200% zoom, before calling it done. Do not add a `dark:` variant or a second token set.
 
 ## Motion
 
