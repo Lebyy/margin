@@ -4,6 +4,8 @@ The product law is `.cursor/rules/project.mdc`. Follow it. The work split is `do
 
 Lebyy's machine is a MacBook Air M1 (`hw.model` is `MacBookAir10,1`, the chip is Apple M1). David's machine is a ThinkPad T480. Check the hardware before editing and again before pushing. The MacBook Air does only `L-*` tasks and must not push a `D-*` commit. The ThinkPad does only `D-*` tasks and must not push an `L-*` commit. If the machine matches neither, stop. Do not force-push.
 
+The UI rule is `.cursor/rules/ui.mdc`. Follow it for anything under `frontend/`. In short: components come only from HeroUI (`@heroui/react` version 3, https://heroui.com), then Animate UI (https://animate-ui.com, copied into `frontend/components/animate-ui/`), then shadcn/ui for a piece neither has. No other UI library and no hand-written buttons, inputs, modals, or drawers. Every screen works in dark and in light, using theme tokens and never a raw hex color. Motion comes from Animate UI or `motion/react`, is tied to something that happened, and respects `prefers-reduced-motion`. Read the component's types in `frontend/node_modules` before using it.
+
 A task is done when its commit is on `main`. Then mark the box. Do not edit `docs/BOARD.md` or `docs/index.html` to record that.
 
 ```

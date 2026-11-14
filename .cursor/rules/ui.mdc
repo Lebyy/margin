@@ -1,0 +1,56 @@
+---
+description: UI rule for the Margin frontend. Where components come from, dark and light, and motion.
+alwaysApply: true
+---
+
+# Margin UI
+
+This rule covers `frontend/`. The product law is `project.mdc`. If the two disagree, `project.mdc` wins.
+
+## Where a component comes from
+
+Use these three sources, in this order. Do not add a fourth.
+
+1. HeroUI, https://heroui.com. The package is `@heroui/react` version 3, with `@heroui/styles`. Buttons, inputs, text areas, cards, chips, tabs, modals, drawers, tooltips, tables, switches, alerts, skeletons, and spinners come from here.
+2. Animate UI, https://animate-ui.com. Its components are copied into `frontend/components/animate-ui/` through the shadcn registry (`npx shadcn@latest add @animate-ui/<name>`). Use them for motion: text effects, counting numbers, animated backgrounds, the theme toggler.
+3. shadcn/ui, https://ui.shadcn.com. Use it only for a piece neither of the first two has. It is copied into `frontend/components/ui/`.
+
+Do not hand-write a button, an input, a modal, a drawer, a tab bar, a tooltip, or a switch out of a `div`. Do not install Material UI, Chakra, Ant Design, Mantine, DaisyUI, Radix Themes, or a chart library. The heatmap is a CSS grid of HeroUI pieces.
+
+A layout wrapper, a page section, and the paper sheet with its red margin line are ours. They compose the components above and do not replace them.
+
+Before using a HeroUI component, read its types in `frontend/node_modules/@heroui/react`. Version 3 uses compound components such as `Card.Header`, and it is not the version 2 API. Before using a Next.js API, read `frontend/node_modules/next/dist/docs/`, as `frontend/AGENTS.md` says.
+
+## Dark and light
+
+Every screen works in both themes. The theme follows the system at first, and the toggle in the header changes it. `next-themes` sets the `class` and `data-theme` attributes on `<html>`.
+
+Use theme tokens: `bg-background`, `text-foreground`, `bg-surface`, `text-muted`, `border-border`, `bg-accent`, `text-danger`, and the Margin tokens in `frontend/app/globals.css` (`--margin-red`, `--paper`, `--paper-line`). Do not write a raw hex color or `bg-white` or `text-black` in a component. A color that is right in one theme and unreadable in the other is the failure this rule exists to stop.
+
+Check both themes before calling a screen done.
+
+## Motion
+
+Motion comes from Animate UI components or from `motion/react`. Use the best animation the three sources offer for the moment, and keep it tied to something that happened:
+
+- A new chat message slides in.
+- The hint level moves to its new rung.
+- A number on the dashboard counts to the value the API returned.
+- The debug drawer slides from the side.
+- The guard catch pulses once.
+
+Do not animate on a loop to decorate. Do not delay content behind an entrance longer than 400 ms. Respect `prefers-reduced-motion`: with it set, things appear without moving.
+
+An animated number shows the value the API returned. It never shows a number the client computed or invented on the way.
+
+## The look
+
+Paper, a red margin line, and the hint level always in view. The student page and the professor page share them, so the two halves read as one product. The student page must not look like a default chat template.
+
+## Accessibility
+
+Visible focus, a logical tab order, labels on every field, contrast that passes in both themes, and a layout that still works at 200% zoom.
+
+## What the screens must never show
+
+The answer key and the canary are not in a prop, a network body the student page reads, or the rendered HTML. The student sees no score, rank, or class average. The professor list is not sorted into a leaderboard. No screen invents a student, a turn, or a percent, and no label calls data simulated, fake, dummy, or placeholder.
