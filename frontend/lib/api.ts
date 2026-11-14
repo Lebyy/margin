@@ -344,7 +344,7 @@ export const api = {
   health: () => request<{ ok: boolean; db: string }>("GET", "/health"),
   listAssignments: () => request<{ assignments: AssignmentListItem[] }>("GET", "/api/assignments"),
   assignment: (id: string) => request<Assignment>("GET", `/api/assignments/${q(id)}`),
-  profAssignment: (id: string) => request<Assignment & { has_answer_key: boolean }>("GET", `/api/prof/assignments/${q(id)}`),
+  profAssignment: (id: string) => request<Assignment & { has_answer_key: boolean; lecture_ids?: string[] }>("GET", `/api/prof/assignments/${q(id)}`),
   /** The body is sent as JSON. The key is never placed in a URL, where it would land in history and server logs. */
   saveAssignment: (form: AssignmentForm) => request<{ _id: string }>("POST", "/api/prof/assignments", form),
   study: (id: string) => request<{ cards: StudyCard[] }>("GET", `/api/assignments/${q(id)}/study`),

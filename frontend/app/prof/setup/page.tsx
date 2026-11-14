@@ -1,11 +1,11 @@
 "use client";
 
-import { Alert, Button, Card, Chip, Description, Input, Label, Radio, RadioGroup, Spinner, TextArea, TextField } from "@heroui/react";
+import { Alert, Button, Card, Checkbox, CheckboxGroup, Chip, Description, Input, Label, Radio, RadioGroup, Spinner, Switch, TextArea, TextField } from "@heroui/react";
 import { ArrowRight, Check, FilePlus2, Lock, Plus, Trash2 } from "lucide-react";
 import NextLink from "next/link";
 import { useEffect, useState } from "react";
 import { Paper } from "@/components/paper";
-import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, MAX_QUESTIONS, type AssignmentKind, type HintLevel } from "@/lib/api";
+import { api, ApiError, LEVEL_HELP, LEVEL_NAME, MAX_NOTES_CHARS, MAX_QUESTIONS, type AssignmentKind, type CourseListItem, type HintLevel, type Lecture } from "@/lib/api";
 import { EXAMPLES } from "@/lib/examples";
 import { KIND } from "@/lib/kinds";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,12 @@ type Form = {
   hint_ceiling: string;
   /** Questions 2 and on. The prompt and key above are question 1. */
   more: MoreQuestion[];
+  /** The due time as the date-time field holds it, in the professor's local time ("2026-11-17T23:59"), or "" for none. */
+  due_at: string;
+  /** Margin is on for this assignment. Off, students see the work and no tutor. */
+  margin_enabled: boolean;
+  /** Lectures of this class whose slides the level-2 hint cites. */
+  lecture_ids: string[];
 };
 
 /**
@@ -37,7 +43,15 @@ type MoreQuestion = { uid: number; prompt: string; answer_key: string; from?: nu
 
 let nextUid = 1;
 
-const EMPTY: Form = { kind: "code", course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3", more: [] };
+const EMPTY: Form = { kind: "code", course_name: "", title: "", prompt: "", answer_key: "", notes: "", concepts: "", hint_ceiling: "3", more: [], due_at: "", margin_enabled: true, lecture_ids: [] };
+
+/** An ISO time as a date-time field's value, in local time, to the minute. */
+function toLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 /**
  * The professor's setup form: the one way an assignment enters the product.
@@ -64,6 +78,32 @@ export default function SetupPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<Record<string, string>>({});
+  // The classes, to find the one the course name names, and that class's lectures for the picker.
+  const [courses, setCourses] = useState<CourseListItem[]>([]);
+  const [lectures, setLectures] = useState<Lecture[]>([]);
+  const courseId = courses.find((c) => c.name.toLowerCase() === form.course_name.trim().toLowerCase())?.id ?? null;
+
+  useEffect(() => {
+    let live = true;
+    api
+      .courses()
+      .then((r) => live && setCourses(r.courses))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // A new class name has no lectures yet; an existing one lists its own. Cleared in the callback, not the effect body, so the list never shows another class's lectures under this name.
+  useEffect(() => {
+    let live = true;
+    (courseId ? api.lectures(courseId) : Promise.resolve({ lectures: [] as Lecture[] }))
+      .then((r) => live && setLectures(r.lectures))
+      .catch(() => live && setLectures([]));
+    return () => {
+      live = false;
+    };
+  }, [courseId]);
 
   // Reload the assignment this browser last saved, without its key.
   useEffect(() => {
@@ -89,6 +129,9 @@ export default function SetupPage() {
           hint_ceiling: String(a.hint_ceiling),
           // Later questions come back with their prompts and never their keys; `from` keeps each stored key on save.
           more: (a.questions ?? []).slice(1).map((prompt, i) => ({ uid: nextUid++, prompt, answer_key: "", from: i + 1 })),
+          due_at: toLocalInput(a.due_at),
+          margin_enabled: a.margin_enabled !== false,
+          lecture_ids: a.lecture_ids ?? [],
         });
       })
       .catch(() => undefined)
@@ -98,7 +141,7 @@ export default function SetupPage() {
     };
   }, []);
 
-  const set = (field: Exclude<keyof Form, "more">) => (value: string) => {
+  const set = (field: Exclude<keyof Form, "more" | "margin_enabled" | "lecture_ids">) => (value: string) => {
     setForm((f) => ({ ...f, [field]: value }));
     setSaved(null);
   };
@@ -144,6 +187,10 @@ export default function SetupPage() {
         notes: form.notes,
         concepts,
         hint_ceiling: Number(form.hint_ceiling),
+        due_at: form.due_at ? new Date(form.due_at).toISOString() : null,
+        margin_enabled: form.margin_enabled,
+        // Only lectures of the class this form is saving into; a link left from another class name is dropped.
+        lecture_ids: form.lecture_ids.filter((lid) => lectures.some((l) => l.id === lid)),
         questions: form.more.map((m) => ({
           prompt: m.prompt.trim(),
           ...(m.answer_key.trim() ? { answer_key: m.answer_key.trim() } : m.from !== undefined ? { from: m.from } : {}),
@@ -250,7 +297,7 @@ export default function SetupPage() {
                     size="sm"
                     variant="ghost"
                     onPress={() => {
-                      setForm({ kind: e.kind, course_name: e.course_name, title: e.title, prompt: e.prompt, answer_key: e.answer_key, notes: e.notes, concepts: e.concepts.join("\n"), hint_ceiling: String(e.hint_ceiling), more: [] });
+                      setForm({ kind: e.kind, course_name: e.course_name, title: e.title, prompt: e.prompt, answer_key: e.answer_key, notes: e.notes, concepts: e.concepts.join("\n"), hint_ceiling: String(e.hint_ceiling), more: [], due_at: "", margin_enabled: true, lecture_ids: [] });
                       setIssues({});
                     }}
                   >
@@ -363,6 +410,65 @@ export default function SetupPage() {
                   <Plus className="size-4" aria-hidden /> Add question
                 </Button>
               </div>
+            ) : null}
+
+            {/*
+              When it is due, and whether Margin is on for it. Off, students see the
+              prompt and the due date and are told the professor has not turned Margin
+              on; no tutor route will answer for it.
+            */}
+            <div className="grid gap-4 sm:grid-cols-2 sm:items-end">
+              <TextField value={form.due_at} onChange={set("due_at")} fullWidth name="due_at">
+                <Label>Due</Label>
+                <Input type="datetime-local" />
+                <Description>Leave empty for no due date.</Description>
+              </TextField>
+              <Switch
+                isSelected={form.margin_enabled}
+                onChange={(on) => {
+                  setForm((f) => ({ ...f, margin_enabled: on }));
+                  setSaved(null);
+                }}
+                name="margin_enabled"
+              >
+                <Switch.Content>
+                  <Switch.Control>
+                    <Switch.Thumb />
+                  </Switch.Control>
+                  Margin is on for this assignment
+                </Switch.Content>
+              </Switch>
+            </div>
+
+            {/*
+              The lectures this assignment covers. Their slides are what the level-2
+              hint searches and cites as [Lecture n, slide p], which links to that
+              slide. With none chosen, the hint cites the notes below, as before.
+            */}
+            {lectures.length > 0 ? (
+              <CheckboxGroup
+                value={form.lecture_ids}
+                onChange={(ids) => {
+                  setForm((f) => ({ ...f, lecture_ids: ids }));
+                  setSaved(null);
+                }}
+                name="lecture_ids"
+              >
+                <Label>Lectures this assignment covers</Label>
+                <Description>Margin&rsquo;s second hint points to these slides.</Description>
+                {lectures.map((l) => (
+                  <Checkbox key={l.id} value={l.id}>
+                    <Checkbox.Content>
+                      <Checkbox.Control>
+                        <Checkbox.Indicator />
+                      </Checkbox.Control>
+                      Lecture {l.lecture_number}: {l.title}
+                    </Checkbox.Content>
+                  </Checkbox>
+                ))}
+              </CheckboxGroup>
+            ) : courseId ? (
+              <p className="text-sm text-muted">This class has no lecture slides yet. Upload them on the class page and they can be chosen here.</p>
             ) : null}
 
             {/* A whole lecture can be pasted here (D-R5). The server caps notes at

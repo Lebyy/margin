@@ -1155,7 +1155,9 @@ export function createRouter(deps: RouteDeps = {}): Router {
       res.status(404).json({ error: "assignment_not_found" });
       return;
     }
-    res.json({ ...view, has_answer_key: true });
+    // The lectures this assignment covers, for the setup form's picker. A professor field: the student view does not carry it.
+    const linked = await Assignment.findById(view.id).select("lecture_ids").lean();
+    res.json({ ...view, has_answer_key: true, lecture_ids: (linked?.lecture_ids ?? []).map(String) });
   });
 
   /**

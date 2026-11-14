@@ -16,7 +16,8 @@ import { SketchPad, type CanvasImage, type Stroke } from "@/components/student/s
 import { Quiz } from "@/components/student/quiz";
 import { StudyPanel } from "@/components/student/study-panel";
 import { ReflectionCard } from "@/components/student/reflection-card";
-import { api, ApiError, conceptLabel, STRUGGLE_LABEL, type Assignment, type Drawing, type HintLevel, type PhotoBox, type Reflection, type StudentProgress, type TurnReply } from "@/lib/api";
+import { CitationContext, CitedText } from "@/components/student/cited-text";
+import { api, ApiError, conceptLabel, STRUGGLE_LABEL, type Assignment, type Drawing, type HintLevel, type Lecture, type PhotoBox, type Reflection, type StudentProgress, type TurnReply } from "@/lib/api";
 import { PHOTO_ACCEPT, preparePhoto } from "@/lib/photo";
 import { splitTurn } from "@/lib/attempt";
 import { browser } from "@/lib/browser";
@@ -119,6 +120,8 @@ export default function StudentAssignmentPage() {
   const [plan, setPlan] = useState("");
   /** The class's code for the breadcrumb ("PHYS 101"). Loaded beside the assignment; the class name stands in until it arrives or if there is none. */
   const [courseCode, setCourseCode] = useState("");
+  /** The class's lectures, so "[Lecture 3, slide 9]" in a reply can link to that slide. Empty until loaded, and then citations are plain text. */
+  const [lectures, setLectures] = useState<Lecture[]>([]);
   /** On a wide screen Margin sits beside the work. Below `lg` it opens as a bottom sheet from an "Ask Margin" button, so the work keeps the whole width. */
   const wide = useMedia("(min-width: 1024px)");
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -145,6 +148,10 @@ export default function StudentAssignmentPage() {
           api
             .course(a.course_id)
             .then((c) => live && setCourseCode(c.code))
+            .catch(() => undefined);
+          api
+            .lectures(a.course_id)
+            .then((r) => live && setLectures(r.lectures))
             .catch(() => undefined);
         }
         setCode(browser.code(assignmentId));
@@ -499,7 +506,7 @@ export default function StudentAssignmentPage() {
   const header = (
     <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
-          <Breadcrumbs>
+          <Breadcrumbs className="flex-wrap">
             <Breadcrumbs.Item href="/">My courses</Breadcrumbs.Item>
             {assignment.course_id ? <Breadcrumbs.Item href={`/course/${assignment.course_id}?tab=assignments`}>{courseCode || assignment.course_name}</Breadcrumbs.Item> : null}
             <Breadcrumbs.Item>{assignment.title}</Breadcrumbs.Item>
@@ -507,6 +514,8 @@ export default function StudentAssignmentPage() {
           <h1 className="mt-2 font-serif text-4xl font-semibold tracking-tight">{assignment.title}</h1>
           <DueLine dueAt={assignment.due_at ?? null} submitted={reflection !== null} />
         </div>
+        {/* With Margin off there is no ladder to climb and no server work to show, so neither control is drawn. */}
+        {assignment.margin_enabled === false ? null : (
         <div className="flex items-center gap-1">
           {/* A topic has no ladder: nothing is held back, so there is no level to show. */}
           {isTopic ? (
@@ -521,6 +530,7 @@ export default function StudentAssignmentPage() {
             <Tooltip.Content>Demo tools. Ctrl .</Tooltip.Content>
           </Tooltip>
         </div>
+        )}
     </header>
   );
 
@@ -705,6 +715,7 @@ export default function StudentAssignmentPage() {
   }
 
   return (
+    <CitationContext.Provider value={assignment.course_id ? { courseId: assignment.course_id, lectures } : null}>
     <div className="flex flex-col gap-5">
       {header}
 
@@ -847,6 +858,7 @@ export default function StudentAssignmentPage() {
 
       <DebugDrawer isOpen={drawerOpen} onOpenChange={setDrawerOpen} turns={debug} ceiling={assignment.hint_ceiling} onDemo={sessionId ? () => void send(DEMO_ATTACK, false) : undefined} demoBusy={sending} />
     </div>
+    </CitationContext.Provider>
   );
 }
 
@@ -966,7 +978,7 @@ function Turn({ turn, isDemo }: { turn: ChatTurn; isDemo: boolean }) {
   return (
     <div className="border-l-2 border-margin-red pl-3">
       {turn.level ? <p className="text-xs font-medium text-margin-red">Hint {turn.level}</p> : null}
-      <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh && !turn.live ? <Typed text={turn.content} /> : turn.content}</p>
+      <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh && !turn.live ? <Typed text={turn.content} /> : <CitedText text={turn.content} />}</p>
     </div>
   );
 }
@@ -991,6 +1003,8 @@ function Typed({ text }: { text: string }) {
   }, [text]);
   const still = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const visible = still ? text : text.slice(0, shown);
+  // Once the whole reply is out, it is shown with its slide citations as links.
+  if (still || shown >= text.length) return <CitedText text={text} />;
   return (
     <>
       <span className="sr-only">{text}</span>

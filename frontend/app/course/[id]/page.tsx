@@ -108,7 +108,7 @@ export default function CoursePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Breadcrumbs>
+      <Breadcrumbs className="flex-wrap">
         <Breadcrumbs.Item href="/">My courses</Breadcrumbs.Item>
         <Breadcrumbs.Item>{courseShortName(course)}</Breadcrumbs.Item>
       </Breadcrumbs>
