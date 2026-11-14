@@ -26,7 +26,25 @@ export const FAST_MODEL = "gemini-3.8-flash";
 export const MODEL_LOCATION = "global";
 
 /** The Cloud project that holds the express key. The SDK puts this in the Agent Platform path. */
-const CLOUD_PROJECT = "project-9f1acacd-fa08-4a3e-9e0";
+export const CLOUD_PROJECT = "project-9f1acacd-fa08-4a3e-9e0";
+
+/**
+ * The host the express key can call.
+ * generativelanguage.googleapis.com is AI Studio. This key is rejected there with 402, because the trial credit does not cover that host.
+ */
+export const AGENT_PLATFORM_HOST = "https://aiplatform.googleapis.com";
+
+/**
+ * The base URL and version string for a client that builds `.../models/<id>:generateContent` itself.
+ * ChatGoogleGenerativeAI does that, and its default host is AI Studio. The project and `global` have to sit in front of `models/`, or Carbon 404s as if the model were missing.
+ * tutor.ts is the only caller. A second copy of this path would let one client drift back to a regional host.
+ */
+export function agentPlatformRequest(): { baseUrl: string; apiVersion: string } {
+  return {
+    baseUrl: AGENT_PLATFORM_HOST,
+    apiVersion: `v1/projects/${CLOUD_PROJECT}/locations/${MODEL_LOCATION}/publishers/google`,
+  };
+}
 
 /** Who is asking. There is no tutor role. Adding one would route the tutor through this file. */
 export type ModelRole = "guard" | "scribe" | "vision";
