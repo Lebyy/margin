@@ -10,6 +10,7 @@ import { CodeEditor } from "@/components/student/code-editor";
 import { DebugDrawer, type DebugTurn } from "@/components/student/debug-drawer";
 import { HintLadder } from "@/components/student/hint-ladder";
 import { MicButton } from "@/components/student/mic-button";
+import { TalkButton } from "@/components/student/talk-button";
 import { PhotoMark } from "@/components/student/photo-mark";
 import { SketchPad, type CanvasImage, type Stroke } from "@/components/student/sketch-pad";
 import { Quiz } from "@/components/student/quiz";
@@ -625,6 +626,12 @@ export default function StudentAssignmentPage() {
                           </>
                         )}
                         <MicButton onText={setQuestion} isDisabled={sending} />
+                        <TalkButton
+                          sessionId={sessionId}
+                          isDisabled={sending}
+                          onCaption={(role, text) => setTurns((prev) => [...prev, { id: crypto.randomUUID(), role, content: text }])}
+                          onError={setSendError}
+                        />
                         {codeIsNew ? (
                           <Tooltip delay={200}>
                             <Tooltip.Trigger>

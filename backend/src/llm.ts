@@ -1,8 +1,9 @@
 // The only file that imports the Gemini SDK.
 // Guard, scribe, and coach call completeJson. Vision calls it too, because a photo still has to come back as JSON.
 // The tutor does not. tutor.ts calls createDeepAgent. Importing the SDK from that file would make two model doors, and the identity strip would be optional on one of them.
+// Talk calls openLive. The live session stays in this file so the key, the project, and the host are not copied into a second client.
 
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, Modality, ThinkingLevel, Type, type LiveServerMessage } from "@google/genai";
 import { z } from "zod";
 
 /**
@@ -31,6 +32,13 @@ export const TUTOR_MODEL = FAST_MODEL;
  * Dropping this sends the next call to a regional host the project cannot use.
  */
 export const MODEL_LOCATION = "global";
+
+/**
+ * The realtime voice model, and the only region that serves it.
+ * Checked on this project on 2026-11-14. `global` closes the socket with 1008, and `us` accepts a session with audio and a function declaration. The other models stay on `global`. Pointing them at `us` 404s Carbon.
+ */
+export const LIVE_MODEL = "gemini-3.8-live";
+export const LIVE_LOCATION = "us";
 
 /** The Cloud project that holds the express key. The SDK puts this in the Agent Platform path. */
 export const CLOUD_PROJECT = "project-9f1acacd-fa08-4a3e-9e0";
@@ -301,4 +309,121 @@ export function generateSpeech(text: string): Promise<MediaPart | null> {
     responseModalities: ["AUDIO"],
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
   });
+}
+
+/** What one live session reports. Audio is raw PCM from the model. Text is a transcript, not something to play. */
+export type LiveEvent =
+  | { type: "audio"; pcm: Buffer }
+  | { type: "inputText"; text: string }
+  | { type: "outputText"; text: string }
+  | { type: "turn" }
+  | { type: "interrupted" }
+  | { type: "tool"; id: string; name: string; args: Record<string, unknown> };
+
+/**
+ * The handle Talk uses for one conversation.
+ * `sendAudio` is 16-bit little-endian PCM at 16 kHz. `sendText` is a typed line, already safe to show the model. `sendToolResult` answers one function call.
+ */
+export type LiveSession = {
+  sendAudio(pcm: Buffer): void;
+  sendText(text: string): void;
+  sendToolResult(id: string, name: string, result: string): void;
+  close(): void;
+};
+
+/**
+ * Opens one Gemini 3.8 Live session on the `us` region.
+ * The key stays in this process. A missing key throws, and the caller tells the student voice is unavailable instead of opening a socket that cannot answer.
+ * `search` adds cite_notes. The declaration is the only tool, so a session that should not search the notes is opened without it.
+ */
+export async function openLive(input: {
+  system: string;
+  search: boolean;
+  onEvent: (event: LiveEvent) => void;
+}): Promise<LiveSession> {
+  const apiKey = process.env.LLM_API_KEY;
+  if (!apiKey) throw new Error("LLM_API_KEY is empty");
+
+  const ai = new GoogleGenAI({
+    vertexai: true,
+    apiKey,
+    project: CLOUD_PROJECT,
+    location: LIVE_LOCATION,
+  });
+
+  const session = await ai.live.connect({
+    model: LIVE_MODEL,
+    config: {
+      responseModalities: [Modality.AUDIO],
+      systemInstruction: stripIdentity(input.system),
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
+      ...(input.search
+        ? {
+            tools: [
+              {
+                functionDeclarations: [
+                  {
+                    name: "cite_notes",
+                    description: "Search the professor's notes. The query is the concept the student is stuck on, in a few words.",
+                    parameters: {
+                      type: Type.OBJECT,
+                      properties: { query: { type: Type.STRING } },
+                      required: ["query"],
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        : {}),
+    },
+    callbacks: {
+      onopen() {},
+      onerror() {},
+      onclose() {},
+      onmessage(message: LiveServerMessage) {
+        const content = message.serverContent;
+        if (content?.inputTranscription?.text) {
+          input.onEvent({ type: "inputText", text: content.inputTranscription.text });
+        }
+        if (content?.outputTranscription?.text) {
+          input.onEvent({ type: "outputText", text: content.outputTranscription.text });
+        }
+        for (const call of message.toolCall?.functionCalls ?? []) {
+          input.onEvent({
+            type: "tool",
+            id: call.id ?? "",
+            name: call.name ?? "",
+            args: call.args ?? {},
+          });
+        }
+        if (message.data) {
+          input.onEvent({ type: "audio", pcm: Buffer.from(message.data, "base64") });
+        }
+        if (content?.interrupted) input.onEvent({ type: "interrupted" });
+        if (content?.turnComplete) input.onEvent({ type: "turn" });
+      },
+    },
+  });
+
+  return {
+    sendAudio(pcm) {
+      if (pcm.length === 0) return;
+      session.sendRealtimeInput({ audio: { data: pcm.toString("base64"), mimeType: "audio/pcm;rate=16000" } });
+    },
+    sendText(text) {
+      const spoken = stripIdentity(text).trim();
+      if (!spoken) return;
+      session.sendClientContent({ turns: spoken, turnComplete: true });
+    },
+    sendToolResult(id, name, result) {
+      session.sendToolResponse({
+        functionResponses: [{ id, name, response: { result: stripIdentity(result) } }],
+      });
+    },
+    close() {
+      session.close();
+    },
+  };
 }
