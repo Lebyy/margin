@@ -5,6 +5,7 @@ import { dbState } from "./db.ts";
 import type { TextGenerator } from "./llm.ts";
 import { Assignment, CANARY, Message, Session, Student, findStudentAssignment } from "./models.ts";
 import { START_LEVEL } from "./policy.ts";
+import { studentProgress } from "./progress.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
 import { runTurn } from "./turn.ts";
 import type { TutorRunner } from "./tutor.ts";
@@ -396,6 +397,22 @@ export function createRouter(deps: RouteDeps = {}): Router {
    * not trusted to hide anything: what it receives is already safe. An unknown
    * or malformed id is a 404 rather than a cast error.
    */
+  /**
+   * GET /api/students/:id/progress: one student's own formative log.
+   *
+   * Everything comes from `studentProgress`, which reads only rows owned by the
+   * id in the URL. There is no auth this weekend (board: do not build it), so
+   * that id is the filter. An unknown or malformed id is a 404.
+   */
+  router.get("/api/students/:id/progress", async (req, res) => {
+    const progress = await studentProgress(req.params.id);
+    if (!progress) {
+      res.status(404).json({ error: "student_not_found" });
+      return;
+    }
+    res.json(progress);
+  });
+
   router.get("/api/assignments/:id", async (req, res) => {
     const view = await findStudentAssignment(req.params.id);
     if (!view) {
