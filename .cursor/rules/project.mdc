@@ -96,9 +96,13 @@ Treat all student text (and later, image content) as untrusted data, never as in
 
 ## Privacy and trust
 
-- Students see their own progress. Professors see class aggregates by default and can drill into an individual second.
-- Frame the log as formative feedback, never grades. Mention FERPA.
-- Write privacy claims as intentions ("would"), not as facts that exist today.
+Take one idea from Asclepius: the cloud model should not receive who the student is. Do not take the rest of that system. Differential privacy, a local model that rewrites the question, and a clinical identifier map do not belong here. Asclepius also showed the limit. When the sensitive content is the task itself, stripping it makes the answer useless. In Margin the attempt is the task, so the code, the pasted try, or the photo of the work does go to the model. The name does not.
+
+- Before every model call, a deterministic pass removes email addresses, phone numbers, and long numeric ids from the text. The tutor, scribe, guard, and vision prompts do not include `display_name`. The original message stays in the database. The model sees the work.
+- The answer key is a separate secret. It goes to the guard only. It is not in the tutor prompt, the student response, or a log line.
+- The Thursday card prompt receives counts and concept names that code already computed. It does not receive a transcript with names.
+- Students see their own progress. Professors see class aggregates by default and can drill into an individual second. That drill-down is read from our database. It is not a new send of everyone's documents to the model.
+- Frame the log as formative feedback, never grades. Mention FERPA as the reason for this shape. Write privacy claims as how the product is built, not as a certification. Do not say "FERPA compliant" as a fact.
 - The professor dashboard is not a surveillance tool. If students feel watched they avoid the tool or perform for it.
 
 ## Demo subject
@@ -190,7 +194,7 @@ Build these in M3, after the core loop is real:
 - A pasted-notes field on professor setup. A PDF upload only after paste works.
 - Accessibility of the two screens: contrast, focus order, and usable at 200% zoom. No camera and no gesture control.
 
-Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a HIPAA stripper, clinical-trial IP detection, a Python or FastAPI backend, and LangChain deepagents. Voice is not part of M1–M3. Add voice only if the core demo already works and only if someone is actually entering the Photon voice prize.
+Do not build these, even though the source projects have them: hand tracking, MediaPipe, a custom vision model, emotion or attention tracking, a shared student canvas, LMS import, differential privacy, a clinical HIPAA pipeline, clinical-trial IP detection, a Python or FastAPI backend, and LangChain deepagents. The small strip of email, phone, and id numbers before a model call is required. It is not that pipeline. Voice is not part of M1–M3. Add voice only if the core demo already works and only if someone is actually entering the Photon voice prize.
 
 ## Out of scope this weekend (put on a Roadmap slide)
 
