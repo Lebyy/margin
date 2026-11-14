@@ -14,6 +14,13 @@ import mongoose from "mongoose";
  * that clears a shared name deletes this run's assignment while the API is
  * still booting, and the persistence check then looks like the boot wiped it.
  *
+ * Atlas refuses a database name over 38 bytes, and the refusal comes from the
+ * first write, inside before(). The suite then never reaches after(), the
+ * connection stays open, and node --test waits forever instead of failing.
+ * The pid's length varies (5 digits one run, 6 the next), so a fixed-length
+ * guess passed for days and then hung. The name is therefore cut to fit: the
+ * unique suffix is kept whole and the caller's name is shortened if needed.
+ *
  * Returns undefined for no URI, or for one the URL parser cannot read (such as
  * a multi-host replica set string). The caller skips instead of touching the
  * real database.
@@ -22,12 +29,24 @@ export function testUri(dbName: string, uri = process.env.MONGODB_URI): string |
   if (!uri) return undefined;
   try {
     const url = new URL(uri);
-    const unique = `${dbName}_${process.pid}_${randomBytes(4).toString("hex")}`;
-    url.pathname = `/${unique}`;
+    url.pathname = `/${uniqueDbName(dbName)}`;
     return url.toString();
   } catch {
     return undefined;
   }
+}
+
+/** Atlas's limit on a database name, in bytes. */
+export const MAX_DB_NAME = 38;
+
+/**
+ * The caller's name plus this process's pid and 4 random bytes, at most
+ * MAX_DB_NAME bytes. The pid is written in base 36 to keep the suffix short;
+ * the suffix is what keeps two runs apart, so it is never the part cut.
+ */
+export function uniqueDbName(dbName: string, pid = process.pid): string {
+  const suffix = `_${pid.toString(36)}_${randomBytes(4).toString("hex")}`;
+  return dbName.slice(0, MAX_DB_NAME - suffix.length) + suffix;
 }
 
 /**
