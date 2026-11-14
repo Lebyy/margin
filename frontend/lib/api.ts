@@ -64,6 +64,13 @@ export type PhotoBox = { x: number; y: number; w: number; h: number };
  */
 export type PhotoReply = { step: string; box: PhotoBox; question: string; level: HintLevel };
 
+/**
+ * Revision cards for one concept (D-R4). The server wrote them from the
+ * professor's notes and ran the guard's check on each one. `concept` is null
+ * when the student has not struggled with anything yet.
+ */
+export type Flashcards = { concept: string | null; cards: { front: string; back: string }[] };
+
 export type SessionStart = { session_id: string; student_id: string; assignment_id: string; level: HintLevel };
 
 export type SessionMessages = {
@@ -226,6 +233,12 @@ export const api = {
   /** The photo as base64 without a data: prefix, in the type it was encoded as. */
   sendPhoto: (sessionId: string, image: { mimeType: string; base64: string }) =>
     request<PhotoReply>("POST", `/api/sessions/${q(sessionId)}/messages`, { image }),
+  /** Without `concept`, the server picks this student's weakest concept from their own labels. */
+  flashcards: (studentId: string, assignmentId: string, concept?: string) =>
+    request<Flashcards>(
+      "GET",
+      `/api/students/${q(studentId)}/flashcards?assignment_id=${q(assignmentId)}${concept ? `&concept=${q(concept)}` : ""}`,
+    ),
   progress: (studentId: string) => request<StudentProgress>("GET", `/api/students/${q(studentId)}/progress`),
   classSummary: (assignmentId: string) => request<ClassSummary>("GET", `/api/prof/class-summary?assignment_id=${q(assignmentId)}`),
   roster: (assignmentId: string) => request<Roster>("GET", `/api/prof/students?assignment_id=${q(assignmentId)}`),

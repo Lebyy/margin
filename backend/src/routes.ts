@@ -21,6 +21,7 @@ import { classSummary, generateThursdayCard } from "./coach.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
 import { runTurn } from "./turn.ts";
 import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
+import { studentFlashcards } from "./flashcards.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { GuardVerdict, HintLevel } from "./types.ts";
 
@@ -203,6 +204,8 @@ export type RouteDeps = {
   coach?: TextGenerator;
   /** Snap-your-work: the marked step and box for a photo. */
   vision?: TextGenerator;
+  /** Revision cards written from the notes. */
+  flashcards?: TextGenerator;
 };
 
 /** Answers a zod failure with field paths only, never the submitted values. */
@@ -603,6 +606,29 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
     res.json(progress);
+  });
+
+  /**
+   * GET /api/students/:id/flashcards?assignment_id=&concept=: revision cards (D-R4).
+   *
+   * For this student's weakest concept on the assignment, or for `concept`
+   * when the Revise tab's buttons pick another. Built by flashcards.ts from the
+   * notes only, and every card passed the guard's deterministic check before
+   * it reaches this response. `concept: null` with no cards means the student
+   * has not struggled with anything yet. 503 when the model could not write them.
+   */
+  router.get("/api/students/:id/flashcards", async (req, res) => {
+    const concept = typeof req.query.concept === "string" && req.query.concept.length > 0 ? req.query.concept : undefined;
+    const result = await studentFlashcards(req.params.id, String(req.query.assignment_id ?? ""), {
+      concept,
+      generate: deps.flashcards,
+    });
+    if (result.ok) {
+      res.json({ concept: result.concept, cards: result.cards });
+      return;
+    }
+    const status = { student_not_found: 404, assignment_not_found: 404, unknown_concept: 400, flashcards_unavailable: 503 }[result.reason];
+    res.status(status).json({ error: result.reason });
   });
 
   /**

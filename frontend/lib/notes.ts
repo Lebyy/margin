@@ -1,11 +1,10 @@
-// Two things built from the professor's pasted notes, both on the student's
-// own machine: a keyword search (Cortex's "search the source", with no search
-// service) and revision cards (MindPad's revise loop, without the answer).
+// A keyword search over the professor's pasted notes, on the student's own
+// machine (Cortex's "search the source", with no search service). Revision
+// cards used to be cut here too; they now come from the server (D-R4), which
+// can run the guard's check against the answer key before a card is shown.
 //
 // The notes are in the student-safe assignment body, so nothing here asks the
-// server for more. The answer key is not in that body, which is why a card can
-// never show a solution line: the only text it can draw from is text the
-// professor chose to show the class.
+// server for more.
 
 /** One line of the notes that matched a search, with the words that matched. */
 export type NoteHit = { line: string; index: number; terms: string[] };
@@ -34,45 +33,4 @@ export function searchNotes(notes: string, query: string): NoteHit[] {
     if (terms.length > 0) hits.push({ line, index, terms });
   });
   return hits;
-}
-
-/** A revision card: a line of the notes with one term hidden, and that term. */
-export type Flashcard = { id: string; concept: string; before: string; hidden: string; after: string };
-
-/**
- * Cards for one concept, made by hiding that concept's words in the notes.
- *
- * `base_case` looks for "base case" (and "base cases") in each line. A line
- * that mentions it becomes a card with the phrase blanked. The student
- * recalls the term, then flips the card to check against the professor's own
- * sentence.
- *
- * No model writes these. A generated card could state something the professor
- * never taught, or drift toward the assignment's answer. A card cut from the
- * notes can do neither. When the notes do not mention the concept, there are
- * no cards, and the panel says so instead of inventing one.
- */
-export function flashcards(notes: string, concept: string): Flashcard[] {
-  const phrase = concept.replace(/_/g, " ").trim();
-  if (!phrase) return [];
-  // The phrase, allowing any spacing or hyphen between its words and a plural ending.
-  const pattern = new RegExp(phrase.split(/\s+/).map(escape).join("[\\s-]+") + "(?:e?s)?", "i");
-  const cards: Flashcard[] = [];
-  notes.split("\n").forEach((raw, index) => {
-    const line = raw.trim();
-    const match = pattern.exec(line);
-    if (!match) return;
-    cards.push({
-      id: `${concept}-${index}`,
-      concept,
-      before: line.slice(0, match.index),
-      hidden: match[0],
-      after: line.slice(match.index + match[0].length),
-    });
-  });
-  return cards;
-}
-
-function escape(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

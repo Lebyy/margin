@@ -1,18 +1,19 @@
 "use client";
 
-import { Button, Card, Chip, Label, SearchField, Tabs } from "@heroui/react";
+import { Button, Card, Chip, Label, SearchField, Spinner, Tabs } from "@heroui/react";
 import { RotateCcw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useMemo, useState } from "react";
-import { conceptLabel, STRUGGLE_LABEL, type StudentProgress } from "@/lib/api";
-import { flashcards, searchNotes } from "@/lib/notes";
+import { useEffect, useMemo, useState } from "react";
+import { api, conceptLabel, STRUGGLE_LABEL, type Flashcards, type StudentProgress } from "@/lib/api";
+import { searchNotes } from "@/lib/notes";
 
 /**
  * The three panels beside the chat: the student's own log, a search of the
- * professor's notes, and revision cards cut from those notes.
+ * professor's notes, and revision cards written from those notes.
  *
  * They share one card with tabs so the hint ladder above stays in view. None
- * of them calls a model, and none of them shows anything about another student.
+ * of them shows anything about another student. The cards come from the
+ * server, which writes them with a model and runs the guard's check on each.
  */
 export function SidePanels({
   progress,
@@ -29,7 +30,6 @@ export function SidePanels({
     () => (progress?.labels ?? []).filter((l) => l.assignment_id === assignmentId),
     [progress, assignmentId],
   );
-  const weakest = useMemo(() => weakestConcept(labels.map((l) => ({ concept: l.concept, struggling: l.struggle_type !== "none" }))), [labels]);
 
   return (
     <Card aria-label="Your log, notes, and revision">
@@ -58,7 +58,11 @@ export function SidePanels({
             <NotesSearch notes={notes} />
           </Tabs.Panel>
           <Tabs.Panel id="revise" className="pt-3">
-            <Revise notes={notes} concepts={concepts} weakest={weakest} />
+            {progress ? (
+              <Revise studentId={progress.student_id} assignmentId={assignmentId} concepts={concepts} turns={labels.length} />
+            ) : (
+              <p className="text-sm text-muted">Start a session to get revision cards.</p>
+            )}
           </Tabs.Panel>
         </Tabs>
       </Card.Content>
@@ -66,17 +70,6 @@ export function SidePanels({
   );
 }
 
-/**
- * The concept this student has struggled with on the most turns, or null.
- * It picks which revision cards to show first. It is this student's own count from their own labels, shown only to them, and it is not sent anywhere.
- */
-function weakestConcept(rows: { concept: string; struggling: boolean }[]): string | null {
-  const counts = new Map<string, number>();
-  for (const r of rows) if (r.struggling) counts.set(r.concept, (counts.get(r.concept) ?? 0) + 1);
-  let best: string | null = null;
-  for (const [concept, n] of counts) if (best === null || n > (counts.get(best) ?? 0)) best = concept;
-  return best;
-}
 
 /**
  * The student's own formative log: one row per message, with the concept and
@@ -160,84 +153,95 @@ function NotesSearch({ notes }: { notes: string }) {
 }
 
 /**
- * Revision cards for one concept, cut from the notes.
+ * Revision cards for one concept (D-R4), from GET /api/students/:id/flashcards.
  *
- * The first concept shown is the one this student has struggled with most. A
- * card is a line of the professor's notes with the concept's name hidden.
- * Pressing it flips to the full line. No model writes a card, so a card
- * cannot contain a line of the solution: the notes are all it can draw from.
+ * With no concept chosen, the server picks this student's weakest concept
+ * from their own labels, so the deck follows what they are stuck on. It is
+ * asked again after each turn (`turns` changes), because a new label can
+ * change the weakest concept. The concept buttons ask for another concept.
+ * Every card was written from the professor's notes and passed the guard's
+ * check on the server; this component only shows the front and flips to the
+ * back.
  */
-function Revise({ notes, concepts, weakest }: { notes: string; concepts: string[]; weakest: string | null }) {
+function Revise({ studentId, assignmentId, concepts, turns }: { studentId: string; assignmentId: string; concepts: string[]; turns: number }) {
   const [chosen, setChosen] = useState<string | null>(null);
-  const concept = chosen ?? weakest ?? concepts[0] ?? null;
-  const cards = useMemo(() => (concept ? flashcards(notes, concept) : []), [notes, concept]);
-  const [index, setIndex] = useState(0);
-  const [shown, setShown] = useState(false);
-  const card = cards[index % Math.max(cards.length, 1)];
+  // Each answer is stored with the request it answers. Until the answer for
+  // the current request arrives, the panel is loading, so a deck for the old
+  // concept is never shown under the new concept's button.
+  const request = `${studentId}|${assignmentId}|${chosen ?? ""}|${turns}`;
+  const [result, setResult] = useState<{ request: string; deck: Flashcards | null } | null>(null);
+  // Which card is up and whether it is flipped, reset whenever a new deck arrives.
+  const [view, setView] = useState({ request: "", index: 0, shown: false });
 
-  if (!concept) return <p className="text-sm text-muted">This assignment has no concepts to revise.</p>;
+  useEffect(() => {
+    let live = true;
+    api
+      .flashcards(studentId, assignmentId, chosen ?? undefined)
+      .then((deck) => live && setResult({ request, deck }))
+      .catch(() => live && setResult({ request, deck: null }));
+    return () => {
+      live = false;
+    };
+  }, [request, studentId, assignmentId, chosen]);
+
+  if (concepts.length === 0) return <p className="text-sm text-muted">This assignment has no concepts to revise.</p>;
+  const state = result?.request !== request ? "loading" : result.deck === null ? "error" : "ready";
+  const deck = state === "ready" ? result?.deck : null;
+  const concept = deck?.concept ?? chosen;
+  const cards = deck?.cards ?? [];
+  const { index, shown } = view.request === request ? view : { index: 0, shown: false };
+  const setIndex = (next: (i: number) => number) => setView({ request, index: next(index), shown: false });
+  const setShown = (next: (s: boolean) => boolean) => setView({ request, index, shown: next(shown) });
+  const card = cards[index % Math.max(cards.length, 1)];
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Concept to revise">
         {concepts.map((c) => (
-          <Button
-            key={c}
-            size="sm"
-            variant={c === concept ? "secondary" : "ghost"}
-            aria-pressed={c === concept}
-            onPress={() => {
-              setChosen(c);
-              setIndex(0);
-              setShown(false);
-            }}
-          >
+          <Button key={c} size="sm" variant={c === concept ? "secondary" : "ghost"} aria-pressed={c === concept} onPress={() => setChosen(c)}>
             {conceptLabel(c)}
           </Button>
         ))}
       </div>
-      {weakest && concept === weakest ? (
-        <p className="text-xs text-muted">Starting with the idea you have been stuck on most.</p>
-      ) : null}
-      {!card ? (
+      {state === "loading" ? (
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <Spinner size="sm" /> Writing cards from your professor&rsquo;s notes
+        </p>
+      ) : state === "error" ? (
+        <p className="text-sm text-muted">The cards could not be written just now. Try another concept, or come back after your next message.</p>
+      ) : concept === null ? (
+        <p className="text-sm text-muted">No cards yet. Once you get stuck on an idea, cards for it show up here. Or pick a concept above.</p>
+      ) : !card ? (
         <p className="text-sm text-muted">
-          The notes do not mention {conceptLabel(concept)}, so there is no card for it. Cards are only ever cut from your
-          professor&rsquo;s notes.
+          Your professor&rsquo;s notes do not cover {conceptLabel(concept)}, so there is no card for it. Cards are only written from
+          the notes.
         </p>
       ) : (
         <>
+          {chosen === null ? <p className="text-xs text-muted">Starting with the idea you have been stuck on most.</p> : null}
           <AnimatePresence mode="wait">
             <motion.div
-              key={`${card.id}-${shown}`}
+              key={`${index}-${shown}-${concept}`}
               initial={{ rotateX: -80, opacity: 0 }}
               animate={{ rotateX: 0, opacity: 1 }}
               exit={{ rotateX: 80, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="rounded-lg border border-border bg-paper px-4 py-5 font-serif text-base leading-7"
+              className={`rounded-lg border px-4 py-5 font-serif text-base leading-7 ${shown ? "border-margin-green bg-margin-green-soft" : "border-border bg-paper"}`}
+              aria-live="polite"
             >
-              {card.before}
-              {shown ? (
-                <mark className="rounded bg-margin-green-soft px-1 text-margin-green">{card.hidden}</mark>
-              ) : (
-                <span className="rounded bg-margin-red-soft px-3 text-margin-red" aria-label="hidden term">
-                  ?
-                </span>
-              )}
-              {card.after}
+              <p className="mb-1 font-sans text-xs font-medium uppercase tracking-wide text-muted">{shown ? "Answer" : "Question"}</p>
+              {shown ? card.back : card.front}
             </motion.div>
           </AnimatePresence>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="secondary" onPress={() => setShown((s) => !s)}>
-              <RotateCcw className="size-3.5" aria-hidden /> {shown ? "Hide" : "Flip"}
+              <RotateCcw className="size-3.5" aria-hidden /> {shown ? "Show question" : "Flip"}
             </Button>
             {cards.length > 1 ? (
               <Button
                 size="sm"
                 variant="ghost"
-                onPress={() => {
-                  setIndex((i) => (i + 1) % cards.length);
-                  setShown(false);
-                }}
+                onPress={() => setIndex((i) => (i + 1) % cards.length)}
               >
                 Next card
               </Button>
