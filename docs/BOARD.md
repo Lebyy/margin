@@ -19,10 +19,12 @@ Repo: https://github.com/Lebyy/margin . `npm run dev` runs the web on port 3000 
 
 Students never get the solution. Level 1 is one guiding question. Level 2 points at the professor's notes. Level 3 is a worked example of a different problem. The guard checks every draft against the hidden key. The scribe labels the turn. The professor sees a reteach card, not a grade. The demo subject is intro CS, Python recursion, `sum_list`. It is not tied to a real course or professor.
 
+This is a real MVP. Assignments, students, and turns exist only because a person created them in the app. Do not add a seed script, invented students, or any label that calls the data dummy, fake, sample, or simulated. Comment every function with why it is shaped that way and what a later edit would break. A comment that only restates the next line does not count. The full rule is in `.cursor/rules/project.mdc` under "Real MVP, and how to comment".
+
 ### Contract
 
 - Lebyy creates backend/src/types.ts in L-B1. David imports those types and does not invent a second set of field names.
-- Lebyy owns llm.ts, policy.ts, tutor.ts, guard.ts, turn.ts, and backend/test/redteam.ts. David owns schema.sql, db.ts, seed.ts, scribe.ts, coach.ts (or the card logic inside the summary module), routes.ts, and the wiring in index.ts.
+- Lebyy owns llm.ts, policy.ts, tutor.ts, guard.ts, turn.ts, and backend/test/redteam.ts. David owns schema.sql, db.ts, scribe.ts, coach.ts (or the card logic inside the summary module), routes.ts, and the wiring in index.ts. Neither person adds a seed script or invented students.
 - The message route calls runTurn. runTurn does not touch SQLite. The tutor function never receives the answer key. The guard does.
 - Student JSON is reply, level, verdict, and retries. Verdict reasons that quote the key stay on the server.
 - An image is a 501 until D-R1 is actually reliable.
@@ -31,7 +33,7 @@ Students never get the solution. Level 1 is one guiding question. Level 2 points
 ### What we took, and what we refused
 
 - **MindPad.** Taken: a screen that is more than a chat box, lecture notes in the hint, flashcards from those notes, and an accessibility pass. Not taken: hand tracking, MediaPipe, a custom neural net, emotion or attention cameras, and a shared canvas. Those are a different product, and a camera on students fights the privacy rule.
-- **Asclepius.** Taken: a deterministic check before the model, fail closed on a bad parse, a canary, an attack suite with a number per class, synthetic labeled data, and a forensic drawer. Not taken: HIPAA stripping, clinical IP detection, differential privacy, and a Python backend. The lesson we kept is to measure the text the student sees, not the model's confidence.
+- **Asclepius.** Taken: a deterministic check before the model, fail closed on a bad parse, a canary, an attack suite with a number per class, and a forensic drawer. The attack cases stay in the test file. They are not rows in the product database. Not taken: HIPAA stripping, clinical IP detection, differential privacy, and a Python backend. The lesson we kept is to measure the text the student sees, not the model's confidence.
 - **Lume.** Taken: show the exact step that is wrong, in a highlight or a red ellipse, and keep the tutor to a few sentences. Not taken: voice, unless row 4 explicitly enters the voice prize after the core demo is green.
 - **Discer.io and Cortex.** Taken: one smaller related problem, and a search over the professor's own notes. Not taken: a game, and a new search service.
 
@@ -45,7 +47,7 @@ This is the first row. Finish your eight tasks before you touch the frontend. Th
 
 Create backend/src/types.ts and backend/src/llm.ts. types.ts is the only place the shared shapes live: HintLevel 1|2|3, StruggleType (misconception, stuck_starting, syntax_or_mechanics, careless_error, none), ScribeLabel, GuardVerdict (leaks, severity none|partial|full, reason, layer deterministic|judge|fallback), and TurnResult. llm.ts exports completeJson. Use the official Gemini SDK. Look up the current model ids in Google's docs. Use a strong model for the tutor and a fast cheap model for the guard and the scribe. Validate with zod. On a bad payload, retry once, then throw. Add an empty GEMINI_API_KEY= line to .env.example.
 
-Done when. A test with a fake client returns parsed JSON, and a second test throws when the payload is not JSON. No other file imports the Gemini SDK.
+Done when. A test double that returns fixed JSON is parsed, and a second test throws when the payload is not JSON. No other file imports the Gemini SDK. The test comment names the case. It does not call the input dummy data.
 
 Do not. Do not call the model from anywhere except completeJson. Do not add LangChain or deepagents. Do not commit a key.
 
@@ -61,7 +63,7 @@ Do not. Do not ask the model which level to use. Escalation is code.
 
 Create backend/src/tutor.ts. Inputs are the level, the assignment prompt, the professor's notes, recent turns, and the student text. The type has no answer-key argument. The instruction caps the reply at 4 sentences, prefers one question, and is warm rather than preachy. Level 1 is one guiding question. Level 2 cites the professor's notes. Level 3 is a different but related problem. A direct demand for the answer gets one friendly refusal sentence and then the hint.
 
-Done when. A test with a fake model checks that the system prompt forbids the solution and that the function cannot be called with an answer key.
+Done when. A test double checks that the system prompt forbids the solution and that the function cannot be called with an answer key.
 
 Do not. Do not stream. The guard must see the whole draft. Do not let the tutor see the key.
 
@@ -85,7 +87,7 @@ Do not. Do not fail open. A parse error is a leak, not a pass.
 
 Create backend/src/turn.ts. Export runTurn(state, studentText, label). Order: policy, tutor, guard with the retries above. Return TurnResult. This file does not import the database. David calls it from the message route.
 
-Done when. A local test runs one benign turn and one 'just give me the code' turn with a fake model and no SQLite. David can import the function.
+Done when. A local test runs one benign turn and one 'just give me the code' turn through a test double, with no SQLite. David can import the function.
 
 Do not. Do not read or write tables here. Do not put the answer key into the tutor's prompt.
 
@@ -116,13 +118,13 @@ Done when. Starting the API twice keeps the rows from the first start.
 
 Do not. Do not add Supabase unless SQLite actually blocks you. Do not return answer_key from any student route.
 
-### D-B2 · Seed the demo class
+### D-B2 · The first real assignment
 
-Create backend/src/seed.ts and POST /api/dev/seed. The assignment is intro CS, Python recursion, 'Write sum_list(xs) recursively', notes that name Lecture 7 slides 12-16, concepts base_case, recursive_call_progress, return_value_propagation, and call_stack_tracing, hint ceiling 3. Seed 25 students with a fixed random seed, about 40 percent stuck on base_case, is_synthetic true. Write their scribe events in code.
+Do not create a seed script. The sum_list assignment is created through POST /api/prof/assignments: intro CS, Python recursion, 'Write sum_list(xs) recursively', notes that name Lecture 7 slides 12-16, concepts base_case, recursive_call_progress, return_value_propagation, and call_stack_tracing, hint ceiling 3. Students and scribe events appear only after a person starts a session and sends a turn.
 
-Done when. One POST makes the class summary show a base_case struggle near 40 percent. A second POST does not duplicate the class. No Gemini call happens during seed.
+Done when. Saving that assignment through the route stores one row, and the students table stays empty until POST /api/sessions.
 
-Do not. Do not spend model calls on fake students. Label the rows synthetic.
+Do not. Do not invent a class, a percent, or an is_synthetic column. Do not comment the assignment as sample data.
 
 ### D-B3 · Assignment routes
 
@@ -166,14 +168,14 @@ Do not. Do not build real auth. Still filter by the id in the URL.
 
 ### D-B8 · Class summary and Thursday card
 
-GET /api/prof/class-summary?assignment_id= counts in code. POST /api/prof/thursday-card?assignment_id= stores the card. The model may write the prose and three practice problems for the weakest concept. Pass the numbers in and tell it not to change them. A mock that returns different percents must not change the stored percents.
+GET /api/prof/class-summary?assignment_id= counts in code. POST /api/prof/thursday-card?assignment_id= stores the card. The model may write the prose and three practice problems for the weakest concept. Pass the numbers in and tell it not to change them. A test double that returns different percents must not change the stored percents.
 
-Done when. The mock test passes, and the card from the seed names the base case as the weakest concept.
+Done when. A test double that returns different percents cannot change the stored percents. The card names the weakest concept among the sessions that exist.
 
 Do not. Do not ask the model what percent struggled. The model never produces a statistic.
 
 
-**Checkpoint: GET /health returns ok. POST /api/dev/seed loads the class. GET of the assignment has no answer key. A normal question returns a level-1 hint. 'Just give me the code' does not return the solution. The red-team file has a number for every class.**
+**Checkpoint: GET /health returns ok. A professor can save the sum_list assignment through the API. GET of that assignment has no answer key. A session a person started returns a level-1 hint. 'Just give me the code' does not return the solution. The red-team file has a number for every class. The database shipped with the app has no invented students.**
 
 ## Row 2 · Frontend, the core screens
 
@@ -193,7 +195,7 @@ Do not. Do not build accounts, sessions cookies, or OAuth.
 
 Build frontend/app/student/assignment/[id]/page.tsx. Load the student-safe assignment. Show the prompt and the chat. The answer key is not in the props, the network body, or the rendered HTML.
 
-Done when. The page renders the sum_list prompt from the seed and shows replies from the message route.
+Done when. The page renders the sum_list prompt saved by the professor and shows replies from the message route.
 
 Do not. Do not add a hidden debug dump of the whole API response into the visible page. The drawer is L-F5.
 
@@ -268,15 +270,15 @@ Do not. Do not put the key in a query string.
 
 Build frontend/app/prof/dashboard/page.tsx. The first thing on the page is concepts against struggle rate, from the class summary. Numbers come from the API. The page does not recompute them.
 
-Done when. With the seed loaded, base_case is visibly the worst concept and the percent matches the API.
+Done when. After real sessions, the worst concept and its percent match the API. With no sessions, the page says the class has not studied yet.
 
 Do not. Do not draw a chart library the size of the app. A simple table or CSS grid is enough.
 
 ### D-F4 · Three-line student summary
 
-Under the heatmap, each student has three lines: concept, struggle type, and last hint level. This is the mini log. Mark synthetic students as simulated.
+Under the heatmap, each student who has a session has three lines: concept, struggle type, and last hint level. This is the mini log. Only people who used the product appear.
 
-Done when. The 25 seed students list without showing the answer key or a grade.
+Done when. The list matches the sessions in the database and shows no answer key and no grade.
 
 Do not. Do not sort students into a leaderboard.
 
@@ -290,17 +292,17 @@ Do not. Do not show the guard's private reason if it quotes the solution. Severi
 
 ### D-F6 · Thursday card on screen
 
-The dashboard shows the stored card: the weakest concept, the percent from code, three practice problems, and the time it was generated. A control runs the generate endpoint. Simulated data wears a visible simulated label.
+The dashboard shows the stored card: the weakest concept, the percent from code, three practice problems, and the time it was generated. A control runs the generate endpoint. The card describes the sessions that exist.
 
 Done when. Generate, reload, and the same card is still there. The percent matches the summary.
 
 Do not. Do not let the card say the class was graded.
 
-### D-F7 · Empty and seed states
+### D-F7 · Empty state
 
-If the database is empty, the dashboard says to seed and how, in one sentence. It does not render a blank chart that looks broken.
+If nobody has studied, the dashboard says to create an assignment and start a session. It does not render a blank chart that looks broken, and it does not offer a button that invents a class.
 
-Done when. An empty database shows that sentence. After seed, the heatmap replaces it.
+Done when. An empty database shows that sentence. After a real session, the heatmap replaces it.
 
 Do not. Do not auto-call the model on an empty page.
 
@@ -313,7 +315,7 @@ Done when. A stranger can point at what the professor is supposed to reteach wit
 Do not. Do not add course switchers, gradebooks, or LMS buttons.
 
 
-**Checkpoint: from /, a student can get a hint and fire the demo jailbreak. A professor can seed, see the base-case percent, and open the Thursday card. Both screens work at localhost:3000 against localhost:4000.**
+**Checkpoint: from /, a student can get a hint and fire the demo jailbreak. A professor who saved an assignment and has at least one real session can see the struggle percent and open the Thursday card. Both screens work at localhost:3000 against localhost:4000.**
 
 ## Row 3 · Richer demo, borrowed features
 
@@ -323,7 +325,7 @@ Start only after the core screens work. These are the pieces that stop Margin fr
 
 ### L-R1 · Canary end to end
 
-Put a canary on the seeded key, a string that is not English and not part of the solution. Thread it through the deterministic guard and through L-B8. Show 'canary absent' in the debug drawer when the check is clean.
+Put a canary on the answer key, a string that is not English and not part of the solution. Thread it through the deterministic guard and through L-B8. Show 'canary absent' in the debug drawer when the check is clean.
 
 Done when. The red-team run fails if any student-facing body contains the canary. The drawer agrees.
 
@@ -355,7 +357,7 @@ Do not. Do not draw the student's own solution on that card.
 
 ### L-R5 · Typed-line highlight
 
-If the student pastes code, mark the line that fails the simplest check (for the seed, a missing base case) and do not rewrite the line. This is Lume's 'show where', and it is the fallback if David's photo circle is cut.
+If the student pastes code, mark the line that fails the simplest check (for sum_list, a missing base case) and do not rewrite the line. This is Lume's 'show where', and it is the fallback if David's photo circle is cut.
 
 Done when. Pasting a sum_list with no base case highlights that gap and the tutor asks one question about it.
 
@@ -390,9 +392,9 @@ Do not. Do not draw the ellipse at a guessed position.
 
 ### D-R3 · Notes search for level 2
 
-When the policy picks level 2, find the citation in the professor's notes by keyword and concept. The seed must be able to return Lecture 7, slides 12-16. This is Cortex's search idea, done as a string match, and MindPad's 'use the lecture' without a PDF platform.
+When the policy picks level 2, find the citation in the professor's notes by keyword and concept. The sum_list notes must be able to return Lecture 7, slides 12-16. This is Cortex's search idea, done as a string match, and MindPad's 'use the lecture' without a PDF platform.
 
-Done when. A level-2 reply for the seed names that lecture and those slides.
+Done when. A level-2 reply on that assignment names that lecture and those slides.
 
 Do not. Do not add a vector database or an embeddings service.
 
@@ -474,9 +476,9 @@ Do not. Do not claim a pilot. Do not list Dr. Lund as a client, partner, or endo
 
 ### D-S2 · His categories
 
-The team defines the mistake categories. Keep the four seed concepts unless a real client, on record, replaces them. Say in the README that the seed is the demo set.
+The team defines the mistake categories. Keep the four sum_list concepts unless a real client, on record, replaces them. Say in the README that sum_list is the first assignment.
 
-Done when. The concept list matches the seed, or a named client's confirmed list, and the README says which.
+Done when. The concept list matches sum_list, or a named client's confirmed list, and the README says which.
 
 Do not. Do not invent categories and attribute them to Dr. Lund.
 
@@ -556,13 +558,13 @@ Done when. The sheet says both users in two lines.
 
 Do not. Do not say we replace the professor.
 
-### D-J2 · A sample Thursday card
+### D-J2 · The Thursday card
 
-Print one card from the seed: the base-case percent, 'reteach this', three practice problems. The word simulated is on the card. The percent is the one the API returns.
+Print one card from sessions the team actually ran: the weakest concept, its percent, 'reteach this', and three practice problems. The percent is the one the API returns.
 
 Done when. The number on paper matches the dashboard.
 
-Do not. Do not present synthetic students as a real class at a named university.
+Do not. Do not invent students to fill the card, and do not call the class simulated.
 
 ### D-J3 · Avidity, without a fake pilot
 

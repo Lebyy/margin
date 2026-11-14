@@ -19,6 +19,24 @@ The task brief, with ids, files, and done-when lines, is `docs/BOARD.md`. The sh
 
 Checkboxes on the web page are a local browser aid. A task is done when the commit that implements it is on `main`.
 
+## Real MVP, and how to comment
+
+This is a real product, not a prototype stuffed with stand-in records. A professor creates an assignment by saving the form. A student exists because someone started a session. A scribe event exists because a turn happened. The dashboard shows those records and no others. If nobody has studied yet, the dashboard is empty and says so. Do not invent students, turns, percents, or assignments in a seed script. Do not add `is_synthetic`, a dev seed route, sample rows, or a badge that calls the data simulated, fake, dummy, or placeholder.
+
+The demo assignment is still intro CS, Python recursion, `sum_list`. Someone types it into the product. It is not loaded by a script.
+
+Tests under `backend/test` may build the message they need in order to prove a behavior. That input stays in the test. It is never inserted into the database the app ships with. A test comment names the case and the required outcome. It does not call the input dummy, fake, sample, or placeholder data.
+
+Comments are part of the code, on every file, every function, and every branch that exists because of a product rule. A comment explains why the code is this shape, what it guarantees, and what a later edit would break. Write it the way you would explain the mechanism to the other person if they had not opened the file.
+
+A comment that restates the next line is a failed comment. Failed comments look like "get the user", "loop the messages", "return true if it leaks", "handle the error", and "set up the server". Delete them. Do not narrate the syntax. Do not leave a file with one banner and silence underneath.
+
+This belongs on the guard: "The string check runs before the model. If a normalized line from the key is already in the draft, the model is not asked. A later judgment of clean must not be able to release a draft that already contains the solution."
+
+This does not belong: "Check if the draft leaks."
+
+Do not write a comment, a log line, a UI label, or a commit message that apologizes for dummy data. There is no dummy data to apologize for.
+
 ## Problem and users
 
 - Students already use ChatGPT-style tools and get black-box solutions. Unguarded AI raises practice scores but can lower later exam scores (Bastani et al., PNAS 2025: about 17% lower on exams for unrestricted GPT-4, avoided by a guardrailed tutor). Verify exact figures before they go on a slide. State the evidence accurately: guided AI avoids the harm, it does not clearly beat studying alone.
@@ -83,16 +101,16 @@ Treat all student text (and later, image content) as untrusted data, never as in
 - Write privacy claims as intentions ("would"), not as facts that exist today.
 - The professor dashboard is not a surveillance tool. If students feel watched they avoid the tool or perform for it.
 
-## Demo subject and seed data
+## Demo subject
 
 - The demo subject is intro CS, Python recursion, `sum_list`. It is not tied to any real course or professor.
-- Demo assignment: "Write `sum_list(xs)` recursively", with an answer key, short lecture notes referencing "Lecture 7, slides 12-16", and concepts `base_case`, `recursive_call_progress`, `return_value_propagation`, `call_stack_tracing`.
-- Seed a synthetic class of 25 students with distinct misconception profiles (for example 40% forget the base case). Generate their scribe events directly in a deterministic seed script with a fixed random seed, flagged `is_synthetic=true`. Do not spend LLM calls on this. Label the data as simulated in the pitch.
+- The first assignment a person creates is "Write `sum_list(xs)` recursively", with an answer key, short lecture notes referencing "Lecture 7, slides 12-16", and concepts `base_case`, `recursive_call_progress`, `return_value_propagation`, `call_stack_tracing`.
+- Class patterns come from sessions people actually run. Do not generate a class, a misconception profile, or a percent in code.
 
 ## Data model (minimum)
 
 - `assignments`: id, course_name, title, prompt, answer_key (never sent to the student client), notes, concepts (controlled vocabulary), hint_ceiling
-- `students`: id, display_name, is_synthetic
+- `students`: id, display_name
 - `sessions`: id, student_id, assignment_id, current_level, created_at
 - `messages`: id, session_id, role, content, image_path (nullable), hint_level, guard_verdict (json), retries, created_at
 - `scribe_events`: id, message_id, student_id, assignment_id, concept, struggle_type, attempt_made, jailbreak_attempt, demonstrated_understanding, evidence
@@ -106,12 +124,11 @@ Treat all student text (and later, image content) as untrusted data, never as in
 - `POST /api/sessions/{id}/messages` send a student turn (text now; an image field is accepted but returns 501 until the photo feature lands)
 - `GET /api/students/{id}/progress` the student's own labels
 - `GET /api/prof/class-summary?assignment_id=` aggregates per concept and struggle type
-- `POST /api/prof/thursday-card?assignment_id=` generate the card
-- `POST /api/dev/seed` load the demo assignment and synthetic class
+- `POST /api/prof/thursday-card?assignment_id=` generate the card from the sessions that exist
 
 ## Frontend
 
-- `/` pick a role: student (choose a demo student) or professor.
+- `/` pick a role: student or professor. The student starts their own session. There is no list of invented students.
 - `/student/assignment/:id`: chat, a visible hint-level indicator (1-2-3), an attach-photo button (disabled, "coming soon" until the feature works), and a demo-only debug drawer showing level, guard verdict, and retries per turn, toggled with a keyboard shortcut. This is what judges see when we demo the jailbreak.
 - `/prof/setup`: form for the assignment fields.
 - `/prof/dashboard`: class heatmap of concepts against struggle rate, a three-line summary per student (the mini log), a drill-down transcript (the detailed log), and the Thursday card.
@@ -143,7 +160,7 @@ Treat all student text (and later, image content) as untrusted data, never as in
 Do these rows in order. The equal split inside each row is on the board.
 
 - M0, done: scaffold, one-command run, README, `.env.example`.
-- M1, backend, all of it: Lebyy owns the provider, hint policy, tutor, guard, `runTurn`, and the red-team suite. David owns SQLite, seed, routes, scribe, progress, class summary, and the Thursday card. David's message route calls Lebyy's `runTurn`.
+- M1, backend, all of it: Lebyy owns the provider, hint policy, tutor, guard, `runTurn`, and the red-team suite. David owns SQLite, routes, scribe, progress, class summary, and the Thursday card. There is no seed script. David's message route calls Lebyy's `runTurn`.
 - M2, frontend, after M1: Lebyy owns the student chat, hint indicator, attempt box, debug drawer, and the demo jailbreak. David owns professor setup, the heatmap, the three-line summaries, the transcript, and the Thursday card on screen.
 - M3, richer demo, after the core path works: features adapted from MindPad, Asclepius, and Lume. Listed below. Still before prize paperwork.
 - M4, sub tracks, after the demo path works on localhost.
@@ -185,14 +202,14 @@ LMS integration (LTI), real auth and role management, multiple courses, essays a
 - 0:15-1:00 Student view: ask "just give me the code", get a nudge, escalate to a slide reference, try the jailbreak and watch the guard catch it (debug drawer visible). Photo red-circle if reliable, otherwise typed work.
 - 1:00-1:45 Professor view: heatmap, one student's three-line summary, the "reteach base cases Thursday" card.
 - 1:45-2:00 Close: Harvard's CS50 already says if you use AI, use ours. Margin brings that to every course.
-- Rehearse the demo path until it works 5 times in a row. Use synthetic class data so the dashboard is never empty.
+- Rehearse the demo path until it works 5 times in a row. Run real sessions beforehand so the dashboard has something to show. Do not fill it with invented rows.
 
 ## Timeline (36 hours)
 
 - Fri night, hours 0-3: lock scope, schema, draft prompts, deploy hello world. Test the photo red circle.
 - Fri night to Sat morning, 3-12: tutor with hint ladder and leak guard. A jailbreak attempt fails live.
 - Sat midday, 12-18: scribe writes structured JSON per turn. Career fair is Saturday 11 AM, send whoever is least blocked for about 30 minutes.
-- Sat afternoon and evening, 18-26: professor dashboard and synthetic data. Photo go or no-go at 2 PM.
+- Sat afternoon and evening, 18-26: professor dashboard, filled by real sessions. Photo go or no-go at 2 PM.
 - Sat night, 26-31: integration, polish, adversarial testing of the guard.
 - Sun morning: feature freeze about 3 AM, demo video by 5 AM, submit by 7 AM. Sleep in shifts.
 
@@ -233,5 +250,6 @@ Do not enter CoStar, because it needs their building data. Do not enter Arlequin
 ## Working rules for agents
 
 - Follow DESIGN.md for UI once it exists. The work list is `docs/BOARD.md`, not a second TODO. Keep DECISIONS.md current when a real choice is made. Snap-your-work, the professor dashboard, and the Thursday card are already tasked on the board.
+- The real-MVP and comment rules above override any older line about a seed script, synthetic students, or a simulated label. If the board still says to invent a class, do not. Comment every function. Do not ship a generic one-line comment that only repeats the code.
 - Commit after each milestone with a clear message. Do not push or deploy unless asked.
 - At the end of a work session, report what works, how to run it, the red-team pass rate, known issues, and the 3 most important next tasks.
