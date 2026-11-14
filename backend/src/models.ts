@@ -467,6 +467,8 @@ const courseSchema = new Schema(
     // tokens, never a colour value, so every class reads in light and dark.
     // Null means "pick from the id", which is stable without being stored.
     accent: { type: String, enum: [...COURSE_ACCENTS, null], default: null },
+    // A professor takes a class off the dashboard and the course lists by setting this. Nothing else is removed: its assignments, enrollments, and student sessions stay in the database. Every list of courses filters on it, so a hidden class is not shown to anyone.
+    hidden: { type: Boolean, default: false },
   },
   { collection: "courses", timestamps: { createdAt: "created_at", updatedAt: "updated_at" } as const },
 );

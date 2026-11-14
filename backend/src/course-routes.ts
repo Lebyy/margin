@@ -254,7 +254,7 @@ export function createCourseRouter(): Router {
       return;
     }
     const enrolled = await Enrollment.find({ student_id: studentId }).select("course_id").lean();
-    const courses = await Course.find({ _id: { $in: enrolled.map((e) => e.course_id) } }).sort({ name: 1 }).lean();
+    const courses = await Course.find({ _id: { $in: enrolled.map((e) => e.course_id) }, hidden: { $ne: true } }).sort({ name: 1 }).lean();
     const work = await Assignment.find({ course_id: { $in: courses.map((c) => c._id) } }).select(LIST_FIELDS).lean();
     const status = await statusByAssignment(studentId, work.map((a) => a._id));
     const now = Date.now();
@@ -312,7 +312,8 @@ export function createCourseRouter(): Router {
    * here asks a model.
    */
   router.get("/api/prof/courses", async (_req, res) => {
-    const courses = await Course.find().sort({ name: 1 }).lean();
+    // Hidden classes are taken off the professor's course cards. Their Thursday cards stay stored.
+    const courses = await Course.find({ hidden: { $ne: true } }).sort({ name: 1 }).lean();
     const work = await Assignment.find().select("course_id kind title").lean();
     const cards = await ThursdayCard.find({ assignment_id: { $in: work.map((a) => a._id) } }).sort({ generated_at: -1, _id: -1 }).lean();
     res.json({

@@ -1454,7 +1454,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
     const loose = await Assignment.find({ course_id: null }).select("course_name").lean();
     for (const a of loose) await Assignment.updateOne({ _id: a._id }, { course_id: await courseIdFor(a.course_name) });
 
-    const courses = await Course.find().sort({ name: 1 }).lean();
+    // Hidden classes are left out of the course list, so the student's front door does not show them.
+    const courses = await Course.find({ hidden: { $ne: true } }).sort({ name: 1 }).lean();
     const items = await Assignment.find().select("course_id kind").lean();
     res.json({
       courses: courses.map((c) => {
