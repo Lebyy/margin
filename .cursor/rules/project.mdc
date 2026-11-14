@@ -17,7 +17,15 @@ Lebyy (GitHub Lebyy) and David (GitHub WobbbleFoot) each take half of every mile
 
 The task brief, with ids, files, and done-when lines, is `docs/BOARD.md`. The shareable page is https://margin-board-ochre.vercel.app (`docs/index.html`). Read that brief before writing code. An agent invoked by Lebyy takes only the `L-*` tasks. An agent invoked by David takes only the `D-*` tasks. This file is the product law. The board is the work split. If a task conflicts with a safety rule here, this file wins.
 
-A task is done when the commit that implements it is on `main`. That commit starts its box checked on the board. Any other checkbox click stays in one browser.
+A task is done when the commit that implements it is on `main`. After that push, mark the box. Do not edit `docs/BOARD.md` or `docs/index.html` to record that a task is done.
+
+```
+curl -fsS -X POST https://margin-board-ochre.vercel.app/api/tasks \
+  -H 'content-type: application/json' \
+  -d '{"id":"L-B1","done":true}'
+```
+
+`id` is the task id from the board, such as `L-B1` or `D-B3`. `done` is true when the commit is on main, and false only to undo a wrong mark. GET that same URL to read the map. The page uses it, so both people see the same checks. The store is the private Vercel Blob connected to the margin-board project. Do not put a blob token in the repo or in the request.
 
 ## Real MVP, and how to comment
 
