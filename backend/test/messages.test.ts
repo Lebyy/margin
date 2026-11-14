@@ -65,6 +65,10 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
       scribe: async () => scribeReply,
       tutor: () => tutorReply(),
       judge: async () => judgeReply,
+      // A forced provider error, so the image test below never calls Gemini.
+      vision: async () => {
+        throw new Error("vision provider down");
+      },
     }).listen(0);
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     assignmentId = JSON.parse((await post("/api/prof/assignments", SUM_LIST)).text)._id;
@@ -176,7 +180,9 @@ describe("POST /api/sessions/:id/messages (D-B6)", { skip }, () => {
   });
 
   test("an image is a 501 with no model text and nothing stored", async () => {
-    // Case: snap-your-work before D-R1. The answer is the fixed 501 body.
+    // Case: snap-your-work when the vision provider fails (the stand-in in
+    // before() throws). The answer is the fixed 501 body. vision.test.ts
+    // covers the 200 path.
     const sessionId = await startSession("Barbara");
     const before = await Message.countDocuments();
     const { status, text } = await post(`/api/sessions/${sessionId}/messages`, {

@@ -19,6 +19,7 @@ import { roster, transcript } from "./roster.ts";
 import { classSummary, generateThursdayCard } from "./coach.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
 import { runTurn } from "./turn.ts";
+import { IMAGE_TYPES, findStep } from "./vision.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { GuardVerdict, HintLevel } from "./types.ts";
 
@@ -105,8 +106,9 @@ const sessionInput = z
 /**
  * One student turn. Exactly one of `text` or `image`.
  *
- * Text is the demo path. An image is snap-your-work, which stays a 501 until
- * D-R1's vision call is reliable (board contract). The 8000-character cap is
+ * Text is the demo path. An image is snap-your-work (D-R1): base64 without a
+ * data: prefix, in a type Gemini reads. A type it cannot open is a 400 here,
+ * so no model call is spent on it. The 8000-character cap is
  * far above a pasted function and stops a whole file from being sent as one
  * message, which would also be sent to two models.
  */
@@ -119,7 +121,12 @@ const messageInput = z
     // An empty try is simply absent: the client cannot claim an attempt by
     // sending a flag, because there is no flag. The scribe reads the words.
     attempt: z.string().trim().max(8000).optional(),
-    image: z.object({ mimeType: z.string().min(1), base64: z.string().min(1) }).optional(),
+    image: z
+      .object({
+        mimeType: z.enum(IMAGE_TYPES),
+        base64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/, "not base64"),
+      })
+      .optional(),
   })
   .refine((b) => (b.text === undefined) !== (b.image === undefined), {
     message: "send either text or image, not both",
@@ -165,6 +172,8 @@ export type RouteDeps = {
   tutor?: TutorRunner;
   /** The Thursday card's note and practice problems. */
   coach?: TextGenerator;
+  /** Snap-your-work: the marked step and box for a photo. */
+  vision?: TextGenerator;
 };
 
 /** Answers a zod failure with field paths only, never the submitted values. */
@@ -175,6 +184,72 @@ function rejectInvalid(res: Response, error: z.ZodError): void {
     error: "invalid_assignment",
     issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
   });
+}
+
+/**
+ * Snap-your-work: marks one step on the student's photo, or answers 501.
+ *
+ * On a 200 the body is exactly `{ step, box }`. The step went through the leak
+ * check in vision.ts, and the key and canary are read here only to feed that
+ * check. Any failure is the fixed 501 `vision_unavailable` with no model text,
+ * and nothing is stored, so a photo the model could not read leaves no trace
+ * on the dashboard.
+ *
+ * On success the photo turn is stored like a typed one: a student message
+ * (the marked step, so the professor's transcript shows what was circled;
+ * the photo itself is not kept, so `image_path` stays null) and one scribe
+ * event labelled misconception on the concept the model chose from the
+ * assignment's list. attempt_made is true because a photo of work is work.
+ * The session level is not changed: escalation is the text policy's decision.
+ */
+async function answerPhoto(
+  res: Response,
+  session: { _id: mongoose.Types.ObjectId; student_id: mongoose.Types.ObjectId; assignment_id: mongoose.Types.ObjectId },
+  image: { mimeType: string; base64: string },
+  vision: TextGenerator | undefined,
+): Promise<void> {
+  const assignment = await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean();
+  if (!assignment) {
+    res.status(404).json({ error: "assignment_not_found" });
+    return;
+  }
+  const concepts = assignment.concepts ?? [];
+  const marked = await findStep({
+    prompt: assignment.prompt,
+    concepts,
+    image,
+    answerKey: assignment.answer_key,
+    canary: assignment.canary ?? CANARY,
+    generate: vision,
+  });
+  if (!marked) {
+    res.status(501).json({ error: "vision_unavailable" });
+    return;
+  }
+
+  const studentMessage = await new Message({
+    session_id: session._id,
+    role: "student",
+    content: `Photo of my work. Marked step: ${marked.step}`,
+  }).save();
+  await saveScribeEvent({
+    label: {
+      concept: marked.concept,
+      struggle_type: "misconception",
+      attempt_made: true,
+      jailbreak_attempt: false,
+      demonstrated_understanding: false,
+      // Evidence is a quote of the student's own words, and a photo has none
+      // the server can quote. The step is on the message above instead.
+      evidence: "",
+    },
+    messageId: studentMessage._id,
+    studentId: session.student_id,
+    assignmentId: assignment._id,
+    concepts,
+  });
+
+  res.json({ step: marked.step, box: marked.box });
 }
 
 export function createRouter(deps: RouteDeps = {}): Router {
@@ -313,10 +388,11 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
 
-    // Snap-your-work is not built yet (D-R1). The answer is the fixed 501 the
-    // page knows to ignore, with no model text and nothing stored.
+    // Snap-your-work (D-R1) is answered before the text pipeline: a photo
+    // does not run the scribe, the tutor, or the policy, so it never moves the
+    // hint level.
     if (parsed.data.image !== undefined) {
-      res.status(501).json({ error: "vision_unavailable" });
+      await answerPhoto(res, session, parsed.data.image, deps.vision);
       return;
     }
     const attempt = parsed.data.attempt ?? "";
