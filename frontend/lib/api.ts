@@ -276,6 +276,9 @@ export const api = {
     request<{ id: string; title: string; body: string }>("POST", `/api/prof/courses/${q(courseId)}/materials`, material),
   startSession: (assignmentId: string, who: { student_id: string } | { display_name: string }) =>
     request<SessionStart>("POST", "/api/sessions", { assignment_id: assignmentId, ...who }),
+  /** The "Try a smaller problem" control. `level` is the level of the example, 3 unless the guard held it. `session_level` is where the ladder still is. 409 means this assignment does not offer it. */
+  smallerProblem: (sessionId: string) =>
+    request<{ reply: string; level: HintLevel; session_level: HintLevel; verdict: GuardVerdict; retries: number }>("POST", `/api/sessions/${q(sessionId)}/smaller`),
   sessionMessages: (sessionId: string) => request<SessionMessages>("GET", `/api/sessions/${q(sessionId)}/messages`),
   /** `attempt` is sent only when the student wrote one. There is no flag that claims an attempt. The server's scribe reads the words. */
   sendTurn: (sessionId: string, text: string, attempt?: string) =>

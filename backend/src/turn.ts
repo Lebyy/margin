@@ -96,6 +96,30 @@ export async function runTurn(
   return forStudent(guarded, state);
 }
 
+/** What the "Try a smaller problem" control sends as the student's side of the turn. It is fixed text, so the control cannot be used to slip a different request to the level-3 prompt. */
+export const SMALLER_PROBLEM_ASK = "Can we try a smaller problem first? Walk me through a different, smaller one.";
+
+/**
+ * The "Try a smaller problem" control (L-R6): a level-3 worked example of a different problem, on request.
+ *
+ * This is the one place a student reaches the level-3 hint without the ladder, and it is narrow on purpose. It is a control, not a message, so there is no text to talk the tutor round with. It asks for a different problem, which on the demo is count_list and never sum_list. It does not move the session's level: the ladder is still climbed only by real attempts, and the next ordinary message is answered at the level the session was on.
+ * The professor's ceiling still holds. An assignment capped below 3 has no smaller-problem card, and the caller refuses before this is reached.
+ * The guard runs on the example exactly as on any draft. If it holds the example, the reply drops a level like any held draft, and the page shows it as an ordinary hint instead of a card.
+ */
+export async function runSmallerProblem(state: TurnState, hooks?: TurnHooks): Promise<TurnResult> {
+  const draft = await draftHint(hintInput(state, SMALLER_PROBLEM_ASK, 3), hooks?.run);
+  const guarded = await guardDraft({
+    draft,
+    level: 3,
+    answerKey: state.answerKey,
+    canary: state.canary,
+    kind: state.kind,
+    generate: hooks?.generate,
+    redraft: (nextLevel, feedback) => draftHint(hintInput(state, SMALLER_PROBLEM_ASK, nextLevel, feedback), hooks?.run),
+  });
+  return forStudent(guarded, state);
+}
+
 /**
  * One turn on a learning topic.
  *

@@ -209,6 +209,28 @@ export default function StudentAssignmentPage() {
   }
 
   /**
+   * The "Try a smaller problem" control (L-R6).
+   * It asks the server for a level-3 worked example of a different problem, which on the demo is count_list. The reply is shown as a card when it came back at level 3. The ladder in the header is not moved: it shows the session's level, and this control does not change that.
+   */
+  async function smallerProblem() {
+    if (!sessionId || sending) return;
+    const stamp = `${Date.now()}`;
+    setTurns((prev) => [...prev, { id: `s-${stamp}`, role: "student", content: "Try a smaller problem." }]);
+    setSending(true);
+    setSendError(null);
+    setTab("margin");
+    try {
+      const result = await api.smallerProblem(sessionId);
+      setTurns((prev) => [...prev, { id: `t-${stamp}`, role: "tutor", content: result.reply, level: result.level, fresh: true }]);
+      if (readAloud) void speak(result.reply, api.speak);
+    } catch {
+      setSendError("Margin could not answer. Try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  /**
    * Sends a photo of the student's work (snap-your-work, D-R1 and D-R2).
    *
    * Nothing is added to the conversation until the server answers 200. Then
@@ -531,7 +553,7 @@ export default function StudentAssignmentPage() {
                         <AnimatePresence initial={false}>
                           {turns.map((turn) => (
                             <motion.div key={turn.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: "easeOut" }}>
-                              <Turn turn={turn} />
+                              <Turn turn={turn} isDemo={/sum_list/.test(assignment.prompt)} />
                             </motion.div>
                           ))}
                         </AnimatePresence>
@@ -624,8 +646,8 @@ export default function StudentAssignmentPage() {
                           ))
                         ) : (
                           <>
-                        <Button size="sm" variant="ghost" isDisabled={sending} onPress={() => void send("Can we try a smaller problem first?")}>
-                          Smaller problem
+                        <Button size="sm" variant="ghost" isDisabled={sending || assignment.hint_ceiling < 3} onPress={() => void smallerProblem()}>
+                          Try a smaller problem
                         </Button>
                         <Tooltip delay={300}>
                           <Button size="sm" variant="ghost" isDisabled={sending} onPress={() => void send(DEMO_ATTACK, false)}>
@@ -722,7 +744,7 @@ function StartCard({
  * model output that passed the guard, and it is still never rendered as HTML
  * or markdown, so nothing in it can become markup on the student's page.
  */
-function Turn({ turn }: { turn: ChatTurn }) {
+function Turn({ turn, isDemo }: { turn: ChatTurn; isDemo: boolean }) {
   if (turn.role === "student") {
     return (
       <div className="ml-8 rounded-2xl rounded-br-md bg-default px-3.5 py-2 text-[15px] leading-6">
@@ -734,6 +756,23 @@ function Turn({ turn }: { turn: ChatTurn }) {
           </p>
         ) : null}
       </div>
+    );
+  }
+  // The level-3 hint is a worked example of a different problem, and it is drawn as its own card (L-R4), not as one more line of the conversation. The title says it is a different problem, so nobody reads the example as the assignment's answer. The card holds only the tutor's checked text. The student's own solution is never drawn on it.
+  if (turn.level === 3) {
+    return (
+      <Card className="border border-margin-red/40">
+        <Card.Header>
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip size="sm" variant="soft" color="danger">A different problem</Chip>
+            <Card.Title className="font-serif text-lg">{isDemo ? "count_list" : "A smaller one, worked through"}</Card.Title>
+          </div>
+          <Card.Description>Not your assignment. Follow it, then find the matching step in yours.</Card.Description>
+        </Card.Header>
+        <Card.Content>
+          <p className="whitespace-pre-wrap font-serif text-[17px] leading-7">{turn.fresh ? <Typed text={turn.content} /> : turn.content}</p>
+        </Card.Content>
+      </Card>
     );
   }
   return (

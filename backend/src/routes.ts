@@ -26,7 +26,7 @@ import { annotatePicture, drawForStudent, pictureOf, type Drawing } from "./canv
 import { quizQuestions, studyCards, type QuizQuestion, type StudyCard } from "./study.ts";
 import { classSummary, generateThursdayCard } from "./coach.ts";
 import { labelTurn, saveScribeEvent } from "./scribe.ts";
-import { runTurn, startDraft, type TurnState } from "./turn.ts";
+import { SMALLER_PROBLEM_ASK, runSmallerProblem, runTurn, startDraft, type TurnState } from "./turn.ts";
 import { draftHint } from "./tutor.ts";
 import { checkDeterministic } from "./guard.ts";
 import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
@@ -650,6 +650,61 @@ export function createRouter(deps: RouteDeps = {}): Router {
    * guard verdict stays on the server: it was already sent once, scrubbed, in
    * the reply to the turn, and the stored copy is the professor's.
    */
+  /**
+   * POST /api/sessions/:id/smaller: the "Try a smaller problem" control (L-R6).
+   *
+   * It returns a level-3 worked example of a different problem, checked by the
+   * guard, in the same shape as a turn. The session's level is not changed:
+   * `session_level` in the body is the level the ladder is still on, and the
+   * page keeps showing that. An assignment whose ceiling is below 3, or a
+   * topic, has no such card and answers 409.
+   * The control's fixed sentence and the example are stored as two messages,
+   * so the professor's transcript shows what the student saw.
+   */
+  router.post("/api/sessions/:id/smaller", async (req, res) => {
+    const session = mongoose.isValidObjectId(req.params.id) ? await Session.findById(req.params.id).lean() : null;
+    const assignment = session ? await Assignment.findById(session.assignment_id).select("+answer_key +canary").lean() : null;
+    if (!session || !assignment) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    if (assignment.kind === "topic" || (assignment.hint_ceiling ?? 3) < 3) {
+      res.status(409).json({ error: "not_offered" });
+      return;
+    }
+    const answerKey = assignment.answer_key ?? "";
+    const canary = assignment.canary ?? CANARY;
+    let result;
+    try {
+      result = await runSmallerProblem(
+        {
+          level: session.current_level as HintLevel,
+          hintCeiling: 3,
+          prompt: assignment.prompt,
+          notes: await classNotes(assignment),
+          turns: [],
+          answerKey,
+          canary,
+          kind: (assignment.kind ?? "code") as AssignmentKind,
+        },
+        { run: deps.tutor, generate: deps.judge },
+      );
+    } catch (error) {
+      console.error("smaller problem failed:", (error as Error).name);
+      res.status(503).json({ error: "tutor_unavailable" });
+      return;
+    }
+    await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK }).save();
+    await new Message({ session_id: session._id, role: "tutor", content: result.reply, hint_level: result.level, guard_verdict: result.verdict, retries: result.retries }).save();
+    res.json({
+      reply: result.reply,
+      level: result.level,
+      session_level: session.current_level,
+      verdict: studentVerdict(result.verdict, answerKey, canary),
+      retries: result.retries,
+    });
+  });
+
   router.get("/api/sessions/:id/messages", async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) {
       res.status(404).json({ error: "session_not_found" });

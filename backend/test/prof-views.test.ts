@@ -340,4 +340,31 @@ describe("the routes the screens read", { skip }, () => {
     assert.equal((await call("POST", "/api/speak", { text: "What happens when the list is empty?" })).status, 503);
     assert.equal((await call("GET", "/api/courses/nope")).status, 404);
   });
+
+  test("the smaller-problem control returns a level-3 example of a different problem and leaves the ladder alone", async () => {
+    // Case one (L-R6): Bob is on level 1. The control returns the tutor's
+    // count_list walk-through at level 3, the guard passes it, and his session
+    // is still on level 1 afterward.
+    // Case two: a tutor that answers with the assigned solution is held, and the reply is not the solution.
+    // Case three: a ceiling of 2 has no such card.
+    draft = "Take count_list on [7, 8]. The count of [7, 8] is one more than the count of [8], and the count of [8] is one more than the count of []. The count of [] is zero, so the waiting additions finish: one, then two. Which step of your own function matches?";
+    const card = await call("POST", `/api/sessions/${bob.session_id}/smaller`);
+    assert.equal(card.status, 200);
+    const body = JSON.parse(card.text);
+    assert.equal(body.level, 3);
+    assert.equal(body.verdict.leaks, false);
+    assert.match(body.reply, /count_list/);
+    assert.ok(!/sum_list/.test(body.reply));
+    assert.equal(body.session_level, 1);
+    assert.equal(JSON.parse((await call("GET", `/api/sessions/${bob.session_id}/messages`)).text).level, 1);
+
+    draft = KEY;
+    const held = JSON.parse((await call("POST", `/api/sessions/${bob.session_id}/smaller`)).text);
+    assert.ok(!carriesKey(held.reply));
+    assert.equal(held.reply, "What happens when the list is empty?");
+
+    const capped = JSON.parse((await call("POST", "/api/prof/assignments", { ...SUM_LIST, title: "Capped at two", hint_ceiling: 2 })).text);
+    const s = JSON.parse((await call("POST", "/api/sessions", { assignment_id: capped._id, display_name: "Eve" })).text);
+    assert.equal((await call("POST", `/api/sessions/${s.session_id}/smaller`)).status, 409);
+  });
 });
