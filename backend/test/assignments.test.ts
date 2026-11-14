@@ -5,17 +5,17 @@ import { after, before, describe, test } from "node:test";
 import { createApp } from "../src/app.ts";
 import { connectDb, disconnectDb } from "../src/db.ts";
 import { Assignment, CANARY, Student } from "../src/models.ts";
-import { clearCollections, testUri } from "./support/db.ts";
+import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // D-B2 done-when: saving the sum_list assignment through
 // POST /api/prof/assignments stores exactly one document, and the students
 // collection stays empty, because only starting a session creates a student.
 //
-// Runs against the MONGODB_URI server in its own database,
-// `margin_test_assignments`. node --test runs each file in its own process at
-// the same time, so sharing models.test.ts's database would let one file's
-// cleanup drop the other's documents mid-test. Without MONGODB_URI the suite
-// is skipped, which means nothing was verified.
+// Runs against the MONGODB_URI server in a database named for this process.
+// node --test runs each file in its own process at the same time, so sharing
+// models.test.ts's database would let one file's cleanup delete the other's
+// documents mid-test. Without MONGODB_URI the suite is skipped, which means
+// nothing was verified.
 
 const uri = testUri("margin_test_assignments");
 const skip = uri ? false : "MONGODB_URI is not set (or not a single-host URI), so nothing was verified";
@@ -46,7 +46,7 @@ describe("POST /api/prof/assignments (D-B2)", { skip }, () => {
 
   after(async () => {
     server.close();
-    await clearCollections();
+    await dropTestDatabase();
     await disconnectDb();
   });
 

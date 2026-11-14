@@ -4,19 +4,24 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import mongoose from "mongoose";
 import { Assignment, CANARY, Student, findStudentAssignment } from "../src/models.ts";
-import { clearCollections, testUri } from "./support/db.ts";
+import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // D-B1 done-when, checked against a real MongoDB:
 //   1. Starting the API twice keeps the documents written before the restarts.
 //   2. A student query cannot select answer_key (or the canary).
 //
-// The suite runs against the server in MONGODB_URI but in its own database,
-// `margin_test`, so it never reads or deletes the team's real assignments and
+// The suite runs against the server in MONGODB_URI but in a database named for
+// this process, so it never reads or deletes the team's real assignments and
 // sessions. Without MONGODB_URI the suite is skipped, not passed: a skip in the
 // output means nothing was verified.
 
 const uri = testUri("margin_test");
+const dbName = uri ? new URL(uri).pathname.slice(1) : "";
 const skip = uri ? false : "MONGODB_URI is not set (or not a single-host URI), so nothing was verified";
+
+// Two suite processes that both bind 4100 make one of them fail to listen.
+// The pid keeps a second `npm test` off this run's ports.
+const portBase = 20000 + (process.pid % 10000);
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
 
@@ -26,7 +31,8 @@ const backendDir = fileURLToPath(new URL("..", import.meta.url));
  * This runs `src/index.ts` exactly as `npm run dev` does, so the persistence
  * check covers whatever index.ts and connectDb do at boot. A unit test that
  * only reconnected Mongoose would miss a future wipe added to the boot path.
- * The port is offset from 4000 so a running dev server does not collide.
+ * The port is above 20000 and includes the pid, so a dev server on 4000 and a
+ * second run of this file do not bind the same port.
  */
 function bootApiOnce(port: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -59,16 +65,16 @@ function bootApiOnce(port: number): Promise<string> {
   });
 }
 
-describe("Mongoose models (D-B1)", { skip }, () => {
+describe("Mongoose models (D-B1)", { skip, concurrency: 1 }, () => {
   before(async () => {
     await mongoose.connect(uri!, { serverSelectionTimeoutMS: 10_000 });
-    // Clearing `margin_test` up front makes each run start from a known state.
-    // This clears only the test database named in testUri, never the real one.
+    // deleteMany, not dropDatabase. A drop on Atlas can finish after this
+    // hook returns and remove the assignment the next test just saved.
     await clearCollections();
   });
 
   after(async () => {
-    await clearCollections();
+    await dropTestDatabase();
     await mongoose.disconnect();
   });
 
@@ -86,8 +92,13 @@ describe("Mongoose models (D-B1)", { skip }, () => {
     });
     const student = await Student.create({ display_name: "Ada" });
 
-    await bootApiOnce(4100);
-    await bootApiOnce(4101);
+    const firstBoot = await bootApiOnce(portBase);
+    const secondBoot = await bootApiOnce(portBase + 1);
+    // The child must attach to this run's database. A boot that logged a
+    // different name would be a second database, and a missing document would
+    // be a misdirected connection rather than a wiped one.
+    assert.match(firstBoot, new RegExp(`database "${dbName}"`));
+    assert.match(secondBoot, new RegExp(`database "${dbName}"`));
 
     const reloaded = await Assignment.findById(assignment._id).select("+answer_key +canary").lean();
     assert.ok(reloaded, "the assignment is gone after two boots");
