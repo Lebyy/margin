@@ -17,6 +17,18 @@ Lebyy (GitHub Lebyy) and David (GitHub WobbbleFoot) each take half of every mile
 
 The task brief, with ids, files, and done-when lines, is `docs/BOARD.md`. The shareable page is https://margin-board-ochre.vercel.app (`docs/index.html`). Read that brief before writing code. An agent invoked by Lebyy takes only the `L-*` tasks. An agent invoked by David takes only the `D-*` tasks. This file is the product law. The board is the work split. If a task conflicts with a safety rule here, this file wins.
 
+Lebyy's machine is a MacBook Air M1. David's machine is a ThinkPad T480. The machine decides who you are. Do not decide from the chat, the git author, or which task looks unfinished.
+
+Check before you edit a task file and again before you push:
+
+- macOS, `sysctl -n hw.model` is `MacBookAir10,1` and `sysctl -n machdep.cpu.brand_string` is `Apple M1`: you are Lebyy. Only `L-*`.
+- Linux, `/sys/class/dmi/id/product_version` or `product_family` contains `ThinkPad T480`, or Windows, the computer model contains `ThinkPad T480`: you are David. Only `D-*`.
+- Anything else, including a machine you could not identify: stop. Do not start a task and do not push.
+
+On the MacBook Air, do not implement, edit, commit, or push a `D-*` task. On the ThinkPad, do not implement, edit, commit, or push an `L-*` task. A task that looks stuck is still the other person's. Say which id you are leaving, and stop.
+
+Before every `git push`, read `git log origin/main..HEAD` and the diff. If any commit does the other person's task, do not push. Leave that commit unpushed and say so. Pull with rebase before a push that is yours, and do not force-push. A push from the wrong machine, or a push that contains the other half, is the accident this rule exists to stop.
+
 A task is done when the commit that implements it is on `main`. After that push, mark the box. Do not edit `docs/BOARD.md` or `docs/index.html` to record that a task is done.
 
 ```
