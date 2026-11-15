@@ -53,7 +53,7 @@ export const browser = {
   /** The student's own words from the "Understand it" step, kept for the same reason as the code. */
   plan: (assignmentId: string) => read(KEY.plan(assignmentId)) ?? "",
   setPlan: (assignmentId: string, plan: string) => write(KEY.plan(assignmentId), plan),
-  /** The name this person goes by, as a student and as a professor. They are labels on posts and classes, since there is no login. */
+  /** The name this person goes by, as a student and as a professor. They are labels on classes, since there is no login. */
   name: () => read(KEY.name) ?? "",
   setName: (name: string) => write(KEY.name, name),
   profName: () => read(KEY.profName) ?? "",
@@ -69,18 +69,26 @@ export const browser = {
   profProfile: () => read(KEY.profProfile),
   /**
    * Switches this browser to another student. Every per-assignment key is
-   * dropped first: the open session, the code in the editor, and the "say
-   * what it asks" text all belong to the student who typed them, and a
+   * dropped first: the open session, the drafted work, the "say what it
+   * asks" text, and the canvas all belong to the student who made them, and a
    * session left behind would put the next student's turns on the previous
    * student's record. The database keeps everyone's sessions.
    */
   chooseStudent: (studentId: string, name: string) => {
     try {
       for (const k of Object.keys(window.localStorage)) {
-        if (k.startsWith("margin.session.") || k.startsWith("margin.code.") || k.startsWith("margin.plan.")) window.localStorage.removeItem(k);
+        if (k.startsWith("margin.session.") || k.startsWith("margin.code.") || k.startsWith("margin.plan.") || k.startsWith("margin.canvas.")) window.localStorage.removeItem(k);
       }
     } catch {
       // Storage blocked: nothing was stored to clear.
+    }
+    // The canvas pictures are in IndexedDB, not localStorage, and go with the rest. The name matches CANVAS_DB in lib/whiteboard.ts.
+    try {
+      window.indexedDB.deleteDatabase("margin-canvas");
+      // The files this student sent are kept in their browser too (lib/files.ts, FILES_DB), and go with them.
+      window.indexedDB.deleteDatabase("margin-files");
+    } catch {
+      // IndexedDB blocked: nothing was stored there.
     }
     write(KEY.student, studentId);
     write(KEY.name, name);

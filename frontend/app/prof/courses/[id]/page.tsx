@@ -2,36 +2,38 @@
 
 import { ChooseProfessor } from "@/components/prof/choose-professor";
 import { browser } from "@/lib/browser";
-import { Alert, Breadcrumbs, Button, Card, Chip, Description, Input, Label, Radio, RadioGroup, Spinner, Tabs, TextArea, TextField } from "@heroui/react";
+import { Alert, Button, Card, Description, Input, Label, Radio, RadioGroup, Spinner, TextArea, TextField } from "@heroui/react";
 import { BarChart3, Check, FileText, Pencil, Plus, TrendingDown, Upload } from "lucide-react";
 import NextLink from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Discussion } from "@/components/discussion";
 import { SlidesManager } from "@/components/prof/slides-manager";
-import { api, conceptLabel, COURSE_ACCENTS, type Course, type CourseAccent, type ProfCourseCard } from "@/lib/api";
+import { AssignmentBuilder } from "@/components/prof/assignment-builder";
+import { ClassChat } from "@/components/prof/class-chat";
+import { ArtifactPane } from "@/components/workspace/artifact-pane";
+import { useWorkspace } from "@/components/workspace/student-shell";
+import { api, conceptLabel, COURSE_ACCENTS, type ClassChatDraft, type Course, type CourseAccent, type ProfCourseCard } from "@/lib/api";
 import { ACCENT_BG, exactDue, relativeDue } from "@/lib/courses";
 import { KIND } from "@/lib/kinds";
 import { cn } from "@/lib/utils";
 
-const TABS = ["overview", "slides", "assignments", "dashboard", "discussion"] as const;
-type Tab = (typeof TABS)[number];
-const TAB_LABEL: Record<Tab, string> = { overview: "Overview", slides: "Slides", assignments: "Assignments", dashboard: "Dashboard", discussion: "Discussion" };
 
 /**
- * One class, as its professor manages it, in tabs.
+ * One class, as its professor runs it: a chat with Askretes about the class
+ * (which can draft assignments from the professor's files), and a panel with
+ * the class's assignments, the assignment builder, its details and notes, and
+ * its slides. The sections below describe what each panel view holds.
  *
  * - Overview: the card details (code, term, colour), the description, the
  *   classroom notes, and handout files. A handout is stored as text, read
  *   once by the model; only lecture slides keep the file.
- * - Slides: lecture PDFs, kept for students and read per page for Margin.
- * - Assignments: the class's work with due dates and whether Margin is on,
+ * - Slides: lecture PDFs, kept for students and read per page for Askretes.
+ * - Assignments: the class's work with due dates and whether Askretes is on,
  *   each with Edit (the setup form) and Dashboard. New opens the setup form
  *   with this class's name filled in.
  * - Dashboard: the weakest concept from the class's newest Thursday card,
  *   and a way into each assignment's dashboard. The numbers there are the
  *   stored ones; this page computes none.
- * - Discussion: the class discussion, as before.
  *
  * The old URLs (/prof/setup, /prof/dashboard, /prof/messages) still work
  * and are what these links open, so the demo path does not change.
@@ -42,15 +44,22 @@ export default function ManageCoursePage() {
   const [course, setCourse] = useState<Course | null>(null);
   const [card, setCard] = useState<ProfCourseCard | null>(null);
   const [failed, setFailed] = useState(false);
-  const [tab, setTab] = useState<Tab>("overview");
+  const { refresh: refreshSidebar } = useWorkspace();
+  const [paneOpen, setPaneOpen] = useState(false);
+  const [paneView, setPaneView] = useState("home");
+  const [expanded, setExpanded] = useState(false);
+  /** A draft the class chat made, opened in the builder for review. */
+  const [chatDraft, setChatDraft] = useState<ClassChatDraft | null>(null);
 
   useEffect(() => {
     let live = true;
     const asked = new URLSearchParams(window.location.search).get("tab");
+    // Opens on the panel where it fits beside the chat; ?tab=slides (an older link) opens the slides.
+    window.setTimeout(() => live && setPaneOpen(window.matchMedia("(min-width: 1200px)").matches || asked === "slides"), 0);
     Promise.all([api.course(id), api.profCourses().catch(() => ({ courses: [] as ProfCourseCard[] }))])
       .then(([c, all]) => {
         if (!live) return;
-        if (asked && (TABS as readonly string[]).includes(asked)) setTab(asked as Tab);
+        if (asked === "slides") setPaneView("slides");
         setCourse(c);
         setCard(all.courses.find((x) => x.id === c.id) ?? null);
       })
@@ -60,16 +69,10 @@ export default function ManageCoursePage() {
     };
   }, [id]);
 
-  function choose(next: Tab) {
-    setTab(next);
-    const url = new URL(window.location.href);
-    url.searchParams.set("tab", next);
-    window.history.replaceState(null, "", url);
-  }
 
   if (failed) {
     return (
-      <Alert status="danger" className="mx-auto mt-10 max-w-xl">
+      <Alert status="danger" className="m-10 mx-auto max-w-xl">
         <Alert.Indicator />
         <Alert.Content>
           <Alert.Description>This class could not be opened.</Alert.Description>
@@ -88,10 +91,10 @@ export default function ManageCoursePage() {
   // Only the professor who teaches a class manages it. The class itself is public (students open it), so this page
   // checks the label here; the professor routes it calls refuse the same way on the server (prof-scope.ts).
   const me = browser.profProfile();
-  if (!me) return <ChooseProfessor />;
+  if (!me) return <div className="min-h-0 flex-1 overflow-y-auto p-10"><ChooseProfessor /></div>;
   if (course.professor !== me) {
     return (
-      <Alert status="warning" className="mx-auto mt-10 max-w-xl">
+      <Alert status="warning" className="m-10 mx-auto max-w-xl">
         <Alert.Indicator />
         <Alert.Content>
           <Alert.Title>Not your class</Alert.Title>
@@ -108,137 +111,138 @@ export default function ManageCoursePage() {
   }
 
   const work = course.items.filter((a) => a.kind !== "topic");
-  const newHref = `/prof/setup?course_id=${course.id}`;
 
-  return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6">
-      <Breadcrumbs className="flex-wrap">
-        <Breadcrumbs.Item href="/prof/courses">Your classes</Breadcrumbs.Item>
-        <Breadcrumbs.Item>{course.code || course.name}</Breadcrumbs.Item>
-      </Breadcrumbs>
-
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-2">
-          <div className={cn("h-1.5 w-24 rounded-full", ACCENT_BG[course.accent])} aria-hidden />
-          {course.code ? <p className="text-sm font-semibold uppercase tracking-wide text-muted">{course.code}</p> : null}
-          <h1 className="font-serif text-4xl font-semibold tracking-tight sm:text-5xl">{course.name}</h1>
-          <p className="text-muted">{[course.professor, course.term].filter(Boolean).join(" · ")}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" onPress={() => router.push(`/course/${course.id}`)}>
-            Student view
-          </Button>
-          <Button variant="primary" onPress={() => router.push(newHref)}>
+  // The class's own panel: its assignments and how they are going, the builder for a new one, its details and notes, and its slides.
+  const overview = (
+    <div className="flex flex-col gap-6 pb-2">
+      <header className="flex flex-col gap-1.5">
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <span aria-hidden className={cn("size-2.5 rounded-full", ACCENT_BG[course.accent])} />
+          {[course.code, course.term].filter(Boolean).join(" · ")}
+        </p>
+        <h2 className="font-serif text-3xl font-semibold tracking-tight">{course.name}</h2>
+        {course.description ? <p className="text-muted">{course.description}</p> : null}
+        <div className="mt-1 flex flex-wrap gap-2">
+          <Button size="sm" variant="primary" onPress={() => setPaneView("new")}>
             <Plus className="size-4" aria-hidden /> New assignment
+          </Button>
+          <Button size="sm" variant="ghost" onPress={() => router.push(`/course/${course.id}`)}>
+            Student view
           </Button>
         </div>
       </header>
 
-      <Tabs selectedKey={tab} onSelectionChange={(key) => choose(String(key) as Tab)}>
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="Class sections">
-            {TABS.map((t) => (
-              <Tabs.Tab key={t} id={t}>
-                {TAB_LABEL[t]}
-                <Tabs.Indicator />
-              </Tabs.Tab>
-            ))}
-          </Tabs.List>
-        </Tabs.ListContainer>
+      {card?.weakest ? (
+        <div className="rounded-2xl border border-border bg-surface px-4 py-3">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-margin-red">
+            <TrendingDown className="size-3.5" aria-hidden /> Weakest right now
+          </p>
+          <p className="mt-1 font-serif text-xl">
+            {conceptLabel(card.weakest.concept)}
+            {card.weakest.percent_struggling !== null ? <span className="text-muted">, {card.weakest.percent_struggling}% struggling</span> : null}
+          </p>
+          <p className="text-sm text-muted">{card.weakest.assignment_title}</p>
+        </div>
+      ) : null}
 
-        <Tabs.Panel id="overview" className="flex flex-col gap-6 pt-5">
-          <OverviewEditor course={course} onSaved={(c) => setCourse({ ...course, ...c })} />
-          <Handouts course={course} onAdded={(m) => setCourse({ ...course, materials: [...course.materials, m] })} />
-        </Tabs.Panel>
-
-        <Tabs.Panel id="slides" className="pt-5">
-          <SlidesManager courseId={course.id} />
-        </Tabs.Panel>
-
-        <Tabs.Panel id="assignments" className="pt-5">
-          {course.items.length === 0 ? (
-            <div className="flex flex-col items-start gap-3 rounded-2xl border border-dashed border-border p-6">
-              <p className="font-medium">Nothing posted in this class yet.</p>
-              <Button variant="primary" onPress={() => router.push(newHref)}>
-                <Plus className="size-4" aria-hidden /> New assignment
-              </Button>
-            </div>
-          ) : (
-            <ul className="flex flex-col divide-y divide-border rounded-2xl border border-border">
-              {course.items.map((a) => {
-                const due = a.due_at ? relativeDue(a.due_at) : null;
-                return (
-                  <li key={a.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                    <Chip size="sm" variant="soft" color={KIND[a.kind].color}>
+      <section aria-labelledby="class-work" className="flex flex-col gap-1">
+        <h3 id="class-work" className="px-1 text-xs font-medium text-muted">
+          Assignments {course.items.length ? <span className="tabular-nums">{course.items.length}</span> : null}
+        </h3>
+        {course.items.length === 0 ? (
+          <p className="px-1 py-3 text-muted">Nothing posted yet. Ask Askretes in the chat, or press New assignment.</p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-border/70 border-y border-border/70">
+            {course.items.map((a) => {
+              const due = a.due_at ? relativeDue(a.due_at) : null;
+              return (
+                <li key={a.id} className="group flex items-center gap-3 px-1 py-3">
+                  <BarChart3 className="size-4 shrink-0 text-muted" aria-hidden />
+                  <NextLink href={`/prof/dashboard?assignment=${a.id}`} className="min-w-0 flex-1">
+                    <span className="block truncate font-medium group-hover:underline">{a.title}</span>
+                    <span className="block text-sm text-muted">
                       {KIND[a.kind].name}
-                    </Chip>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium">{a.title}</p>
-                      <p className="text-sm text-muted">
-                        {a.due_at && due ? (
-                          <time dateTime={a.due_at} title={exactDue(a.due_at)}>
-                            {due.text}, {exactDue(a.due_at)}
-                          </time>
-                        ) : (
-                          "No due date"
-                        )}
-                        {" · "}
-                        {a.margin_enabled === false ? "Margin off" : "Margin on"}
-                      </p>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" onPress={() => router.push(`/prof/setup?course_id=${course.id}&assignment=${a.id}`)}>
-                        <Pencil className="size-4" aria-hidden /> Edit
-                      </Button>
-                      <Button size="sm" variant="secondary" onPress={() => router.push(`/prof/dashboard?assignment=${a.id}`)}>
-                        <BarChart3 className="size-4" aria-hidden /> Dashboard
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Tabs.Panel>
-
-        <Tabs.Panel id="dashboard" className="flex flex-col gap-4 pt-5">
-          {card?.weakest ? (
-            <Card>
-              <Card.Header>
-                <Card.Title className="flex items-center gap-2">
-                  <TrendingDown className="size-4 text-margin-red" aria-hidden /> Weakest concept, from the newest Thursday card
-                </Card.Title>
-                <Card.Description>{card.weakest.assignment_title}</Card.Description>
-              </Card.Header>
-              <Card.Content>
-                <p className="font-serif text-2xl">
-                  {conceptLabel(card.weakest.concept)}
-                  {card.weakest.percent_struggling !== null ? <span className="text-muted">, {card.weakest.percent_struggling}% struggling</span> : null}
-                </p>
-              </Card.Content>
-            </Card>
-          ) : (
-            <p className="rounded-2xl border border-dashed border-border p-6 text-muted">No Margin data yet. A Thursday card is made on an assignment&rsquo;s dashboard once students have worked on it.</p>
-          )}
-          {work.length > 0 ? (
-            <ul className="grid gap-2 sm:grid-cols-2">
-              {work.map((a) => (
-                <li key={a.id}>
-                  <NextLink href={`/prof/dashboard?assignment=${a.id}`} className="flex items-center gap-2 rounded-xl border border-border px-4 py-3 hover:bg-default">
-                    <BarChart3 className="size-4 text-muted" aria-hidden />
-                    <span className="min-w-0 flex-1 truncate">{a.title}</span>
-                    {a.margin_enabled === false ? <span className="text-xs text-muted">Margin off</span> : null}
+                      {a.due_at && due ? <time dateTime={a.due_at} title={exactDue(a.due_at)}>{` · ${due.text}`}</time> : " · no due date"}
+                      {a.margin_enabled === false ? " · Askretes off" : ""}
+                    </span>
                   </NextLink>
+                  <Button size="sm" variant="ghost" onPress={() => router.push(`/prof/setup?course_id=${course.id}&assignment=${a.id}`)}>
+                    <Pencil className="size-3.5" aria-hidden /> Edit
+                  </Button>
                 </li>
-              ))}
-            </ul>
-          ) : null}
-        </Tabs.Panel>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+      {work.length === 0 ? null : <p className="px-1 text-xs text-muted">Open an assignment to see its dashboard and ask Askretes about it.</p>}
+    </div>
+  );
 
-        <Tabs.Panel id="discussion" className="pt-5">
-          <Discussion courseId={course.id} role="prof" />
-        </Tabs.Panel>
-      </Tabs>
+  return (
+    <div className="flex min-h-0 flex-1">
+      {expanded && paneOpen ? null : (
+        <ClassChat
+          courseId={course.id}
+          title={course.code ? `${course.code} · ${course.name.replace(course.code, "").replace(/^[\s:–-]+/, "") || course.name}` : course.name}
+          paneOpen={paneOpen}
+          onTogglePane={() => setPaneOpen(!paneOpen)}
+          onReview={(d) => {
+            setChatDraft(d);
+            setPaneView("new");
+            setPaneOpen(true);
+          }}
+        />
+      )}
+      <ArtifactPane
+        tabbed
+        label={`${course.name} panel`}
+        defaultWidth={44}
+        widthKey="margin.prof.class-pane.width"
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+        isOpen={paneOpen}
+        onOpenChange={(open) => {
+          setPaneOpen(open);
+          if (!open) setExpanded(false);
+        }}
+        view={paneView}
+        onView={setPaneView}
+        home={{ title: "Class", content: overview }}
+        views={[
+          {
+            id: "new",
+            label: chatDraft ? "Review draft" : "New assignment",
+            content: (
+              <div className="pb-4">
+                <AssignmentBuilder
+                  key={chatDraft?.draft_id ?? "blank"}
+                  courseId={course.id}
+                  courseName={course.name}
+                  fromChat={chatDraft ? { draft: chatDraft, title: chatDraft.title, due_at: chatDraft.due_at } : null}
+                  onSaved={(aid) => {
+                    setChatDraft(null);
+                    refreshSidebar();
+                    void api.course(course.id).then(setCourse);
+                    router.push(`/prof/dashboard?assignment=${aid}`);
+                  }}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "details",
+            label: "Details & notes",
+            content: (
+              <div className="flex flex-col gap-6 pb-4">
+                <OverviewEditor course={course} onSaved={(c) => setCourse({ ...course, ...c })} />
+                <Handouts course={course} onAdded={(m) => setCourse({ ...course, materials: [...course.materials, m] })} />
+              </div>
+            ),
+          },
+          { id: "slides", label: "Slides", content: <SlidesManager courseId={course.id} /> },
+        ]}
+      />
     </div>
   );
 }
@@ -313,7 +317,7 @@ function OverviewEditor({ course, onSaved }: { course: Course; onSaved: (c: Part
           <TextField value={notes} onChange={touch(setNotes)} fullWidth name="notes">
             <Label>Classroom notes</Label>
             <TextArea rows={7} className="font-serif text-[17px] leading-7" />
-            <Description>For every lesson and assignment in this class. Margin points students here.</Description>
+            <Description>For every lesson and assignment in this class. Askretes points students here.</Description>
           </TextField>
           <div className="flex items-center gap-3">
             <Button type="submit" variant="primary" isPending={saving}>
@@ -375,7 +379,7 @@ function Handouts({ course, onAdded }: { course: Course; onAdded: (m: Course["ma
             <Upload className="size-4" aria-hidden /> Add a handout
           </Button>
         </div>
-        <Card.Description>Text, PDF, or a photo. Stored as text students and Margin can search. Lecture decks go under Slides.</Card.Description>
+        <Card.Description>Text, PDF, or a photo. Stored as text students and Askretes can search. Lecture decks go under Slides.</Card.Description>
       </Card.Header>
       <Card.Content>
         <input

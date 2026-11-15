@@ -127,7 +127,7 @@ export function countIdentity(text: string): number {
  *
  * The project shares one per-minute quota. When a class presses Send at the
  * same moment, Google answers some calls with 429 for a few seconds, and
- * before this every such call failed the student's turn ("Margin could not
+ * before this every such call failed the student's turn ("Askretes could not
  * answer"). Now the same request is sent again after a wait that doubles each
  * time (about 1 s, 2 s, 4 s), with a random spread so a hundred students do
  * not all come back in the same instant and cause the next spike.
@@ -200,7 +200,7 @@ export type CompleteJsonInput<T> = {
  * Swallowing the second failure would let a non-JSON draft continue, which is how a parse error becomes a student-facing reply.
  */
 export async function completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
-  // `look` is a picture on the fast model: Margin glancing at something on the student's canvas while they wait. The strong model took over 20 seconds on that and hit the request timeout. `vision` stays on the strong model for snap-your-work, where one mistake has to be found in handwriting.
+  // `look` is a picture on the fast model: Askretes glancing at something on the student's canvas while they wait. The strong model took over 20 seconds on that and hit the request timeout. `vision` stays on the strong model for snap-your-work, where one mistake has to be found in handwriting.
   // Every role is on the fast model now, pictures included. The strong model took 20 to 45 seconds and timed out in front of students, and a student who waits that long has stopped reading. STRONG_MODEL stays defined so the id is in one place if a role ever needs it again.
   const model = modelFor(input.role);
   const system = stripIdentity(input.system);
@@ -392,6 +392,8 @@ export async function openLive(input: {
   system: string;
   search: boolean;
   onEvent: (event: LiveEvent) => void;
+  /** The model's side closed: a session time limit, a dropped connection, or our own hangup. Talk tells the page, so the button does not sit "on" over a session that can no longer hear anyone. */
+  onClose?: () => void;
 }): Promise<LiveSession> {
   const apiKey = process.env.LLM_API_KEY;
   if (!apiKey) throw new Error("LLM_API_KEY is empty");
@@ -442,7 +444,9 @@ export async function openLive(input: {
     callbacks: {
       onopen() {},
       onerror() {},
-      onclose() {},
+      onclose() {
+        input.onClose?.();
+      },
       onmessage(message: LiveServerMessage) {
         const content = message.serverContent;
         if (content?.inputTranscription?.text) {

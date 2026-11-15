@@ -21,7 +21,8 @@ import { initials, PROF_PROFILES, STUDENT_PROFILES, type Profile } from "@/lib/p
  * nothing from the previous student is still on screen. Choosing a
  * professor sets the professor name the class list filters by, and opens it.
  */
-export function ProfileMenu({ side }: { side: "student" | "prof" }) {
+/** `placement` is where the menu opens: under the header's trigger on the professor side, above the trigger at the foot of the student sidebar. */
+export function ProfileMenu({ side, placement = "bottom end" }: { side: "student" | "prof"; placement?: "bottom end" | "top start" }) {
   const profiles: Profile[] = side === "prof" ? PROF_PROFILES : STUDENT_PROFILES;
   const [current, setCurrent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,7 +65,7 @@ export function ProfileMenu({ side }: { side: "student" | "prof" }) {
         <span className="hidden max-w-36 truncate text-sm sm:inline">{failed ? "Could not switch" : label}</span>
         <ChevronDown className="size-3.5 text-muted" aria-hidden />
       </Dropdown.Trigger>
-      <Dropdown.Popover placement="bottom end">
+      <Dropdown.Popover placement={placement}>
         <Dropdown.Menu
           aria-label={side === "prof" ? "Professor profiles" : "Student profiles"}
           selectionMode="single"

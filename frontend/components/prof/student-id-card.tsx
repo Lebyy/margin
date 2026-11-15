@@ -18,10 +18,10 @@ const STATUS_LABEL: Record<StudentSummary["status"], string> = { not_started: "N
  * code across the top, a portrait box with a generic silhouette, the name and
  * a card number beside it, then the three lines and the average time.
  *
- * The picture is always the silhouette. Margin stores no photo of anyone, and
+ * The picture is always the silhouette. Askretes stores no photo of anyone, and
  * would not want to: the dashboard is formative, and a face beside struggle
  * labels is the surveillance feel the product avoids. The card number is the
- * last six characters of Margin's own student id, shown so two students with
+ * last six characters of Askretes' own student id, shown so two students with
  * the same name can be told apart; it is not a university ID.
  */
 export const StudentIdCard = memo(function StudentIdCard({ student, issuer, onOpen }: { student: StudentSummary; issuer: CardIssuer; onOpen: (student: StudentSummary) => void }) {

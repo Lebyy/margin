@@ -1,6 +1,6 @@
 // Which professor is asking, and whether the class a professor route touches is theirs.
 //
-// Margin has no real login this weekend (project law: "no real auth"). A
+// Askretes has no real login this weekend (project law: "no real auth"). A
 // professor is the profile chosen in the header menu, and the professor pages
 // send that name in the `x-margin-professor` header on every /api/prof call.
 // This file turns that label into a rule: a professor route that names a class

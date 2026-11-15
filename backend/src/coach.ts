@@ -14,6 +14,7 @@
 
 import mongoose from "mongoose";
 import { z } from "zod";
+import { workNotesFor } from "./work.ts";
 import { completeJson, type TextGenerator } from "./llm.ts";
 import { Assignment, ProfessorMessage, STRUGGLE_TYPES, ScribeEvent, Session, ThursdayCard } from "./models.ts";
 import type { StruggleType } from "./types.ts";
@@ -170,8 +171,10 @@ Return JSON with:
 - reteach_note: two or three plain sentences the professor can act on. Say what to reteach about this concept and one concrete way to show it in class, such as tracing a small input on the board. Let the kinds of struggle steer it: a misconception needs the wrong belief confronted, stuck_starting needs a first step, syntax_or_mechanics needs the notation shown, careless_error needs a checking habit.
 - practice_problems: exactly three short practice problems that exercise this concept at intro level, each one sentence or two. Each must be a different problem from the assignment, not the assignment itself or a renamed copy of it. State the problem only. Do not include a solution, a hint, or code that solves it.`;
 
-/** The model's user turn: the assignment, the concept, and the counts as facts. Nothing about any one student. */
-function coachUser(prompt: string, weakest: ConceptSummary, totalStudents: number): string {
+/**
+ * The model's user turn: the assignment, the concept, the counts as facts, and the notes Askretes left on students' own canvas work for this concept. Nothing about any one student: the notes carry no names, and they are Askretes' words, already checked by the guard.
+ */
+function coachUser(prompt: string, weakest: ConceptSummary, totalStudents: number, workNotes: string[] = []): string {
   const kinds = Object.entries(weakest.struggle_types)
     .filter(([type, n]) => type !== "none" && n > 0)
     .map(([type, n]) => `${type}: ${n} turns`)
@@ -181,6 +184,7 @@ function coachUser(prompt: string, weakest: ConceptSummary, totalStudents: numbe
     `Concept: ${weakest.concept}`,
     `Measured by code (do not change): ${weakest.students_struggling} of ${totalStudents} students struggled, ${weakest.percent_struggling}%.`,
     `Kinds of struggle seen: ${kinds || "none recorded"}.`,
+    ...(workNotes.length ? [`Notes the tutor left on students' own work (their canvas and files) for this concept, showing where they went wrong. Use them to aim the reteach; do not quote or count them:\n${workNotes.map((n) => `- ${n}`).join("\n")}`] : []),
   ].join("\n\n");
 }
 
@@ -215,7 +219,10 @@ export type CardResult =
  * professor_messages row is written with the same text; that row is the
  * Photon entry, and /prof/messages lists it.
  */
-export async function generateThursdayCard(assignmentId: string, generate?: TextGenerator): Promise<CardResult> {
+/**
+ * `notify` is whether the card is also sent as a professor message. A card the professor asked for is; a card the live refresh wrote in the background (live-card.ts) is not, so the Messages list holds the cards the professor chose to send, not every batch.
+ */
+export async function generateThursdayCard(assignmentId: string, generate?: TextGenerator, notify = true): Promise<CardResult> {
   const summary = await classSummary(assignmentId);
   if (!summary) return { ok: false, reason: "assignment_not_found" };
   const weakest = weakestConcept(summary);
@@ -232,7 +239,7 @@ export async function generateThursdayCard(assignmentId: string, generate?: Text
       role: "coach",
       schema: cardSchema,
       system: COACH_SYSTEM,
-      user: coachUser(assignment.prompt, weakest, summary.total_students),
+      user: coachUser(assignment.prompt, weakest, summary.total_students, await workNotesFor(assignmentId, weakest.concept).catch(() => [])),
       generate,
     });
   } catch (error) {
@@ -269,7 +276,7 @@ export async function generateThursdayCard(assignmentId: string, generate?: Text
   };
 
   const card = await new ThursdayCard({ assignment_id: assignmentId, payload }).save();
-  await new ProfessorMessage({ assignment_id: assignmentId, body: messageBody(assignment.title, payload) }).save();
+  if (notify) await new ProfessorMessage({ assignment_id: assignmentId, body: messageBody(assignment.title, payload) }).save();
   return { ok: true, card_id: String(card._id), payload };
 }
 

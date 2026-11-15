@@ -66,7 +66,7 @@ export function useAssignment(): AssignmentPick {
           message:
             e instanceof ApiError && e.code === "database_unavailable"
               ? "The database is not connected."
-              : "Margin is not reachable.",
+              : "Askretes is not reachable.",
         });
       });
     return () => {

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-// Every Margin record (assignments, students, turns, labels, cards) lives in
+// Every Askretes record (assignments, students, turns, labels, cards) lives in
 // the MongoDB database named by MONGODB_URI. The string comes only from the
 // environment so the credentials never land in the repo; `.env.example` holds
 // an empty placeholder and `.env` is gitignored.

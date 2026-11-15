@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
  * Each row is one link to the assignment page and shows the title, the kind,
  * the due date in words with the exact time on hover (a native title, since a
  * focusable tooltip trigger inside the row link would nest one control in
- * another) and in text for a screen reader, the student's status, and whether Margin is on for it.
+ * another) and in text for a screen reader, the student's status, and whether Askretes is on for it.
  * Overdue work the student has not submitted is marked in red with an icon
  * and the word "overdue", so it is not carried by colour alone.
  * `showCourse` adds the class name, for the Due soon list across classes.
@@ -36,7 +36,7 @@ export function AssignmentList({ items, showCourse = false, empty }: { items: As
                   <span className="font-medium">{a.title}</span>
                   {a.margin_enabled !== false && a.kind !== "topic" ? (
                     <Chip size="sm" variant="soft" color="accent">
-                      <Sparkles className="size-3" aria-hidden /> Margin available
+                      <Sparkles className="size-3" aria-hidden /> Askretes available
                     </Chip>
                   ) : null}
                 </div>
@@ -51,18 +51,25 @@ export function AssignmentList({ items, showCourse = false, empty }: { items: As
                   ) : (
                     <span>No due date</span>
                   )}
+                  {a.status && a.kind !== "topic" ? <StatusChip status={a.status} className="sm:hidden" /> : null}
                 </div>
               </div>
-              {a.status && a.kind !== "topic" ? (
-                <Chip size="sm" variant={a.status === "not_started" ? "secondary" : "soft"} color={a.status === "submitted" ? "success" : a.status === "in_progress" ? "warning" : "default"}>
-                  {STATUS_LABEL[a.status]}
-                </Chip>
-              ) : null}
+              {/* On a phone the status moves under the title (see above), so the title keeps the row's width instead of wrapping a word per line. */}
+              {a.status && a.kind !== "topic" ? <StatusChip status={a.status} className="hidden sm:inline-flex" /> : null}
               <ChevronRight className="size-4 shrink-0 text-muted transition-transform group-hover:translate-x-0.5" aria-hidden />
             </NextLink>
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/** The student's status on one piece of work, as a chip: grey before they start, amber while they work, green once submitted. */
+function StatusChip({ status, className }: { status: NonNullable<AssignmentListItem["status"]>; className?: string }) {
+  return (
+    <Chip size="sm" className={className} variant={status === "not_started" ? "secondary" : "soft"} color={status === "submitted" ? "success" : status === "in_progress" ? "warning" : "default"}>
+      {STATUS_LABEL[status]}
+    </Chip>
   );
 }

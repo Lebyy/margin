@@ -255,6 +255,22 @@ export type TranscriptTurn = {
   created_at: string;
   /** The question this turn was on, 0-based, or null when it cannot be placed (see `placeTurn`). */
   question_index: number | null;
+  /** The tutor's tool calls on this turn (the tool, its arguments, and what it answered), so the professor sees what Askretes searched, drew, marked, or opened. Empty on a student turn. */
+  tool_calls: { name: string; args: Record<string, unknown>; result: string }[];
+  /** On a student turn: whether the page shared the canvas with the tutor, and whether a picture of it went too. Null when it did not. */
+  canvas: { shared: boolean; picture: boolean } | null;
+  /** On a student turn: the files attached, by id, name, and kind. The originals are kept and served by the session's attachment route. */
+  attachments: { id: string | null; name: string; kind: string }[];
+  /** On a student turn: the picture of the canvas Askretes was shown is kept, and served by the message's canvas-picture route. */
+  canvas_picture: boolean;
+  /** The ids of the pictures on the stored board, served by the message's board-files route. */
+  board_files: string[];
+  /** The message's id, for the routes above. */
+  message_id: string;
+  /** The canvas as shapes: on a student turn the board shared with Askretes, on a tutor turn the board after Askretes' marks. Null when none was stored. */
+  board: Record<string, unknown>[] | null;
+  /** What Askretes' tools did on the canvas or in the slide pane, after the guard released it. */
+  actions: Record<string, unknown>[];
 };
 
 /** One question of the assignment, as this student's work view heads it. */
@@ -339,6 +355,14 @@ export async function transcript(studentId: string, assignmentId: string): Promi
           : null,
         created_at: new Date(m.created_at as Date).toISOString(),
         question_index: m.question_index ?? placeTurn(clockOf.get(String(m.session_id)) ?? [], new Date(m.created_at as Date)),
+        tool_calls: (m.tool_calls ?? []).map((c) => ({ name: c.name, args: (c.args ?? {}) as Record<string, unknown>, result: c.result ?? "" })),
+        canvas: m.canvas ? { shared: !!m.canvas.shared, picture: !!m.canvas.picture } : null,
+        attachments: (m.attachments ?? []).map((f) => ({ id: f.id ?? null, name: f.name, kind: f.kind })),
+        canvas_picture: !!m.canvas?.picture_key,
+        board_files: (m.board_files ?? []).map((f) => f.id),
+        message_id: String(m._id),
+        board: (m.board as Record<string, unknown>[] | undefined) ?? null,
+        actions: (m.actions ?? []) as Record<string, unknown>[],
       };
     }),
   };

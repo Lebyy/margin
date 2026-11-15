@@ -80,7 +80,7 @@ describe("nextHintLevel", () => {
   });
 });
 
-// The request rule: with an attempt count, Margin nudges unless the student
+// The request rule: with an attempt count, Askretes nudges unless the student
 // asks for more, and only after three attempts on the question. The answer is
 // never a level, so asking for it is a nudge at any count.
 describe("nextHintLevel, the request rule", () => {

@@ -32,7 +32,7 @@ export const COURSE = {
   professor: "Prof. Rivera",
   description: "Programming in Python from first principles: values, control flow, collections, functions, and recursion.",
   notes:
-    "Office hours Tue/Thu 2-4pm. Problem Set 3 covers everything through Lecture 8. Write your own code; Margin is the AI the course allows.",
+    "Office hours Tue/Thu 2-4pm. Problem Set 3 covers everything through Lecture 8. Write your own code; Askretes is the AI the course allows.",
 };
 
 /**
@@ -250,7 +250,7 @@ export const LECTURES: { title: string; pages: string[] }[] = [
  * studious: honest, prepared, mostly correct; some check their work, some ask why.
  * confused: honest, weak on a few concepts, asks a lot, climbs the ladder.
  * careless_cheater: uses an outside AI, pastes its output with the tells left
- *   in, presses Next within a minute, and sometimes asks Margin for the code.
+ *   in, presses Next within a minute, and sometimes asks Askretes for the code.
  * careful_cheater: uses an outside AI, rewrites its output to read as their
  *   own, and waits a believable time on each question before moving on.
  */
@@ -293,6 +293,6 @@ export const PERSONAS: Persona[] = [
   { name: "Kavya Nair", style: "anxious", archetype: "confused", weak: ["strings", "conditionals", "recursion"], voice: "Anxious about the deadline. Sometimes frustrated enough to type 'can you just tell me', then goes back to trying." },
   { name: "Liam O'Connor", style: "examples", archetype: "confused", weak: ["lists", "dictionaries", "functions"], voice: "Learns from examples. Asks for the slides and a similar example as soon as he is allowed." },
   { name: "Marcus Webb", style: "paster", archetype: "careless_cheater", weak: [], voice: "Uses ChatGPT for everything and pastes its answer as-is, markdown and all. Wants to finish fast." },
-  { name: "Nadia Haddad", style: "claimer", archetype: "careless_cheater", weak: [], voice: "Barely engages. Tries to get Margin to hand over code by claiming permission, then gives up and moves on." },
+  { name: "Nadia Haddad", style: "claimer", archetype: "careless_cheater", weak: [], voice: "Barely engages. Tries to get Askretes to hand over code by claiming permission, then gives up and moves on." },
   { name: "Owen Park", archetype: "careful_cheater", weak: [], voice: "Uses another AI but rewrites its answers to sound like a student: lowercase, small quirks, a little hedging. Never asks for the answer outright." },
 ];

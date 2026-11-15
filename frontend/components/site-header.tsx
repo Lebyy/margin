@@ -4,6 +4,7 @@ import { Chip } from "@heroui/react";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { ProfileMenu } from "@/components/profile-menu";
+import { AskretesWordmark } from "@/components/brand/askretes-mark";
 
 /**
  * The header on every screen: the name, which side you are on, and the sign-in side.
@@ -20,9 +21,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">
-        <NextLink href="/" className="flex shrink-0 items-center gap-2 rounded-md outline-offset-4" aria-label="Margin, home">
-          <span aria-hidden className="h-6 w-[3px] rounded-full bg-margin-red" />
-          <span className="font-serif text-xl font-semibold tracking-tight">Margin</span>
+        <NextLink href="/" className="flex shrink-0 items-center gap-2 rounded-md outline-offset-4" aria-label="Askretes, home">
+          <AskretesWordmark className="text-[1.375rem]" />
         </NextLink>
         {side ? (
           // On a phone the four professor links need the room, so the side label is shown from sm up.

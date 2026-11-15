@@ -64,7 +64,7 @@ export function TalkButton({
         />
       ) : null}
       <Tooltip delay={300}>
-        <Button size="sm" variant={live ? "danger-soft" : "ghost"} aria-label={live ? "Stop talking" : "Talk to Margin"} aria-pressed={live} isDisabled={isDisabled || phase === "connecting"} isPending={phase === "connecting"} onPress={() => void toggle()}>
+        <Button size="sm" variant={live ? "danger-soft" : "ghost"} aria-label={live ? "Stop talking" : "Talk to Askretes"} aria-pressed={live} isDisabled={isDisabled || phase === "connecting"} isPending={phase === "connecting"} onPress={() => void toggle()}>
           <AudioLines className="size-4" />
           {live ? "Stop" : "Talk"}
         </Button>

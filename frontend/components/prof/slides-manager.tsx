@@ -11,10 +11,10 @@ import { api, ApiError, lectureFileUrl, MAX_PDF_BYTES, type Lecture } from "@/li
  *
  * A PDF is sent as it is, at most 20 MB. The server checks it really is a
  * PDF (by its first bytes, not its name), keeps the file for students to
- * read, and reads its text page by page for Margin. A slide with no text
- * layer (a scanned page) cannot be read without OCR, which Margin does not
+ * read, and reads its text page by page for Askretes. A slide with no text
+ * layer (a scanned page) cannot be read without OCR, which Askretes does not
  * do; the list says how many such pages a lecture has, so the professor
- * knows Margin cannot cite them.
+ * knows Askretes cannot cite them.
  *
  * Deleting asks first, in an alert dialog, because it removes the file,
  * its text, and the link from every assignment that covered it.
@@ -80,7 +80,7 @@ export function SlidesManager({ courseId, onChange }: { courseId: string; onChan
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-xl text-sm text-muted">PDF only, up to 20 MB. Students read the slides here, and Margin cites them by lecture and slide when an assignment covers that lecture.</p>
+        <p className="max-w-xl text-sm text-muted">PDF only, up to 20 MB. Students read the slides here, and Askretes cites them by lecture and slide when an assignment covers that lecture.</p>
         <Button variant="secondary" isPending={uploading !== null} isDisabled={uploading !== null} onPress={() => fileRef.current?.click()}>
           <Upload className="size-4" aria-hidden /> Upload a lecture
         </Button>
@@ -118,7 +118,7 @@ export function SlidesManager({ courseId, onChange }: { courseId: string; onChan
         <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border px-6 py-10 text-center">
           <Presentation className="size-6 text-muted" aria-hidden />
           <p className="font-medium">No slides yet</p>
-          <p className="text-sm text-muted">Upload a lecture PDF to show it to students and let Margin cite it.</p>
+          <p className="text-sm text-muted">Upload a lecture PDF to show it to students and let Askretes cite it.</p>
         </div>
       ) : (
         <ul className="flex flex-col divide-y divide-border rounded-2xl border border-border">
@@ -138,7 +138,7 @@ export function SlidesManager({ courseId, onChange }: { courseId: string; onChan
               </AlertDialog.Header>
               <AlertDialog.Body>
                 <p>
-                  &ldquo;{confirm?.title}&rdquo; and its {confirm?.page_count} slides will be removed. Students will no longer see it, and Margin will stop citing it on every assignment that covers it. This cannot be undone.
+                  &ldquo;{confirm?.title}&rdquo; and its {confirm?.page_count} slides will be removed. Students will no longer see it, and Askretes will stop citing it on every assignment that covers it. This cannot be undone.
                 </p>
               </AlertDialog.Body>
               <AlertDialog.Footer>
@@ -213,7 +213,7 @@ function LectureRow({ courseId, lecture, onSaved, onDelete }: { courseId: string
         </span>
         {lecture.unreadable_pages > 0 ? (
           <span className="text-danger">
-            {lecture.unreadable_pages} {lecture.unreadable_pages === 1 ? "slide has" : "slides have"} no readable text, so Margin cannot cite {lecture.unreadable_pages === 1 ? "it" : "them"}.
+            {lecture.unreadable_pages} {lecture.unreadable_pages === 1 ? "slide has" : "slides have"} no readable text, so Askretes cannot cite {lecture.unreadable_pages === 1 ? "it" : "them"}.
           </span>
         ) : (
           <span>Text read from every slide</span>

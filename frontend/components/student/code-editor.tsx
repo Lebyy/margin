@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  * The student's work: a plain code editor on the paper sheet, with a live mark in the margin.
  *
  * This is where the assignment is solved. It replaces a chat box as the
- * center of the page: the student writes here, and Margin's notes arrive
+ * center of the page: the student writes here, and Askretes' notes arrive
  * beside it.
  *
  * The mark is recomputed on every keystroke by `readAttempt`. While a

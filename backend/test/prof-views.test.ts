@@ -366,10 +366,9 @@ describe("the routes the screens read", { skip }, () => {
     assert.equal((await call("POST", `/api/assignments/${assignmentId}/canvas/annotate`, { ask: "no picture" })).status, 400);
   });
 
-  test("classes hold assignments, files, and a discussion Margin can join without giving an answer away", async () => {
+  test("classes hold assignments and files, and list them without a key", async () => {
     // Case: saving assignments created their class. The class lists them with
-    // no key. A text file is stored as written. A question gets Margin's reply
-    // marked as Margin's, and a reply that copies a key line is not posted.
+    // no key. A text file is stored as written.
     // Offline, the speak route answers 503 and never calls the speech model.
     const courses = JSON.parse((await call("GET", "/api/courses")).text).courses;
     const mine = courses.find((c: { name: string }) => c.name === SUM_LIST.course_name);
@@ -379,14 +378,6 @@ describe("the routes the screens read", { skip }, () => {
     assert.equal(JSON.parse(course.text).materials[0].body, "Lecture 9: tracing by hand.");
     assert.ok(!carriesKey(course.text));
 
-    const q = JSON.parse((await call("POST", `/api/courses/${mine.id}/posts`, { author: "Ada", role: "student", body: "What is a base case?" })).text);
-    draft = "A base case is the input small enough to answer without another call. Which input is that for a list?";
-    assert.equal((await call("POST", `/api/courses/${mine.id}/posts/${q.id}/margin`)).status, 201);
-    draft = "Use this: return xs[0] + sum_list(xs[1:])";
-    assert.equal((await call("POST", `/api/courses/${mine.id}/posts/${q.id}/margin`)).status, 422);
-    const posts = JSON.parse((await call("GET", `/api/courses/${mine.id}/posts`)).text).posts;
-    assert.deepEqual(posts.map((p: { role: string }) => p.role), ["student", "margin"]);
-    assert.ok(!carriesKey(JSON.stringify(posts)));
 
     assert.equal((await call("POST", "/api/speak", { text: "What happens when the list is empty?" })).status, 503);
     assert.equal((await call("GET", "/api/courses/nope")).status, 404);

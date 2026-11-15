@@ -5,6 +5,7 @@ import { dbState } from "./db.ts";
 import { fallbackFor, textHasCanary } from "./guard.ts";
 import { completeJson, countIdentity, generateSpeech, type TextGenerator } from "./llm.ts";
 import {
+  AnalystMessage,
   ASSIGNMENT_KINDS,
   Assignment,
   CANARY,
@@ -14,7 +15,6 @@ import {
   LectureFile,
   SlidePage,
   Message,
-  Post,
   ProfessorMessage,
   Session,
   Student,
@@ -43,6 +43,12 @@ import { studentFlashcards } from "./flashcards.ts";
 import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import { reflectOn, type Reflection } from "./reflect.ts";
 import { slideNotes } from "./slides.ts";
+import { addAttachment, AttachmentError, MAX_FILE_BYTES, takeAttachments, waitingAttachment } from "./attachments.ts";
+import { blobs } from "./storage.ts";
+import { workSummary } from "./work.ts";
+import { noteStudentTurn } from "./live-card.ts";
+import { analystHistory, askAnalyst, pseudonyms, type AnalystRunner } from "./analyst.ts";
+import { askClass, type ClassRunner } from "./class-assistant.ts";
 import { createAssignmentPdfRouter } from "./assignment-pdf.ts";
 import { professorOf, scopeToProfessor } from "./prof-scope.ts";
 import { courseCard, createCourseRouter, enroll, listItem, statusByAssignment } from "./course-routes.ts";
@@ -172,7 +178,7 @@ const assignmentUpdate = assignmentFields.extend({
   answer_key: z.string().trim().min(1).optional(),
   // On an edit these keep their stored values when left out, rather than
   // falling back to the create defaults: a form that does not know about a
-  // field must not clear the due date or switch Margin back on.
+  // field must not clear the due date or switch Askretes back on.
   due_at: z.iso.datetime({ offset: true }).nullable().optional(),
   margin_enabled: z.boolean().optional(),
   lecture_ids: z.array(z.string().refine((s) => mongoose.isValidObjectId(s), "not a lecture id")).max(50).optional(),
@@ -219,6 +225,25 @@ const messageInput = z
     // An empty try is simply absent: the client cannot claim an attempt by
     // sending a flag, because there is no flag. The scribe reads the words.
     attempt: z.string().trim().max(8000).optional(),
+    // What the student's canvas holds, for the tutor's canvas tools: the
+    // page's short list of what is on it, and a picture of it when it changed
+    // and the message is about it. Sending it is what gives the tutor those
+    // tools; a turn without it is answered exactly as before.
+    // Ids from POST /api/sessions/:id/attachments. Each must belong to this session.
+    attachments: z.array(z.string().uuid()).max(8).optional(),
+    canvas: z
+      .object({
+        summary: z.string().max(8000),
+        // The board as shapes, stored on the student message for the professor (see boardScene). Sent only when the picture is.
+        scene: z.array(z.record(z.string(), z.unknown())).max(3000).optional(),
+        image: z
+          .object({
+            mimeType: z.enum(IMAGE_TYPES),
+            base64: z.string().max(4_000_000).regex(/^[A-Za-z0-9+/]+={0,2}$/, "not base64"),
+          })
+          .optional(),
+      })
+      .optional(),
     image: z
       .object({
         mimeType: z.enum(IMAGE_TYPES),
@@ -289,11 +314,49 @@ function studentRelease(
 }
 
 /**
+ * Sends a stored file, or a 404. `nosniff` stops a browser from reading a
+ * plain-text file as a page; the name is sent in the RFC 5987 form so any
+ * characters in it survive; `download` asks the browser to save it instead
+ * of showing it.
+ */
+async function sendStored(res: Response, key: string | null, name: string, download: boolean): Promise<void> {
+  const stored = key ? await blobs().get(key).catch(() => null) : null;
+  if (!stored) {
+    res.status(404).json({ error: "file_not_found" });
+    return;
+  }
+  res.setHeader("Content-Type", stored.contentType);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(stored.bytes);
+}
+
+/** The most a stored board may be, as JSON. A board past it is not stored; the transcript then shows the turn without its canvas. */
+const MAX_BOARD_JSON = 600_000;
+
+/**
+ * A board as the professor's transcript stores it: Excalidraw elements with
+ * the fields that could reach outside the drawing removed (a link, custom
+ * data) and deleted elements dropped. Pictures on the board are elements that
+ * name a file; the files themselves never come to the server, so a picture is
+ * stored as an empty frame. Too large a board stores nothing.
+ */
+function boardScene(scene: Record<string, unknown>[]): Record<string, unknown>[] | undefined {
+  const kept = scene.filter((e) => e.isDeleted !== true).map(({ link: _link, customData: _custom, ...rest }) => rest);
+  return JSON.stringify(kept).length <= MAX_BOARD_JSON ? kept : undefined;
+}
+
+/**
  * Model stand-ins for tests. Production passes nothing and every call goes to
  * Gemini. The scribe and the guard judge both use completeJson, so each gets
  * its own generator to keep their answers apart in a test.
  */
 export type RouteDeps = {
+  /** Stand-in for the professor's class analyst (analyst.ts). Production leaves it unset. */
+  analyst?: AnalystRunner;
+  /** Stand-in for the class chat's model (class-assistant.ts). It drafts assignments with `assignmentReader`, the same reader as the form. */
+  classChat?: ClassRunner;
   scribe?: TextGenerator;
   judge?: TextGenerator;
   tutor?: TutorRunner;
@@ -301,9 +364,9 @@ export type RouteDeps = {
   coach?: TextGenerator;
   /** The student's study cards. */
   study?: TextGenerator;
-  /** What Margin draws on the canvas. */
+  /** What Askretes draws on the canvas. */
   canvas?: TextGenerator;
-  /** What Margin says about a picture on the canvas. */
+  /** What Askretes says about a picture on the canvas. */
   annotate?: TextGenerator;
   /** The quiz writer. */
   quiz?: TextGenerator;
@@ -519,7 +582,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
   router.use(createAssignmentPdfRouter({ reader: deps.assignmentReader }));
 
   /**
-   * True when the professor has turned Margin off for this session's
+   * True when the professor has turned Askretes off for this session's
    * assignment. Every tutor route checks this before the scribe, the tutor,
    * or the guard runs, so an assignment that is not opted in never spends a
    * model call and never shows a hint, whatever the page sends.
@@ -707,6 +770,11 @@ export function createRouter(deps: RouteDeps = {}): Router {
       await answerPhoto(res, session, parsed.data.image, deps.vision, deps.judge, session.current_level);
       return;
     }
+    const attached = parsed.data.attachments?.length ? takeAttachments(String(session._id), parsed.data.attachments) : [];
+    if (attached === null) {
+      res.status(400).json({ error: "attachment_unknown" });
+      return;
+    }
     const attempt = parsed.data.attempt ?? "";
     const text = attempt.length > 0 ? `${parsed.data.text}\n\nWhat I tried:\n${attempt}` : (parsed.data.text as string);
 
@@ -748,15 +816,31 @@ export function createRouter(deps: RouteDeps = {}): Router {
       canary,
       kind: (assignment.kind ?? "code") as AssignmentKind,
       ownNotes: (await StudentNote.findOne({ student_id: session.student_id, assignment_id: assignment._id }).select("body").lean())?.body ?? "",
+      ...(parsed.data.canvas ? { canvas: { summary: parsed.data.canvas.summary, ...(parsed.data.canvas.image ? { image: parsed.data.canvas.image } : {}) } } : {}),
+      ...(attached.length ? { attachments: attached.map((a) => ({ name: a.name, kind: a.kind, text: a.text, notes: a.notes })), attachmentImages: attached.flatMap((a) => a.images) } : {}),
     };
     const hooks = { run: deps.tutor, generate: deps.judge };
     // The tutor starts now, at the current rung, while the scribe labels. See startDraft.
     const early = startDraft(turnState, text, hooks);
 
+    // The scribe reads a short excerpt of attached files with the message, so work handed in as a file counts as a try the same as pasted work. The tutor gets the files whole (see attachmentLines in tutor.ts).
+    // The scribe reads all of the student's work on this turn, not only the typed message: an excerpt of each attached file, the words on their canvas, and one picture (the canvas picture Askretes was shown, or else the first attached picture). Canvas and file work then count toward the attempt and the struggle the professor's analytics are built from.
+    const boardWords = parsed.data.canvas?.summary
+      ? parsed.data.canvas.summary.split("\n").filter((l) => l.includes('"')).slice(0, 30).join("\n")
+      : "";
+    const scribeText = [
+      text,
+      attached.length ? `Attached files:\n${attached.map((a) => `[${a.name}] ${a.text.slice(0, 1500)}`).join("\n")}` : "",
+      parsed.data.canvas ? `The student's canvas was shared with this message${parsed.data.canvas.image ? " (a picture of it is attached)" : ""}.${boardWords ? `\nWords on the canvas:\n${boardWords}` : ""}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const scribeImage = parsed.data.canvas?.image ?? attached.flatMap((a) => a.images)[0];
     const label = await labelTurn({
       prompt: question.prompt,
       concepts,
-      studentText: text,
+      studentText: scribeText,
+      ...(scribeImage ? { image: scribeImage } : {}),
       recentTurns: history,
       answerKey,
       generate: deps.scribe,
@@ -780,11 +864,25 @@ export function createRouter(deps: RouteDeps = {}): Router {
       turnLabel = { ...label, help_request: "none" };
     }
 
+    // The canvas picture Askretes is shown is kept, so the professor's transcript shows exactly what Askretes saw.
+    let pictureKey: string | null = null;
+    if (parsed.data.canvas?.image) {
+      pictureKey = `canvas/${String(session._id)}/${new mongoose.Types.ObjectId().toString()}`;
+      try {
+        await blobs().put(pictureKey, Buffer.from(parsed.data.canvas.image.base64, "base64"), parsed.data.canvas.image.mimeType);
+      } catch (error) {
+        console.error("canvas picture not stored:", (error as Error).message);
+        pictureKey = null;
+      }
+    }
     const studentMessage = await new Message({
       session_id: session._id,
       role: "student",
       content: text,
       question_index: question.index,
+      canvas: parsed.data.canvas ? { shared: true, picture: !!parsed.data.canvas.image, picture_key: pictureKey } : null,
+      attachments: attached.map((a) => ({ id: a.id, name: a.name, kind: a.kind, bytes: a.bytes, storage_key: a.storageKey, content_type: a.contentType })),
+      ...(parsed.data.canvas?.image && parsed.data.canvas.scene ? { board: boardScene(parsed.data.canvas.scene) } : {}),
     }).save();
     await saveScribeEvent({
       label,
@@ -809,16 +907,31 @@ export function createRouter(deps: RouteDeps = {}): Router {
     // The held-turn sentence for this question: the empty-list one only on sum_list (see fallbackFor).
     const fallback = fallbackFor(kind, question.prompt);
     let released = studentRelease(result.reply, studentVerdict(result.verdict, answerKey, canary), canary, fallback);
+    // Whether the reply went out as drafted. A canary hit swaps it for the fallback, and the canvas actions go with the drafted reply.
+    const asDrafted = released.reply === result.reply;
     // The fixed notice goes after the guarded reply. It is our own sentence, never model text, so it needs no check.
     if (notice) released = { ...released, reply: `${released.reply}\n\n${notice}` };
     // The guard checked this question's key. A reply that holds another
     // question's solution is held the same way, with the same fallback.
-    if (leaksAnotherQuestion(released.reply, question.otherKeys, canary, kind)) {
+    // The canvas words go out with the reply, so they are read with it here too.
+    let actions = asDrafted ? (result.actions ?? []) : [];
+    const canvasWords = actions.flatMap((a) => (a.type === "diagram" ? [a.title, ...a.items.map((i) => `${i.label}: ${i.detail}`)] : a.type === "mark" ? [a.note ?? ""] : a.type === "write" ? [a.text] : []));
+    if (leaksAnotherQuestion([released.reply, ...canvasWords].join("\n"), question.otherKeys, canary, kind)) {
       released = studentRelease(fallback, HELD_FOR_ANOTHER_QUESTION, canary, fallback);
+      actions = [];
     }
+    // A diagram that asked for a picture gets a picture id, the same as the canvas route's: the image model is later given this released drawing and nothing else.
+    actions = actions.map((a) => {
+      if (a.type !== "diagram" || !a.picture) return a;
+      const pictureId = new mongoose.Types.ObjectId().toString();
+      releasedDrawings.set(pictureId, { kind: a.kind, title: a.title, items: a.items });
+      if (releasedDrawings.size > 200) releasedDrawings.delete(releasedDrawings.keys().next().value as string);
+      return { ...a, picture_id: pictureId };
+    });
+    const toolCalls = asDrafted && released.verdict.layer !== "fallback" ? (result.toolCalls ?? []) : [];
     // The stored tutor message is the text the student was allowed to see.
     // A reload reads this content, so the marker cannot live only in the response.
-    await new Message({
+    const tutorMessage = await new Message({
       session_id: session._id,
       role: "tutor",
       content: released.reply,
@@ -826,11 +939,21 @@ export function createRouter(deps: RouteDeps = {}): Router {
       guard_verdict: released.verdict,
       retries: result.retries,
       question_index: question.index,
+      tool_calls: toolCalls,
+      actions,
     }).save();
     await Session.updateOne({ _id: session._id }, { current_level: result.level, question_attempts: attempts });
+    // The Thursday card is rewritten in batches as students work (live-card.ts). In the background: the reply below never waits on it.
+    // Tests run offline; they refresh only with a stand-in coach, so a suite never calls the model in the background.
+    if (!deps.offline || deps.coach) void noteStudentTurn(String(assignment._id), deps.coach);
     res.json({
       reply: released.reply,
       level: result.level,
+      // What the page should do on the canvas or in the slide pane, and the tools the tutor called (by name, for the chat's "used" line; the arguments are in the professor's transcript). Every word in the actions was checked with the reply.
+      // Both are added only on a turn that used a tool, so a plain turn's body is the same fields it always was.
+      // The tutor message's id comes with actions, so the page can store the board as it looks after them (PUT .../board).
+      ...(actions.length ? { actions, message_id: String(tutorMessage._id) } : {}),
+      ...(toolCalls.length ? { tools: toolCalls.map((c) => c.name) } : {}),
       verdict: released.verdict,
       retries: result.retries,
       // The debug drawer prints this word when the check is clean. It is not
@@ -857,6 +980,128 @@ export function createRouter(deps: RouteDeps = {}): Router {
         answer_request: label.jailbreak_attempt,
       },
     });
+  });
+
+  /**
+   * POST /api/sessions/:id/attachments: one file for the next message.
+   *
+   * The body is `{ name, base64 }`. The file is read once here
+   * (attachments.ts): its kind from its bytes, its text and pictures within
+   * hard limits, and a zip only after its directory passes the size, count,
+   * and ratio checks. The bytes are not kept. The answer is an id that the
+   * next message names, with what was read and what was left out, so the
+   * student sees on the tile what Askretes will get. A refused file is a 400
+   * with a sentence the student can act on; one past the size limit is a 413.
+   */
+  router.post("/api/sessions/:id/attachments", async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(300), base64: z.string().min(1).max(Math.ceil((MAX_FILE_BYTES * 4) / 3) + 8).regex(/^[A-Za-z0-9+/]+={0,2}$/) }).safeParse(req.body);
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    if (!body.success) {
+      res.status(body.error.issues.some((i) => i.code === "too_big") ? 413 : 400).json({ error: "invalid_attachment", message: `Files can be up to ${MAX_FILE_BYTES / 1024 / 1024} MB.` });
+      return;
+    }
+    const session = await Session.findById(req.params.id).select("_id assignment_id").lean();
+    if (!session) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    if (await marginOff(session.assignment_id)) {
+      res.status(403).json({ error: "margin_disabled" });
+      return;
+    }
+    try {
+      const a = await addAttachment(String(session._id), body.data.name, Buffer.from(body.data.base64, "base64"));
+      res.status(201).json({ id: a.id, name: a.name, kind: a.kind, chars: a.text.length, images: a.images.length, notes: a.notes });
+    } catch (error) {
+      if (error instanceof AttachmentError) {
+        res.status(error.code === "file_too_large" ? 413 : 400).json({ error: error.code, message: error.message });
+        return;
+      }
+      console.error("attachment failed:", (error as Error).name);
+      res.status(400).json({ error: "unreadable_file", message: "The file could not be read." });
+    }
+  });
+
+  /**
+   * PUT /api/sessions/:id/messages/:messageId/board: the canvas after Askretes' marks.
+   *
+   * The page draws a reply's canvas actions, then sends the board as shapes,
+   * so the professor's transcript can show what the student saw rather than
+   * the tool's arguments. Only a tutor message of this session that carried
+   * actions takes a board, and only once. The shapes are cleaned the same way
+   * as a shared board (boardScene): links removed, no pictures.
+   */
+  router.put("/api/sessions/:id/messages/:messageId/board", async (req, res) => {
+    const body = z
+      .object({
+        scene: z.array(z.record(z.string(), z.unknown())).max(3000),
+        // The pictures on the board, by the Excalidraw file id their elements name. At most 12, each up to 3 MB.
+        files: z
+          .array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/), mimeType: z.enum(IMAGE_TYPES), base64: z.string().max(4_000_000).regex(/^[A-Za-z0-9+/]+={0,2}$/) }))
+          .max(12)
+          .optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success || !mongoose.isValidObjectId(req.params.id) || !mongoose.isValidObjectId(req.params.messageId)) {
+      res.status(400).json({ error: "invalid_board" });
+      return;
+    }
+    const message = await Message.findOne({ _id: req.params.messageId, session_id: req.params.id, role: "tutor", "actions.0": { $exists: true }, board: { $exists: false } }).select("_id").lean();
+    if (!message) {
+      res.status(404).end();
+      return;
+    }
+    const boardFiles: { id: string; storage_key: string; content_type: string }[] = [];
+    for (const f of body.data.files ?? []) {
+      const key = `board-files/${req.params.id}/${req.params.messageId}/${f.id}`;
+      try {
+        await blobs().put(key, Buffer.from(f.base64, "base64"), f.mimeType);
+        boardFiles.push({ id: f.id, storage_key: key, content_type: f.mimeType });
+      } catch (error) {
+        console.error("board picture not stored:", (error as Error).message);
+      }
+    }
+    await Message.updateOne({ _id: message._id }, { board: boardScene(body.data.scene), board_files: boardFiles });
+    res.status(204).end();
+  });
+
+  /**
+   * GET /api/sessions/:id/attachments/:attachmentId: an attached file, as it was uploaded.
+   *
+   * Found through the message that carried it, or, before it is sent, through
+   * the upload itself; either way only within this session. It is served with
+   * the type it was stored with (text is always plain text, so an uploaded
+   * page never runs here), `nosniff`, and the file's name.
+   */
+  router.get("/api/sessions/:id/attachments/:attachmentId", async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id) || !/^[0-9a-f-]{36}$/.test(req.params.attachmentId)) {
+      res.status(404).json({ error: "file_not_found" });
+      return;
+    }
+    const message = await Message.findOne({ session_id: req.params.id, "attachments.id": req.params.attachmentId }).select("attachments").lean();
+    const meta = message?.attachments?.find((a) => a.id === req.params.attachmentId);
+    const pending = meta ? null : waitingAttachment(req.params.id, req.params.attachmentId);
+    const key = meta?.storage_key ?? pending?.storageKey;
+    const name = meta?.name ?? pending?.name ?? "file";
+    await sendStored(res, key ?? null, name, req.query.download === "1");
+  });
+
+  /** GET /api/sessions/:id/messages/:messageId/canvas-picture: the picture of the canvas Askretes was shown on that turn. */
+  router.get("/api/sessions/:id/messages/:messageId/canvas-picture", async (req, res) => {
+    const ok = mongoose.isValidObjectId(req.params.id) && mongoose.isValidObjectId(req.params.messageId);
+    const message = ok ? await Message.findOne({ _id: req.params.messageId, session_id: req.params.id }).select("canvas").lean() : null;
+    await sendStored(res, message?.canvas?.picture_key ?? null, "canvas.jpg", false);
+  });
+
+  /** GET /api/sessions/:id/messages/:messageId/board-files/:fileId: one picture that was on the canvas after Askretes' marks. */
+  router.get("/api/sessions/:id/messages/:messageId/board-files/:fileId", async (req, res) => {
+    const ok = mongoose.isValidObjectId(req.params.id) && mongoose.isValidObjectId(req.params.messageId);
+    const message = ok ? await Message.findOne({ _id: req.params.messageId, session_id: req.params.id }).select("board_files").lean() : null;
+    const file = message?.board_files?.find((f) => f.id === req.params.fileId);
+    await sendStored(res, file?.storage_key ?? null, `${req.params.fileId}`, false);
   });
 
   /**
@@ -954,7 +1199,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
     }
     const messages = await Message.find({ session_id: session._id })
       .sort({ created_at: 1, _id: 1 })
-      .select("role content hint_level")
+      .select("role content hint_level tool_calls actions canvas attachments")
       .lean();
     res.json({
       session_id: String(session._id),
@@ -967,7 +1212,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
       current_question: session.current_question ?? 0,
       completed: session.completed_at != null,
       reflection: session.reflection ?? null,
-      messages: messages.map((m) => ({ role: m.role, content: m.content, hint_level: m.hint_level ?? null })),
+      // A reload shows what each turn did with its tools (drew, marked, opened a slide), by tool name and the released actions. The arguments stay in the professor's transcript.
+      messages: messages.map((m) => ({ role: m.role, content: m.content, hint_level: m.hint_level ?? null, tools: (m.tool_calls ?? []).map((c) => c.name), actions: m.actions ?? [], canvas_shared: !!m.canvas?.shared, attachments: (m.attachments ?? []).map((f) => ({ id: f.id, name: f.name, kind: f.kind })) })),
     });
   });
 
@@ -1155,6 +1401,107 @@ export function createRouter(deps: RouteDeps = {}): Router {
    */
   router.get("/api/prof/class-summary", async (req, res) => {
     const summary = await classSummary(String(req.query.assignment_id ?? ""));
+    if (!summary) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    res.json(summary);
+  });
+
+  /**
+   * GET and POST /api/prof/courses/:id/chat: the class's chat with Askretes.
+   * POST takes `{ text, files? }` (files as base64, at most 3 and 7 MB in all,
+   * read only if Askretes drafts an assignment from them). An answer may carry a
+   * draft, which the page opens in the assignment builder for review; nothing
+   * is posted from here. The class id is in the path, so the professor scope
+   * (prof-scope.ts) checks it like the other class routes.
+   */
+  router.get("/api/prof/courses/:id/chat", async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id) || !(await Course.exists({ _id: req.params.id }))) {
+      res.status(404).json({ error: "course_not_found" });
+      return;
+    }
+    const messages = await AnalystMessage.find({ course_id: req.params.id }).sort({ created_at: 1, _id: 1 }).limit(200).lean();
+    res.json({ messages: messages.map((m) => ({ role: m.role, content: m.content, tool_calls: m.tool_calls ?? [], draft: m.draft ?? null })) });
+  });
+
+  router.post("/api/prof/courses/:id/chat", async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id) || !(await Course.exists({ _id: req.params.id }))) {
+      res.status(404).json({ error: "course_not_found" });
+      return;
+    }
+    const body = z
+      .object({ text: z.string().trim().min(1).max(8000), files: z.array(z.object({ name: z.string().min(1).max(300), base64: z.string().min(1).regex(/^[A-Za-z0-9+/]+={0,2}$/) })).max(3).optional() })
+      .refine((b) => (b.files ?? []).reduce((n, f) => n + f.base64.length, 0) <= Math.ceil((7 * 1024 * 1024 * 4) / 3))
+      .safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "invalid_message", message: "Up to 3 files, 7 MB in all." });
+      return;
+    }
+    const files = body.data.files ?? [];
+    await new AnalystMessage({ course_id: req.params.id, professor: professorOf(req), role: "professor", content: files.length ? `${body.data.text}\n\n${files.map((f) => `[${f.name}]`).join(" ")}` : body.data.text }).save();
+    try {
+      const answer = await askClass(req.params.id, body.data.text, files, deps.classChat, deps.assignmentReader);
+      await new AnalystMessage({ course_id: req.params.id, professor: professorOf(req), role: "analyst", content: answer.text, tool_calls: answer.calls, draft: answer.draft }).save();
+      res.json({ reply: answer.text, tool_calls: answer.calls, draft: answer.draft });
+    } catch (error) {
+      console.error("class chat failed:", (error as Error).name);
+      res.status(503).json({ error: "class_chat_unavailable" });
+    }
+  });
+
+  /**
+   * GET /api/prof/analyst?assignment_id=: the professor's conversation with
+   * Askretes' class analyst about this assignment, with the label-to-name map
+   * the page uses to show names where the analyst wrote labels.
+   *
+   * POST /api/prof/analyst?assignment_id= with `{ text }`: one question. The
+   * analyst reads the class data through its tools (analyst.ts) and answers;
+   * both sides and the tool record are stored. The assignment id is in the
+   * query so the professor scope (prof-scope.ts) checks it like every other
+   * professor route. A model failure is a 503 and stores only the question.
+   */
+  router.get("/api/prof/analyst", async (req, res) => {
+    const id = String(req.query.assignment_id ?? "");
+    if (!mongoose.isValidObjectId(id) || !(await Assignment.exists({ _id: id }))) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    const [messages, labels] = await Promise.all([analystHistory(id), pseudonyms(id)]);
+    res.json({ messages, names: labels.names });
+  });
+
+  router.post("/api/prof/analyst", async (req, res) => {
+    const id = String(req.query.assignment_id ?? "");
+    const body = z.object({ text: z.string().trim().min(1).max(4000) }).safeParse(req.body);
+    if (!mongoose.isValidObjectId(id) || !(await Assignment.exists({ _id: id }))) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    if (!body.success) {
+      res.status(400).json({ error: "invalid_question" });
+      return;
+    }
+    const history = (await analystHistory(id)).map((m) => ({ role: m.role, content: m.content }));
+    await new AnalystMessage({ assignment_id: id, professor: professorOf(req), role: "professor", content: body.data.text }).save();
+    try {
+      const answer = await askAnalyst(id, body.data.text, history, deps.analyst);
+      await new AnalystMessage({ assignment_id: id, professor: professorOf(req), role: "analyst", content: answer.text, tool_calls: answer.calls }).save();
+      res.json({ reply: answer.text, tool_calls: answer.calls, names: answer.names });
+    } catch (error) {
+      console.error("analyst failed:", (error as Error).name);
+      res.status(503).json({ error: "analyst_unavailable" });
+    }
+  });
+
+  /**
+   * GET /api/prof/work-summary?assignment_id=: the work students did on the
+   * canvas and in attached files, what Askretes did with it, and where that work
+   * shows struggle. Counted in code by work.ts from stored messages and scribe
+   * labels; no model is called.
+   */
+  router.get("/api/prof/work-summary", async (req, res) => {
+    const summary = await workSummary(String(req.query.assignment_id ?? ""));
     if (!summary) {
       res.status(404).json({ error: "assignment_not_found" });
       return;
@@ -1366,7 +1713,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
   });
 
   /**
-   * POST /api/assignments/:id/canvas: Margin draws something the student asked for.
+   * POST /api/assignments/:id/canvas: Askretes draws something the student asked for.
    *
    * The body is `{ ask }`, typed or dictated. The answer is a small structure
    * the page lays out, never an image and never code. The key is loaded for
@@ -1427,7 +1774,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
   });
 
   /**
-   * POST /api/assignments/:id/canvas/annotate: Margin looks at a picture the student put on the canvas.
+   * POST /api/assignments/:id/canvas/annotate: Askretes looks at a picture the student put on the canvas.
    *
    * The body is `{ image, ask }`. The answer is one description and up to five
    * marks, each with a box in 0-to-1 units, which the page draws over the
@@ -1622,88 +1969,6 @@ export function createRouter(deps: RouteDeps = {}): Router {
     res.status(id ? 200 : 201).json({ ...courseCard(saved), notes: saved.notes ?? "" });
   });
 
-  /**
-   * GET and POST /api/courses/:id/posts: the class discussion.
-   *
-   * A post is a question, or a reply when it names a `parent_id`. The author
-   * is the name the person typed and the side they are on. There is no login,
-   * so the name is a label, the same as everywhere else this weekend.
-   */
-  router.get("/api/courses/:id/posts", async (req, res) => {
-    if (!mongoose.isValidObjectId(req.params.id)) {
-      res.status(404).json({ error: "course_not_found" });
-      return;
-    }
-    const posts = await Post.find({ course_id: req.params.id }).sort({ created_at: 1, _id: 1 }).lean();
-    res.json({
-      posts: posts.map((p) => ({
-        id: String(p._id),
-        parent_id: p.parent_id ? String(p.parent_id) : null,
-        author: p.author,
-        role: p.role,
-        body: p.body,
-        created_at: new Date(p.created_at as Date).toISOString(),
-      })),
-    });
-  });
-
-  router.post("/api/courses/:id/posts", async (req, res) => {
-    const body = z
-      .object({ author: z.string().trim().min(1).max(80), role: z.enum(["student", "prof"]), body: z.string().trim().min(1).max(4000), parent_id: objectId.optional() })
-      .safeParse(req.body);
-    const course = mongoose.isValidObjectId(req.params.id) ? await Course.exists({ _id: req.params.id }) : null;
-    if (!body.success || !course) {
-      res.status(body.success ? 404 : 400).json({ error: body.success ? "course_not_found" : "invalid_post" });
-      return;
-    }
-    const saved = await new Post({ course_id: req.params.id, ...body.data, parent_id: body.data.parent_id ?? null }).save();
-    res.status(201).json({ id: String(saved._id) });
-  });
-
-  /**
-   * POST /api/courses/:id/posts/:postId/margin: Margin answers a question in the discussion.
-   *
-   * Margin answers as a teacher, from the class notes and files, the way it
-   * teaches a topic. A discussion is public to the class, so the answer is
-   * checked against the answer key of every assignment in the class before it
-   * is posted, not just one. If any key's string check holds it, nothing is
-   * posted. The post is stored with role "margin".
-   */
-  router.post("/api/courses/:id/posts/:postId/margin", async (req, res) => {
-    const ok = mongoose.isValidObjectId(req.params.id) && mongoose.isValidObjectId(req.params.postId);
-    const question = ok ? await Post.findOne({ _id: req.params.postId, course_id: req.params.id }).lean() : null;
-    const course = question ? await Course.findById(req.params.id).lean() : null;
-    if (!question || !course) {
-      res.status(404).json({ error: "post_not_found" });
-      return;
-    }
-    const assignments = await Assignment.find({ course_id: course._id }).select("+answer_key +canary kind title").lean();
-    let reply: string;
-    try {
-      reply = await draftHint(
-        {
-          level: 1,
-          kind: "topic",
-          prompt: `A question asked in the class discussion for ${course.name}. Some of this class's work is graded, so teach the idea and do not solve any assignment: ${assignments.filter((a) => a.kind !== "topic").map((a) => a.title).join("; ") || "none"}.`,
-          notes: await classNotes({ notes: "", course_id: course._id }),
-          turns: [],
-          studentText: question.body,
-        },
-        deps.tutor,
-      );
-    } catch (error) {
-      console.error("margin could not answer a post:", (error as Error).name);
-      res.status(503).json({ error: "tutor_unavailable" });
-      return;
-    }
-    const leaks = assignments.some((a) => checkDeterministic(reply, a.answer_key ?? "", a.canary ?? CANARY, (a.kind ?? "code") as AssignmentKind).leaks);
-    if (leaks) {
-      res.status(422).json({ error: "held" });
-      return;
-    }
-    const saved = await new Post({ course_id: course._id, parent_id: question._id, author: "Margin", role: "margin", body: reply }).save();
-    res.status(201).json({ id: String(saved._id) });
-  });
 
   /**
    * POST /api/prof/courses/:id/materials: a professor adds a file to a class.

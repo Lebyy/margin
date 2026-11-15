@@ -4,7 +4,7 @@
 
 /**
  * What kind of work an assignment asks for.
- * `code` is a program. `written` is prose: a short answer, an explanation, an essay paragraph. `math` is a worked problem with a final answer. `topic` is not graded work at all: it is course material to learn, it has no answer key, and Margin teaches it instead of holding back.
+ * `code` is a program. `written` is prose: a short answer, an explanation, an essay paragraph. `math` is a worked problem with a final answer. `topic` is not graded work at all: it is course material to learn, it has no answer key, and Askretes teaches it instead of holding back.
  * The kind decides how the guard reads the key, which fallback sentence a held turn shows, and what the student's work area looks like. A kind added here has to be handled in all three.
  */
 export type AssignmentKind = "code" | "written" | "math" | "topic";
@@ -74,4 +74,27 @@ export type TurnResult = {
   level: HintLevel;
   verdict: GuardVerdict;
   retries: number;
+  /** What the tutor's tools asked the page to do (draw, mark, write on the canvas, open a slide). Only the released draft's actions; a held draft's are dropped with it. */
+  actions?: CanvasAction[];
+  /** Every tool the released draft called, with its arguments and what it returned, for the professor's transcript. */
+  toolCalls?: ToolCallRecord[];
 };
+
+/** A place on the student's canvas: one of its elements by id, or a box in 0-to-1 units of the canvas picture the tutor was shown. */
+export type CanvasTarget = { element?: string; box?: { x: number; y: number; w: number; h: number } };
+
+/**
+ * One thing the tutor asked the student's page to do. The page carries it out; the server never touches the canvas.
+ * Every word in an action is checked by the guard together with the reply, before the action is released.
+ */
+export type CanvasAction =
+  | { type: "diagram"; kind: "map" | "steps" | "summary"; title: string; items: { label: string; detail: string }[]; picture?: boolean; picture_id?: string }
+  | { type: "mark"; target: CanvasTarget; shape: "circle" | "box" | "underline" | "arrow"; note?: string; tone?: "red" | "green" }
+  | { type: "write"; text: string; latex: boolean; target?: CanvasTarget }
+  | { type: "show_slide"; lecture: number; slide: number };
+
+/** One tool call, as the professor's transcript shows it. `result` is what the tool told the model, cut short. */
+export type ToolCallRecord = { name: string; args: Record<string, unknown>; result: string };
+
+/** What the student's page tells the tutor about the canvas on a turn: a short list of what is on it, and a picture of it when it changed and the message is about it. */
+export type CanvasContext = { summary: string; image?: { mimeType: string; base64: string } };

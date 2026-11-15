@@ -1,6 +1,6 @@
 "use client";
 
-// Voice on the student page: dictate a message, and hear Margin's reply.
+// Voice on the student page: dictate a message, and hear Askretes' reply.
 //
 // Dictation is the browser's own speech recognition. It only produces text in
 // a field, and that text is then sent like any typed message, so it goes

@@ -1,14 +1,22 @@
 "use client";
 
 import { Alert, Button, Card, Chip, Drawer, Label, Meter, Spinner } from "@heroui/react";
-import { ArrowRight, Clock, MessageCircleQuestion, MessageSquareText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, Clock, MessageCircleQuestion, Paperclip, ShieldCheck, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import NextLink from "next/link";
-import { useRouter } from "next/navigation";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createContext, useContext, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ApiNumber } from "@/components/api-number";
 import { Paper } from "@/components/paper";
 import { ChooseProfessor } from "@/components/prof/choose-professor";
+import { BoardPreview } from "@/components/prof/board-preview";
+import { ToolCalls } from "@/components/prof/tool-calls";
+import { WorkPanel } from "@/components/prof/work-panel";
+import { AnalystChat } from "@/components/prof/analyst-chat";
+import { ArtifactPane } from "@/components/workspace/artifact-pane";
+import { Markdown } from "@/components/workspace/markdown";
+import { FileLightbox } from "@/components/workspace/file-viewer";
+import type { FileRef } from "@/lib/files";
+import { RichReply } from "@/components/workspace/rich-reply";
 import { StudentIdCard, type CardIssuer } from "@/components/prof/student-id-card";
 import { matches, NO_FILTER, StudentFilters, type StudentFilter } from "@/components/prof/student-filters";
 import { duration, TimingsPanel } from "@/components/prof/timings-panel";
@@ -16,6 +24,9 @@ import { useAssignment } from "@/components/prof/use-assignment";
 import {
   api,
   ApiError,
+  attachmentUrl,
+  boardFileUrl,
+  canvasPictureUrl,
   conceptLabel,
   STRUGGLE_LABEL,
   type ClassSummary,
@@ -25,7 +36,9 @@ import {
   type StudentSummary,
   type ThursdayCard,
   type Timings,
+  type ProfessorMessage,
   type Transcript,
+  type WorkSummary,
   type TranscriptTurn,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -50,7 +63,17 @@ const STRUGGLE_COLUMNS: Exclude<StruggleType, "none">[] = ["misconception", "stu
  * our database, and the card is the stored one. The model runs once, when the
  * professor presses generate.
  */
-export default function DashboardPage() {
+/**
+ * The assignment workspace. The sidebar links here with ?assignment=<id>;
+ * moving to another assignment changes only the query, so the workspace is
+ * keyed by it and starts fresh for each assignment.
+ */
+export default function DashboardRoute() {
+  const params = useSearchParams();
+  return <DashboardPage key={params.get("assignment") ?? "latest"} />;
+}
+
+function DashboardPage() {
   const router = useRouter();
   const pick = useAssignment();
   const assignmentId = pick.state === "ready" ? pick.assignmentId : null;
@@ -63,6 +86,16 @@ export default function DashboardPage() {
   const [generating, setGenerating] = useState(false);
   const [cardNote, setCardNote] = useState<string | null>(null);
   const [openStudent, setOpenStudent] = useState<StudentSummary | null>(null);
+  /** A student's file or canvas picture open over the page (the work gallery and the transcript both open it here, never in a new tab). */
+  const [viewing, setViewing] = useState<FileRef | null>(null);
+  // The dashboard panel beside the analyst chat: open on a wide screen, which view it shows, and whether it takes the full width.
+  const [paneOpen, setPaneOpen] = useState(false);
+  const [paneView, setPaneView] = useState("home");
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setPaneOpen(window.matchMedia("(min-width: 1200px)").matches), 0);
+    return () => window.clearTimeout(id);
+  }, []);
   // The professor's filter over the student list and the timing table. Kept across a refresh so new rows land inside it.
   const [filter, setFilter] = useState<StudentFilter>(NO_FILTER);
   // How many matching cards are drawn. A class of 200 is drawn in pages of 24 so the page stays quick to scroll.
@@ -88,10 +121,19 @@ export default function DashboardPage() {
   // Bumped by the refresh button. The effect below re-reads the three routes whenever it changes.
   const [version, setVersion] = useState(0);
   const refresh = () => setVersion((v) => v + 1);
+  // While the page is open and in front, its numbers are re-read every minute, so the heatmap and the roster follow the class as it works. The Thursday card is rewritten on the server in batches (backend live-card.ts) and arrives with the same read.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") setVersion((v) => v + 1);
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // The timing table's data. Fetched with everything else below, not by the panel after the page has drawn:
   // that second wave started at about 1.9 s on a class of 200. Undefined while loading, null if it failed.
   const [timings, setTimings] = useState<Timings | null | undefined>(undefined);
+  // Canvas and file work (backend work.ts). A failed read only hides that panel.
+  const [work, setWork] = useState<WorkSummary | null>(null);
 
   useEffect(() => {
     if (!assignmentId) return;
@@ -103,14 +145,16 @@ export default function DashboardPage() {
       api.thursdayCard(assignmentId).catch(() => null),
       // A failed timing read only empties that panel; it does not fail the dashboard.
       api.timings(assignmentId).catch(() => null),
+      api.workSummary(assignmentId).catch(() => null),
     ])
-      .then(([s, r, c, t]) => {
+      .then(([s, r, c, t, w]) => {
         if (!live) return;
         setFailed(false);
         setSummary(s);
         setRoster(r);
         setCard(c);
         setTimings(t);
+        setWork(w);
       })
       .catch(() => live && setFailed(true))
       .finally(() => live && setLoaded(true));
@@ -148,7 +192,7 @@ export default function DashboardPage() {
   }
 
   // No professor chosen: ask, rather than show anyone's class (see ChooseProfessor).
-  if (pick.state === "no_profile") return <ChooseProfessor />;
+  if (pick.state === "no_profile") return <Scroll><ChooseProfessor /></Scroll>;
   if (pick.state === "loading" || (assignmentId && !loaded)) {
     return (
       <div className="flex items-center justify-center gap-2 pt-24 text-muted">
@@ -158,22 +202,26 @@ export default function DashboardPage() {
   }
   if (pick.state === "error" || failed) {
     return (
+      <Scroll>
       <Alert status="danger" className="mx-auto mt-10 max-w-xl">
         <Alert.Indicator />
         <Alert.Content>
           <Alert.Description>{pick.state === "error" ? pick.message : "The dashboard could not be loaded."}</Alert.Description>
         </Alert.Content>
       </Alert>
+      </Scroll>
     );
   }
   if (pick.state === "none" || !summary || !roster || !assignmentId) {
     return (
+      <Scroll>
       <EmptyClass
         title="No assignment yet"
         text="Create one, then have a student start a session."
         action="Create an assignment"
         onAction={() => router.push("/prof/setup")}
       />
+      </Scroll>
     );
   }
 
@@ -182,9 +230,9 @@ export default function DashboardPage() {
   // Nobody has started a session. The heatmap would be a grid of zeros that reads as broken, so the page says what has not happened yet instead.
   if (summary.total_students === 0) {
     return (
+      <Scroll>
       <div className="flex flex-col gap-5">
-        <Header title={title ?? ""} onRefresh={refresh} />
-        <Picker pick={pick} />
+        <h1 className="font-serif text-3xl font-semibold tracking-tight">{title}</h1>
         <EmptyClass
           title="The class has not studied yet"
           text="Nobody has started a session yet."
@@ -192,103 +240,149 @@ export default function DashboardPage() {
           onAction={() => router.push(`/student/assignment/${assignmentId}`)}
         />
       </div>
+      </Scroll>
     );
   }
 
 
-  return (
-    <div className="flex flex-col gap-5">
-      <Header title={title ?? ""} onRefresh={refresh} />
-        <Picker pick={pick} />
+  const openById = (id: string) => setOpenStudent(roster.students.find((s) => s.student_id === id) ?? null);
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <ThursdayCardPanel card={card} classSize={summary.total_students} generating={generating} note={cardNote} onGenerate={generate} />
-        <Heatmap summary={summary} />
-      </div>
-
+  // The dashboard, as the panel beside the analyst. Overview is what the professor reads first; the other views are one press away.
+  const overview = (
+    <div className="flex flex-col gap-5 pb-2">
+      <ThursdayCardPanel card={card} classSize={summary.total_students} generating={generating} note={cardNote} onGenerate={generate} />
+      <Heatmap summary={summary} />
       <GuardStrip roster={roster} />
       <ClassTime roster={roster} />
+    </div>
+  );
+  const students = (
+    <div className="flex flex-col gap-4 pb-2">
+      <p className="text-sm text-muted">In the order they started, then those who have not started. Not ranked, not graded.</p>
+      <StudentFilters
+        filter={filter}
+        onChange={(f) => {
+          setFilter(f);
+          setShownCount(24);
+        }}
+        concepts={summary.concepts.map((c) => c.concept)}
+        students={roster.students}
+      />
+      {matching.length === 0 ? (
+        <p className="py-6 text-center text-muted">No student matches these filters.</p>
+      ) : (
+        <ul className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          {matching.slice(0, shownCount).map((s) => (
+            <li key={s.student_id}>
+              <StudentIdCard student={s} issuer={issuer} onOpen={setOpenStudent} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {matching.length > shownCount ? (
+        <Button variant="secondary" className="self-center" onPress={() => setShownCount((n) => n + 24)}>
+          Show {Math.min(24, matching.length - shownCount)} more of {matching.length - shownCount}
+        </Button>
+      ) : null}
+    </div>
+  );
 
-      <Card aria-label="Students">
-        <Card.Header>
-          <Card.Title>Students</Card.Title>
-          <Card.Description>
-            In the order they started, then those who have not started. Not ranked, not graded.
-          </Card.Description>
-        </Card.Header>
-        <Card.Content className="flex flex-col gap-4">
-          <StudentFilters
-            filter={filter}
-            onChange={(f) => {
-              setFilter(f);
-              setShownCount(24);
-            }}
-            concepts={summary.concepts.map((c) => c.concept)}
-            students={roster.students}
+  return (
+    <>
+      <div className="flex min-h-0 flex-1">
+        {expanded && paneOpen ? null : (
+          <AnalystChat
+            assignmentId={assignmentId}
+            title={title ?? ""}
+            classLabel={issuer?.code ?? ""}
+            paneOpen={paneOpen}
+            onTogglePane={() => setPaneOpen(!paneOpen)}
+            onRefresh={refresh}
+            onOpenStudent={openById}
           />
-          {matching.length === 0 ? (
-            <p className="py-6 text-center text-muted">No student matches these filters.</p>
-          ) : (
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {matching.slice(0, shownCount).map((s) => (
-                <li key={s.student_id}>
-                  <StudentIdCard student={s} issuer={issuer} onOpen={setOpenStudent} />
-                </li>
-              ))}
-            </ul>
-          )}
-          {matching.length > shownCount ? (
-            <Button variant="secondary" className="self-center" onPress={() => setShownCount((n) => n + 24)}>
-              Show {Math.min(24, matching.length - shownCount)} more of {matching.length - shownCount}
-            </Button>
-          ) : null}
-        </Card.Content>
-      </Card>
+        )}
+        <ArtifactPane
+          tabbed
+          label="Class dashboard"
+          defaultWidth={46}
+          widthKey="margin.prof.pane.width"
+          expanded={expanded}
+          onExpandedChange={setExpanded}
+          isOpen={paneOpen}
+          onOpenChange={(open) => {
+            setPaneOpen(open);
+            if (!open) setExpanded(false);
+          }}
+          view={paneView}
+          onView={setPaneView}
+          home={{ title: "Overview", content: overview }}
+          views={[
+            { id: "students", label: `Students ${roster.students.length}`, content: students },
+            { id: "work", label: "Canvas & files", content: work ? <WorkPanel work={work} onOpenStudent={openById} onOpenFile={setViewing} /> : <p className="py-6 text-muted">No canvas or file work yet.</p> },
+            { id: "timings", label: "Time", content: <TimingsPanel timings={timings} studentIds={matchingIds} /> },
+            { id: "messages", label: "Messages", content: <MessagesView assignmentId={assignmentId} /> },
+          ]}
+        />
+      </div>
+      <FileOpener.Provider value={setViewing}>
+        <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
+      </FileOpener.Provider>
+      <FileLightbox file={viewing} onClose={() => setViewing(null)} />
+    </>
+  );
+}
 
-      <TimingsPanel timings={timings} studentIds={matchingIds} />
+/** Opens a file over the page; the dashboard provides it so the transcript, which sits in a drawer, can open files without a new tab. */
+const FileOpener = createContext<(file: FileRef) => void>(() => undefined);
 
-      <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
+/** A file the student attached, in the transcript: its name, opening the in-page viewer. */
+function OpenFileChip({ file }: { file: FileRef }) {
+  const open = useContext(FileOpener);
+  return (
+    <button type="button" onClick={() => open(file)} className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs hover:bg-default">
+      <Paperclip className="size-3" aria-hidden /> {file.name}
+    </button>
+  );
+}
+
+/** A page of the workspace that is not the chat (an empty or loading state): it scrolls in the middle, padded like the other professor pages. */
+function Scroll({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-4xl px-4 pb-16 pt-10 sm:px-8">{children}</div>
     </div>
   );
 }
 
 /**
- * Which assignment the dashboard is showing.
- * One button per saved assignment, with its class. Choosing one re-reads the summary, the students, and the stored card for it. This only switches what is read. It is not a gradebook or a course switcher with settings behind it.
+ * The professor messages written with each Thursday card, newest first, in the dashboard panel. It is the same list as the Messages page, read from GET /api/prof/messages.
  */
-function Picker({ pick }: { pick: ReturnType<typeof useAssignment> }) {
-  if (pick.state !== "ready" || pick.assignments.length < 2) return null;
+function MessagesView({ assignmentId }: { assignmentId: string }) {
+  const [messages, setMessages] = useState<ProfessorMessage[] | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    api
+      .profMessages(assignmentId)
+      .then((r) => live && setMessages(r.messages))
+      .catch(() => live && setMessages(null));
+    return () => {
+      live = false;
+    };
+  }, [assignmentId]);
+  if (messages === undefined) return <Spinner className="m-6" aria-label="Loading messages" />;
+  if (messages === null) return <p className="py-6 text-muted">The messages could not be loaded.</p>;
+  if (messages.length === 0) return <p className="py-6 text-muted">No Thursday card has been written yet. Generate one on the Overview.</p>;
   return (
-    <div className="-mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Assignment">
-      {pick.assignments.map((a) => (
-        <Button key={a.id} size="sm" variant={a.id === pick.assignmentId ? "secondary" : "ghost"} aria-pressed={a.id === pick.assignmentId} onPress={() => pick.choose(a.id)}>
-          {a.title}
-          {/* Two classes can each have a "Problem Set 3"; the class name tells them apart. */}
-          <span className="text-xs text-muted">{a.course_name}</span>
-        </Button>
+    <ol className="flex flex-col gap-4 pb-2">
+      {messages.map((m) => (
+        <li key={m.id} className="rounded-xl border border-border bg-surface p-4">
+          <p className="mb-2 text-xs text-muted">{new Date(m.created_at).toLocaleString()}</p>
+          <div className="text-sm leading-6">
+            <Markdown text={m.body.replace(/\n/g, "  \n")} />
+          </div>
+        </li>
       ))}
-    </div>
-  );
-}
-
-function Header({ title, onRefresh }: { title: string; onRefresh: () => void }) {
-  return (
-    <Paper as="div" aria-label="Dashboard">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted">Class view · formative, never a grade</p>
-          <h1 className="mt-1 truncate font-serif text-3xl font-semibold tracking-tight">{title}</h1>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onPress={onRefresh}>
-            <RefreshCw className="size-4" aria-hidden /> Refresh
-          </Button>
-          <NextLink href="/prof/messages" className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm text-muted hover:bg-default hover:text-foreground">
-            <MessageSquareText className="size-4" aria-hidden /> Messages
-          </NextLink>
-        </div>
-      </div>
-    </Paper>
+    </ol>
   );
 }
 
@@ -316,7 +410,7 @@ function ThursdayCardPanel({
 }) {
   return (
     <Paper as="section" aria-label="Thursday card" className="flex flex-col">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-margin-red">Reteach on Thursday</h2>
         <Button size="sm" variant={card ? "ghost" : "primary"} onPress={onGenerate} isPending={generating} isDisabled={generating}>
           <Sparkles className="size-4" aria-hidden /> {card ? "Generate again" : "Generate the card"}
@@ -327,8 +421,8 @@ function ThursdayCardPanel({
         {card ? (
           <motion.div key={card.card_id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
             <p className="mt-3 font-serif text-3xl font-semibold tracking-tight">{conceptLabel(card.concept)}</p>
-            <p className="mt-1 flex items-baseline gap-2">
-              <span className="font-serif text-6xl font-semibold tabular-nums text-margin-red">
+            <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-serif text-5xl font-semibold tabular-nums text-margin-red sm:text-6xl">
                 <ApiNumber value={card.percent_struggling} suffix="%" />
               </span>
               <span className="text-sm text-muted">
@@ -351,11 +445,10 @@ function ThursdayCardPanel({
               ))}
             </ol>
             <p className="mt-4 text-xs text-muted">
-              <time dateTime={card.generated_at}>{new Date(card.generated_at).toLocaleString()}</time>. Numbers counted in code. Also sent as a{" "}
-              <NextLink href="/prof/messages" className="underline underline-offset-2">
-                message
-              </NextLink>
-              .
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-full bg-margin-green-soft px-2 py-0.5 font-medium text-margin-green">
+                <span aria-hidden className="size-1.5 rounded-full bg-margin-green" /> Live
+              </span>
+              Updated <time dateTime={card.generated_at}>{new Date(card.generated_at).toLocaleString()}</time>.
             </p>
           </motion.div>
         ) : (
@@ -632,7 +725,10 @@ function WorkByQuestion({ transcript }: { transcript: Transcript }) {
                 {turns.length === 0 ? "no messages" : `${turns.filter((t) => t.role === "student").length} from the student`}
               </span>
             </div>
-            <p className="text-sm text-muted">{q.prompt}</p>
+            {/* The question as the student saw it: Markdown with formulas typeset. */}
+            <div className="text-sm text-muted">
+              <RichReply text={q.prompt} />
+            </div>
             {turns.length > 0 ? <TurnList turns={turns} /> : null}
           </section>
         );
@@ -686,14 +782,14 @@ function LookBackAnswer({ question, answer }: { question: string; answer: string
   );
 }
 
-/** Turns in order, each with who wrote it, the level, the scribe's label, and whether the guard held a draft. */
+/** Turns in order, each with who wrote it, the level, the scribe's label, whether the guard held a draft, whether the canvas was shared, and the tools Askretes called. */
 function TurnList({ turns }: { turns: TranscriptTurn[] }) {
   return (
     <ol className="flex flex-col gap-3">
       {turns.map((t, i) => (
         <li key={i} className={cn("rounded-lg border px-3 py-2.5", t.role === "tutor" ? "border-margin-red/40 bg-margin-red-soft" : "border-border")}>
           <div className="mb-1 flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide">{t.role === "tutor" ? "Margin" : "Student"}</span>
+            <span className="text-xs font-semibold uppercase tracking-wide">{t.role === "tutor" ? "Askretes" : "Student"}</span>
             {t.role === "tutor" && t.hint_level ? (
               <Chip size="sm" variant="soft">level {t.hint_level}</Chip>
             ) : null}
@@ -710,8 +806,48 @@ function TurnList({ turns }: { turns: TranscriptTurn[] }) {
                 draft held · {t.guard.severity}
               </Chip>
             ) : null}
+            {/* The student shared their canvas with Askretes on this turn. The picture itself was not stored. */}
+            {t.canvas?.shared ? (
+              <Chip size="sm" variant="soft">
+                {t.canvas.picture ? "shared canvas picture" : "canvas listed"}
+              </Chip>
+            ) : null}
           </div>
-          <p className={cn("whitespace-pre-wrap text-sm leading-6", t.role === "tutor" && "font-serif text-base")}>{t.content}</p>
+          {/* Askretes' reply is shown as the student read it, formulas typeset; the student's own words stay plain text. */}
+          {/* Both sides are shown formatted: Askretes' reply, and the student's message, which is often pasted Markdown with code fences. */}
+          <div className={cn("text-sm leading-6", t.role === "tutor" && "font-serif text-base")}>
+            <RichReply text={t.content} />
+          </div>
+          {/* Files the student attached: names only, since the contents were not stored. */}
+          {t.attachments?.length ? (
+            <p className="mt-1.5 flex flex-wrap gap-1.5">
+              {t.attachments.map((f, j) =>
+                f.id ? (
+                  <OpenFileChip key={j} file={{ name: f.name, key: `prof|${t.message_id ?? t.session_id}|${f.id}`, url: attachmentUrl(t.session_id, f.id) }} />
+                ) : (
+                  <Chip key={j} size="sm" variant="soft">
+                    {f.name}
+                  </Chip>
+                ),
+              )}
+            </p>
+          ) : null}
+          {/* The canvas: on a student turn, the exact picture Askretes was shown; on a tutor turn, the board after Askretes' marks, drawn from the stored shapes and pictures. */}
+          {t.role === "student" && t.canvas_picture && t.message_id ? (
+            <figure className="mt-2 overflow-hidden rounded-lg border border-border bg-surface">
+              {/* Served from the server's store; next/image would need a remote pattern for the API host. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={canvasPictureUrl(t.session_id, t.message_id)} alt="The canvas the student shared with Askretes" className="max-h-80 w-full object-contain" loading="lazy" />
+              <figcaption className="border-t border-border px-2.5 py-1.5 text-xs text-muted">The canvas the student shared with Askretes</figcaption>
+            </figure>
+          ) : t.board?.length ? (
+            <BoardPreview
+              board={t.board}
+              files={t.message_id ? (t.board_files ?? []).map((id) => ({ id, url: boardFileUrl(t.session_id, t.message_id!, id) })) : []}
+              caption={t.role === "tutor" ? "The canvas after Askretes' marks" : "The canvas the student shared"}
+            />
+          ) : null}
+          {t.tool_calls?.length ? <ToolCalls calls={t.tool_calls} /> : null}
         </li>
       ))}
     </ol>

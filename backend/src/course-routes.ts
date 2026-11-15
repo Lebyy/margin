@@ -339,7 +339,7 @@ export function createCourseRouter(): Router {
    * Each card carries the class's weakest concept from the newest Thursday
    * card on any of its assignments, with that card's percent, exactly as
    * stored (computed in code when the card was generated). A class with no
-   * card has null, and the page says there is no Margin data yet. Nothing
+   * card has null, and the page says there is no Askretes data yet. Nothing
    * here asks a model.
    */
   router.get("/api/prof/courses", async (req, res) => {

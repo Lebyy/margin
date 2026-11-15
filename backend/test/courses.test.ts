@@ -9,7 +9,7 @@ import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // The course portal: joining a class, My courses with due dates, the course
 // page's assignment list with status, the professor's course cards, and the
-// per-assignment Margin switch. Everything is made through the real routes.
+// per-assignment Askretes switch. Everything is made through the real routes.
 // The scribe, tutor, judge, and coach are stand-ins that count their calls,
 // so this file makes zero model calls. Skipped without MONGODB_URI.
 
@@ -147,7 +147,7 @@ describe("the course portal", { skip }, () => {
     assert.ok(!carriesKey(res.text));
   });
 
-  test("an assignment with Margin off never reaches the scribe, the tutor, or the judge", async () => {
+  test("an assignment with Askretes off never reaches the scribe, the tutor, or the judge", async () => {
     // Case: a session cannot be started on it, and a session that existed before it was switched off is refused too.
     const before = { ...calls };
     const start = await call("POST", "/api/sessions", { assignment_id: offId, display_name: "Ty" });
@@ -168,7 +168,7 @@ describe("the course portal", { skip }, () => {
   });
 
   test("the professor's card shows the weakest concept from the newest Thursday card", async () => {
-    // Case: before any card the class has no Margin data; after one, the card's concept and stored percent.
+    // Case: before any card the class has no Askretes data; after one, the card's concept and stored percent.
     const empty = JSON.parse((await call("GET", "/api/prof/courses")).text).courses.find((c: { id: string }) => c.id === courseId);
     assert.equal(empty.weakest, null);
     const s = JSON.parse((await call("POST", "/api/sessions", { assignment_id: liveId, display_name: "Vic" })).text);
@@ -181,7 +181,7 @@ describe("the course portal", { skip }, () => {
   });
 
   test("an edit that leaves out the due date and the switch keeps them", async () => {
-    // Case: a form from before these fields saves the assignment again. Its due date and Margin-off setting stay.
+    // Case: a form from before these fields saves the assignment again. Its due date and Askretes-off setting stay.
     await call("POST", "/api/prof/assignments", { ...ELECTRO, id: offId, title: "Lab 1: Field lines", answer_key: undefined });
     const view = JSON.parse((await call("GET", `/api/assignments/${offId}`)).text);
     assert.equal(view.margin_enabled, false);

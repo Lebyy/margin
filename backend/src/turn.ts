@@ -7,8 +7,8 @@
 import { checkDeterministic, fallbackFor, guardDraft, type GuardedReply } from "./guard.ts";
 import type { TextGenerator } from "./llm.ts";
 import { nextHintLevel } from "./policy.ts";
-import { draftHint, type DraftHintInput, type TutorRunner, type TutorTurn } from "./tutor.ts";
-import type { AssignmentKind, HintLevel, ScribeLabel, TurnResult } from "./types.ts";
+import { draftTurn, type DraftHintInput, type TutorDraft, type TutorRunner, type TutorTurn } from "./tutor.ts";
+import type { AssignmentKind, CanvasAction, CanvasContext, HintLevel, ScribeLabel, TurnResult } from "./types.ts";
 
 /**
  * What the message route has already loaded.
@@ -31,6 +31,11 @@ export type TurnState = {
   kind?: AssignmentKind;
   /** The student's own saved notes for this assignment, if any. */
   ownNotes?: string;
+  /** What the page sent about the student's canvas this turn. Present, it gives the tutor the canvas tools. */
+  canvas?: CanvasContext;
+  /** Files attached to this message, as attachments.ts read them, and their pictures. */
+  attachments?: { name: string; kind: string; text: string; notes: string[] }[];
+  attachmentImages?: { mimeType: string; base64: string }[];
 };
 
 /**
@@ -46,7 +51,7 @@ export type TurnHooks = {
  * A hint started before the scribe has answered.
  * `level` is the rung it was drafted at. `draft` never rejects: a failed early draft resolves to null and the turn drafts again in the normal order.
  */
-export type EarlyDraft = { level: HintLevel; draft: Promise<string | null> };
+export type EarlyDraft = { level: HintLevel; draft: Promise<TutorDraft | null> };
 
 /**
  * Starts the tutor on the session's current rung while the scribe is still labelling the message.
@@ -63,7 +68,7 @@ export function startDraft(state: TurnState, studentText: string, hooks?: TurnHo
     label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false, help_request: "none" },
     attempts: state.attempts,
   });
-  const draft = draftHint(hintInput(state, studentText, level), hooks?.run).catch(() => null);
+  const draft = draftTurn(hintInput(state, studentText, level), hooks?.run).catch(() => null);
   return { level, draft };
 }
 
@@ -87,18 +92,51 @@ export async function runTurn(
   });
   // The early draft counts only if the policy landed on the rung it was written at.
   const reused = early && early.level === level ? await early.draft : null;
-  const draft = reused ?? (await draftHint(hintInput(state, studentText, level), hooks?.run));
+  const draft = reused ?? (await draftTurn(hintInput(state, studentText, level), hooks?.run));
+  const drafts = new Drafts();
   const guarded = await guardDraft({
-    draft,
+    draft: drafts.add(draft),
     level,
     answerKey: state.answerKey,
     canary: state.canary,
     kind: state.kind,
     prompt: state.prompt,
     generate: hooks?.generate,
-    redraft: (nextLevel, feedback) => draftHint(hintInput(state, studentText, nextLevel, feedback), hooks?.run),
+    redraft: async (nextLevel, feedback) => drafts.add(await draftTurn(hintInput(state, studentText, nextLevel, feedback), hooks?.run)),
   });
-  return forStudent(guarded, state);
+  return forStudent(drafts.release(guarded), state);
+}
+
+/**
+ * The drafts of one turn, as the guard reads them.
+ *
+ * A draft is its text and what its tools put on the canvas, and the student sees both. So the guard is handed both as one text: the reply, then every word the tools would draw or write (titles, items, notes, formulas). The string check and the judge read the canvas words exactly as they read the reply, and a drawing that leaks holds the whole draft. A held draft's actions go with it; only the released draft's actions reach the page.
+ *
+ * The guard returns the text it released, or the fallback sentence. That text is looked up here to recover the draft it came from. The fallback is never one of the drafts, so a fallback carries no actions.
+ */
+class Drafts {
+  private byChecked = new Map<string, TutorDraft>();
+
+  add(draft: TutorDraft): string {
+    const words = draft.actions.flatMap(actionWords);
+    const checked = words.length ? `${draft.text}\n\n${words.join("\n")}` : draft.text;
+    this.byChecked.set(checked, draft);
+    return checked;
+  }
+
+  release(guarded: GuardedReply): GuardedReply & { actions: CanvasAction[]; toolCalls: TutorDraft["calls"] } {
+    const draft = this.byChecked.get(guarded.reply);
+    if (!draft) return { ...guarded, actions: [], toolCalls: [] };
+    return { ...guarded, reply: draft.text, actions: draft.actions, toolCalls: draft.calls };
+  }
+}
+
+/** Every word an action would put in front of the student. A slide opens the professor's own page, so it has no words of the model's to check. */
+function actionWords(action: CanvasAction): string[] {
+  if (action.type === "diagram") return [action.title, ...action.items.map((i) => `${i.label}: ${i.detail}`)];
+  if (action.type === "mark") return action.note ? [action.note] : [];
+  if (action.type === "write") return [action.text];
+  return [];
 }
 
 /** What the "Try a smaller problem" control sends as the student's side of the turn. It is fixed text, so the control cannot be used to slip a different request to the level-3 prompt. */
@@ -112,7 +150,8 @@ export const SMALLER_PROBLEM_ASK = "Can we try a smaller problem first? Walk me 
  * The guard runs on the example exactly as on any draft. If it holds the example, the reply drops a level like any held draft, and the page shows it as an ordinary hint instead of a card.
  */
 export async function runSmallerProblem(state: TurnState, hooks?: TurnHooks): Promise<TurnResult> {
-  const draft = await draftHint(hintInput(state, SMALLER_PROBLEM_ASK, 3), hooks?.run);
+  const drafts = new Drafts();
+  const draft = drafts.add(await draftTurn(hintInput(state, SMALLER_PROBLEM_ASK, 3), hooks?.run));
   const guarded = await guardDraft({
     draft,
     level: 3,
@@ -121,9 +160,9 @@ export async function runSmallerProblem(state: TurnState, hooks?: TurnHooks): Pr
     kind: state.kind,
     prompt: state.prompt,
     generate: hooks?.generate,
-    redraft: (nextLevel, feedback) => draftHint(hintInput(state, SMALLER_PROBLEM_ASK, nextLevel, feedback), hooks?.run),
+    redraft: async (nextLevel, feedback) => drafts.add(await draftTurn(hintInput(state, SMALLER_PROBLEM_ASK, nextLevel, feedback), hooks?.run)),
   });
-  return forStudent(guarded, state);
+  return forStudent(drafts.release(guarded), state);
 }
 
 /**
@@ -134,12 +173,14 @@ export async function runSmallerProblem(state: TurnState, hooks?: TurnHooks): Pr
  */
 async function runLesson(state: TurnState, studentText: string, hooks?: TurnHooks, early?: EarlyDraft): Promise<TurnResult> {
   const level = nextHintLevel({ level: state.level, hintCeiling: state.hintCeiling, label: { attempt_made: false, jailbreak_attempt: false, demonstrated_understanding: false } });
-  const draft = (early ? await early.draft : null) ?? (await draftHint(hintInput(state, studentText, level), hooks?.run));
-  const verdict = checkDeterministic(draft, "", state.canary, "topic");
+  const draft = (early ? await early.draft : null) ?? (await draftTurn(hintInput(state, studentText, level), hooks?.run));
+  // The canary check reads the canvas words too, the same as the reply.
+  const checked = [draft.text, ...draft.actions.flatMap(actionWords)].join("\n");
+  const verdict = checkDeterministic(checked, "", state.canary, "topic");
   if (verdict.leaks) {
-    return { reply: fallbackFor("topic"), level, verdict: { ...verdict, reason: "The draft was held.", layer: "fallback" }, retries: 0 };
+    return { reply: fallbackFor("topic"), level, verdict: { ...verdict, reason: "The draft was held.", layer: "fallback" }, retries: 0, actions: [], toolCalls: [] };
   }
-  return { reply: draft, level, verdict: { ...verdict, reason: "A lesson on course material. There is no answer key to check against." }, retries: 0 };
+  return { reply: draft.text, level, verdict: { ...verdict, reason: "A lesson on course material. There is no answer key to check against." }, retries: 0, actions: draft.actions, toolCalls: draft.calls };
 }
 
 /**
@@ -148,15 +189,18 @@ async function runLesson(state: TurnState, studentText: string, hooks?: TurnHook
  * A normalized line still teaches the solution, so a draft the word check would hold is not allowed out under different names either.
  * Nothing here is logged. A log of either string would be a copy of the key when this check is the thing that stopped it.
  */
-function forStudent(guarded: GuardedReply, state: TurnState): TurnResult {
+function forStudent(guarded: GuardedReply & { actions: CanvasAction[]; toolCalls: TutorDraft["calls"] }, state: TurnState): TurnResult {
   let reply = guarded.reply;
   let reason = guarded.verdict.reason;
   let layer = guarded.verdict.layer;
   let leaks = guarded.verdict.leaks;
-  if (exposesSolution(reply, state.answerKey, state.canary, state.kind)) {
+  let actions = guarded.actions;
+  // The last look reads the canvas words with the reply. A hit drops the actions with the reply.
+  if (exposesSolution([reply, ...actions.flatMap(actionWords)].join("\n"), state.answerKey, state.canary, state.kind)) {
     reply = fallbackFor(state.kind, state.prompt);
     layer = "fallback";
     leaks = true;
+    actions = [];
   }
   if (exposesSolution(reason, state.answerKey, state.canary, state.kind)) {
     reason = "The draft was held.";
@@ -166,6 +210,9 @@ function forStudent(guarded: GuardedReply, state: TurnState): TurnResult {
     level: guarded.level,
     verdict: { ...guarded.verdict, reason, layer, leaks },
     retries: guarded.retries,
+    actions,
+    // A reply that fell back shows nothing of the held draft, and its tool record goes with it: the record holds the arguments, which are the held words.
+    toolCalls: leaks ? [] : guarded.toolCalls,
   };
 }
 
@@ -191,6 +238,9 @@ function hintInput(state: TurnState, studentText: string, level: HintLevel, feed
   };
   if (state.kind) input.kind = state.kind;
   if (state.ownNotes) input.ownNotes = state.ownNotes;
+  if (state.canvas) input.canvas = state.canvas;
+  if (state.attachments?.length) input.attachments = state.attachments;
+  if (state.attachmentImages?.length) input.attachmentImages = state.attachmentImages;
   if (feedback && feedback.trim().length > 0) input.feedback = feedback;
   return input;
 }

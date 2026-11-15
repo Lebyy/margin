@@ -135,7 +135,7 @@ export function StudyPanel({ assignmentId, studentId, notes, first }: { assignme
  * The student's own notes for this assignment.
  *
  * They type here or load a text file, and the notes are saved to their own
- * record a moment after they stop typing. Margin reads them as the student's
+ * record a moment after they stop typing. Askretes reads them as the student's
  * material when the student asks for help. The professor's screens do not
  * show them.
  *

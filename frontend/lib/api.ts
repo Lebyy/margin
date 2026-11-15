@@ -22,7 +22,7 @@ export const MAX_NOTES_CHARS = 200_000;
 
 export type HintLevel = 1 | 2 | 3;
 
-/** What kind of work an assignment is. A `topic` is material to learn: it has no answer key and Margin teaches it. */
+/** What kind of work an assignment is. A `topic` is material to learn: it has no answer key and Askretes teaches it. */
 export type AssignmentKind = "code" | "written" | "math" | "topic";
 
 export type StruggleType = "misconception" | "stuck_starting" | "syntax_or_mechanics" | "careless_error" | "none";
@@ -42,16 +42,65 @@ export type Assignment = {
   questions?: string[];
   /** ISO time, or null for no due date. */
   due_at?: string | null;
-  /** False when the professor has not turned Margin on for this assignment. Every tutor route then answers 403. */
+  /** False when the professor has not turned Askretes on for this assignment. Every tutor route then answers 403. */
   margin_enabled?: boolean;
   /** True when the professor's Question PDF can be opened with `questionPdfUrl`. */
   has_question_pdf?: boolean;
 };
 
 /** What "Read PDFs" shows the professor: the questions found, and per question only whether its answer was found. Never an answer. */
-export type AssignmentDraft = { draft_id: string; kind: AssignmentKind; concepts: string[]; questions: { prompt: string; has_answer: boolean }[] };
+export type AssignmentDraft = { draft_id: string; kind: AssignmentKind; concepts: string[]; questions: { prompt: string; has_answer: boolean }[]; missing_answers?: number };
+
+/** One side of a new assignment (the questions, or the answer key): typed text, or one file of any kind the server reads. */
+export type AssignmentSource = { text: string } | { file: { name: string; base64: string } };
 
 /** The professor's Question PDF for an assignment, in the browser's own viewer. There is no URL for the answer key PDF: it is not kept. */
+/** An attached file as it was uploaded, kept on the server. `download` asks the browser to save it. */
+export function attachmentUrl(sessionId: string, attachmentId: string, download = false): string {
+  return `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}${download ? "?download=1" : ""}`;
+}
+
+/** The picture of the canvas Askretes was shown on a turn. */
+export function canvasPictureUrl(sessionId: string, messageId: string): string {
+  return `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/canvas-picture`;
+}
+
+/** One picture that was on the canvas after Askretes' marks. */
+export function boardFileUrl(sessionId: string, messageId: string, fileId: string): string {
+  return `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/board-files/${encodeURIComponent(fileId)}`;
+}
+
+/** The canvas and file work on one assignment, counted in code by the server (backend work.ts). */
+export type WorkSummary = {
+  assignment_id: string;
+  total_students: number;
+  canvas: { students: number; turns: number; pictures: number };
+  files: { students: number; count: number; by_kind: Record<string, number> };
+  margin: { marks: number; drawings: number; writes: number; slides: number };
+  concepts: { concept: string; turns: number; struggling_turns: number; students_struggling: number; percent_struggling: number }[];
+  recent: {
+    student_id: string;
+    display_name: string;
+    session_id: string;
+    message_id: string;
+    kind: "canvas" | "file";
+    has_picture: boolean;
+    file?: { id: string | null; name: string; kind: string };
+    concept: string | null;
+    struggle_type: StruggleType | null;
+    margin: { marks: number; drawings: number; writes: number; notes: string[] };
+    created_at: string;
+  }[];
+};
+
+/** One line of the professor's conversation with Askretes' class analyst. Students appear as labels (S1, S2, ...); `names` maps them for display. */
+export type AnalystTurn = { role: "professor" | "analyst"; content: string; tool_calls: { name: string; args: Record<string, unknown>; result: string }[]; created_at?: string };
+export type AnalystNames = Record<string, { id: string; name: string }>;
+
+/** A draft assignment the class chat made: the preview (never an answer), with the title and due date the professor asked for. */
+export type ClassChatDraft = AssignmentDraft & { title: string; due_at: string | null };
+export type ClassChatTurn = { role: "professor" | "analyst"; content: string; tool_calls: { name: string; args: Record<string, unknown>; result: string }[]; draft: ClassChatDraft | null };
+
 export function questionPdfUrl(assignmentId: string): string {
   return `${API_BASE}/api/assignments/${encodeURIComponent(assignmentId)}/question-pdf`;
 }
@@ -87,8 +136,6 @@ export type MyCourses = { courses: (CourseCard & { due_this_week: number })[]; d
 /** The professor's card: the class, its counts, and the weakest concept from its newest Thursday card, or null before any card. */
 export type ProfCourseCard = CourseListItem & { weakest: { concept: string; percent_struggling: number | null; assignment_title: string } | null };
 
-/** One post in a class discussion. `parent_id` is null on a question. A post by Margin has role "margin". */
-export type Post = { id: string; parent_id: string | null; author: string; role: "student" | "prof" | "margin"; body: string; created_at: string };
 
 /** One class opened: its classroom notes, the files the professor added (stored as text), and everything to do or learn in it. */
 export type Course = CourseCard & { notes: string; materials: { id: string; title: string; body: string }[]; items: AssignmentListItem[] };
@@ -96,7 +143,7 @@ export type Course = CourseCard & { notes: string; materials: { id: string; titl
 /** One self-check question. The right answer is in the response, because the page checks it locally and nothing about a student's answers is stored. */
 export type QuizQuestion = { concept: string; question: string; choices: string[]; answer: number; why: string };
 
-/** What Margin said about a picture on the canvas: one description, and up to five marks with a box each in 0-to-1 units from the picture's top left. */
+/** What Askretes said about a picture on the canvas: one description, and up to five marks with a box each in 0-to-1 units from the picture's top left. */
 export type Annotation = { description: string; marks: { label: string; note: string; box: { x: number; y: number; w: number; h: number } }[] };
 
 export type GuardVerdict = {
@@ -108,11 +155,32 @@ export type GuardVerdict = {
 };
 
 /** The reply to one student turn. */
+/** A place on the canvas: an element by id, or a box in 0-to-1 units of the canvas picture the tutor was shown. */
+export type CanvasTarget = { element?: string; box?: { x: number; y: number; w: number; h: number } };
+
+/** One thing the tutor's tools asked the page to do. Every word in it was checked by the guard with the reply. */
+export type CanvasAction =
+  | { type: "diagram"; kind: "map" | "steps" | "summary"; title: string; items: { label: string; detail: string }[]; picture?: boolean; picture_id?: string }
+  | { type: "mark"; target: CanvasTarget; shape: "circle" | "box" | "underline" | "arrow"; note?: string; tone?: "red" | "green" }
+  | { type: "write"; text: string; latex: boolean; target?: CanvasTarget }
+  | { type: "show_slide"; lecture: number; slide: number };
+
+/** What the page tells the tutor about the canvas on a turn. `scene` is the board as shapes, sent with the picture for the professor's transcript. */
+export type CanvasContext = { summary: string; image?: { mimeType: string; base64: string }; scene?: Record<string, unknown>[] };
+
+/** A file read by the server for the next message: its id, what kind it was, and what was read or left out. */
+export type AttachmentInfo = { id: string; name: string; kind: "pdf" | "image" | "text" | "document" | "archive"; chars: number; images: number; notes: string[] };
+
 export type TurnReply = {
   reply: string;
   level: HintLevel;
   verdict: GuardVerdict;
   retries: number;
+  /** Present on a turn where the tutor used a tool: what to do on the canvas or in the slide pane, and the tools' names. */
+  actions?: CanvasAction[];
+  tools?: string[];
+  /** The tutor message's id, sent with actions, so the page can store the board as it looks after them. */
+  message_id?: string;
   /**
    * Set only when the reply and the verdict reason do not carry the canary.
    * The drawer prints the word "absent". The marker itself is never a value here.
@@ -172,7 +240,7 @@ export type SessionMessages = {
   current_question?: number;
   completed?: boolean;
   reflection?: Reflection | null;
-  messages: { role: "student" | "tutor"; content: string; hint_level: number | null }[];
+  messages: { role: "student" | "tutor"; content: string; hint_level: number | null; tools?: string[]; actions?: CanvasAction[]; canvas_shared?: boolean; attachments?: { id?: string | null; name: string; kind: string }[] }[];
 };
 
 export type ProgressLabel = {
@@ -246,6 +314,21 @@ export type TranscriptTurn = {
   created_at: string;
   /** The question this turn was on, 0-based, or null when the server could not place it. */
   question_index: number | null;
+  /** The tutor's tool calls on this turn: the tool, its arguments, and what it answered. Absent from an older server. */
+  tool_calls?: { name: string; args: Record<string, unknown>; result: string }[];
+  /** On a student turn: the canvas was shared with the tutor, and whether a picture of it went too. */
+  canvas?: { shared: boolean; picture: boolean } | null;
+  /** On a student turn: the files attached, by id, name, and kind. The originals are served by attachmentUrl. */
+  attachments?: { id: string | null; name: string; kind: string }[];
+  /** On a student turn: the picture of the canvas Askretes was shown is stored (canvasPictureUrl). */
+  canvas_picture?: boolean;
+  /** The ids of the pictures on the stored board (boardFileUrl). */
+  board_files?: string[];
+  message_id?: string;
+  /** The canvas as shapes: what the student shared, or the board after Askretes' marks. */
+  board?: Record<string, unknown>[] | null;
+  /** What Askretes' tools did, after the guard released it. */
+  actions?: CanvasAction[];
 };
 
 /** One question as a student's work view heads it: the prompt and this student's seconds on it (null if not finished). */
@@ -279,7 +362,7 @@ export type ThursdayCard = {
 /** One revision card, written from the professor's notes. `source` is the line of the notes it came from. */
 export type StudyCard = { concept: string; question: string; answer: string; source: string };
 
-/** What Margin drew: a kind, a title, and up to six labelled items. The page lays it out. It is never an image and never code. */
+/** What Askretes drew: a kind, a title, and up to six labelled items. The page lays it out. It is never an image and never code. */
 export type Drawing = { kind: "map" | "steps" | "summary"; title: string; items: { label: string; detail: string }[]; /** Names this drawing for the picture route. */ picture_id?: string };
 
 /** One lecture's slides. `unreadable_pages` counts pages with no text layer, which the tutor cannot cite. */
@@ -338,12 +421,15 @@ export class ApiError extends Error {
   status: number;
   code: string;
   issues: { path: string; message: string }[];
-  constructor(status: number, code: string, issues: { path: string; message: string }[] = []) {
+  /** A sentence the server wrote for the person, when it sent one (a refused attachment says why). */
+  detail: string | null;
+  constructor(status: number, code: string, issues: { path: string; message: string }[] = [], detail: string | null = null) {
     super(code);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.issues = issues;
+    this.detail = detail;
   }
 }
 
@@ -381,8 +467,8 @@ async function request<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", p
     data = null;
   }
   if (!res.ok) {
-    const err = (data ?? {}) as { error?: string; issues?: { path: string; message: string }[] };
-    throw new ApiError(res.status, err.error ?? "request_failed", err.issues ?? []);
+    const err = (data ?? {}) as { error?: string; issues?: { path: string; message: string }[]; message?: string };
+    throw new ApiError(res.status, err.error ?? "request_failed", err.issues ?? [], typeof err.message === "string" ? err.message : null);
   }
   return data as T;
 }
@@ -438,17 +524,17 @@ export const api = {
     const opened = await request<{ draft_id: string }>("POST", `/api/prof/courses/${q(courseId)}/assignment-drafts`, undefined, { type: "application/pdf", data: questionPdf });
     return request<AssignmentDraft>("POST", `/api/prof/assignment-drafts/${q(opened.draft_id)}/answer-key`, undefined, { type: "application/pdf", data: answerPdf });
   },
-  /** A new assignment in this class, from a read draft. */
-  createPdfAssignment: (courseId: string, fields: { draft_id: string; title: string; due_at: string | null; margin_enabled: boolean }) =>
+  /** Opens a draft from the questions, typed or as any file (PDF, Word, PowerPoint, Excel, CSV, Markdown, text, handwriting photo, zip). */
+  draftFromSource: (courseId: string, questions: AssignmentSource) => request<{ draft_id: string; chars: number }>("POST", `/api/prof/courses/${q(courseId)}/assignment-drafts/source`, { questions }),
+  /** Reads the draft with its answer key (optional, any source) into the preview. */
+  readDraft: (draftId: string, answers?: AssignmentSource) => request<AssignmentDraft>("POST", `/api/prof/assignment-drafts/${q(draftId)}/read`, answers ? { answers } : {}),
+  /** A new assignment in this class, from a read draft. `questions` is the preview's wording as the professor edited it. */
+  createPdfAssignment: (courseId: string, fields: { draft_id: string; title: string; due_at: string | null; margin_enabled: boolean; questions?: string[] }) =>
     request<{ _id: string }>("POST", `/api/prof/courses/${q(courseId)}/assignments`, fields),
   /** Edits title, due date and the switch; with `draft_id`, also replaces the questions and keys. 400 `pdfs_required` for an assignment without PDFs. */
-  editPdfAssignment: (assignmentId: string, fields: { draft_id?: string; title: string; due_at: string | null; margin_enabled: boolean }) =>
+  editPdfAssignment: (assignmentId: string, fields: { draft_id?: string; title: string; due_at: string | null; margin_enabled: boolean; questions?: string[] }) =>
     request<{ _id: string }>("PATCH", `/api/prof/assignments/${q(assignmentId)}`, fields),
   profCourses: () => request<{ courses: ProfCourseCard[] }>("GET", "/api/prof/courses"),
-  posts: (courseId: string) => request<{ posts: Post[] }>("GET", `/api/courses/${q(courseId)}/posts`),
-  addPost: (courseId: string, post: { author: string; role: "student" | "prof"; body: string; parent_id?: string }) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts`, post),
-  /** Asks Margin to answer a question in the discussion. 422 `held` means the answer was checked against the class's answer keys and not posted. */
-  askMarginOnPost: (courseId: string, postId: string) => request<{ id: string }>("POST", `/api/courses/${q(courseId)}/posts/${q(postId)}/margin`),
   saveCourse: (course: { id?: string; name: string; description: string; notes: string; professor?: string; code?: string; term?: string; accent?: CourseAccent }) => request<{ id: string; name: string }>("POST", "/api/prof/courses", course),
   /** `text` for a text file, `file` for a PDF or a picture that the server reads into text once. */
   addMaterial: (courseId: string, material: { title: string; text?: string; file?: { mimeType: string; base64: string } }) =>
@@ -464,8 +550,13 @@ export const api = {
     request<{ reflection: Reflection }>("PUT", `/api/sessions/${q(sessionId)}/reflection`, answers),
   sessionMessages: (sessionId: string) => request<SessionMessages>("GET", `/api/sessions/${q(sessionId)}/messages`),
   /** `attempt` is sent only when the student wrote one. There is no flag that claims an attempt. The server's scribe reads the words. */
-  sendTurn: (sessionId: string, text: string, attempt?: string) =>
-    request<TurnReply>("POST", `/api/sessions/${q(sessionId)}/messages`, attempt ? { text, attempt } : { text }),
+  sendTurn: (sessionId: string, text: string, attempt?: string, canvas?: CanvasContext, attachments?: string[]) =>
+    request<TurnReply>("POST", `/api/sessions/${q(sessionId)}/messages`, { text, ...(attempt ? { attempt } : {}), ...(canvas ? { canvas } : {}), ...(attachments?.length ? { attachments } : {}) }),
+  /** One file for the next message, as base64. The server reads it within its limits and answers with an id, or a 400/413 whose `message` the tile shows. */
+  uploadAttachment: (sessionId: string, file: { name: string; base64: string }) => request<AttachmentInfo>("POST", `/api/sessions/${q(sessionId)}/attachments`, file),
+  /** The board after a reply's canvas actions, for the professor's transcript. */
+  putBoard: (sessionId: string, messageId: string, scene: Record<string, unknown>[], files: { id: string; mimeType: string; base64: string }[] = []) =>
+    request<null>("PUT", `/api/sessions/${q(sessionId)}/messages/${q(messageId)}/board`, { scene, ...(files.length ? { files } : {}) }),
   /** The photo as base64 without a data: prefix, in the type it was encoded as. */
   sendPhoto: (sessionId: string, image: { mimeType: string; base64: string }) =>
     request<PhotoReply>("POST", `/api/sessions/${q(sessionId)}/messages`, { image }),
@@ -479,6 +570,14 @@ export const api = {
   saveOwnNotes: (studentId: string, assignmentId: string, body: string) =>
     request<{ body: string }>("PUT", `/api/students/${q(studentId)}/notes?assignment_id=${q(assignmentId)}`, { body }),
   progress: (studentId: string) => request<StudentProgress>("GET", `/api/students/${q(studentId)}/progress`),
+  /** The class's chat with Askretes. A message may carry files (base64); an answer may carry a draft assignment to review and post. */
+  classChat: (courseId: string) => request<{ messages: ClassChatTurn[] }>("GET", `/api/prof/courses/${q(courseId)}/chat`),
+  askClass: (courseId: string, text: string, files: { name: string; base64: string }[] = []) =>
+    request<{ reply: string; tool_calls: ClassChatTurn["tool_calls"]; draft: ClassChatDraft | null }>("POST", `/api/prof/courses/${q(courseId)}/chat`, { text, ...(files.length ? { files } : {}) }),
+  analystHistory: (assignmentId: string) => request<{ messages: AnalystTurn[]; names: AnalystNames }>("GET", `/api/prof/analyst?assignment_id=${q(assignmentId)}`),
+  askAnalyst: (assignmentId: string, text: string) =>
+    request<{ reply: string; tool_calls: AnalystTurn["tool_calls"]; names: AnalystNames }>("POST", `/api/prof/analyst?assignment_id=${q(assignmentId)}`, { text }),
+  workSummary: (assignmentId: string) => request<WorkSummary>("GET", `/api/prof/work-summary?assignment_id=${q(assignmentId)}`),
   classSummary: (assignmentId: string) => request<ClassSummary>("GET", `/api/prof/class-summary?assignment_id=${q(assignmentId)}`),
   roster: (assignmentId: string) => request<Roster>("GET", `/api/prof/students?assignment_id=${q(assignmentId)}`),
   transcript: (studentId: string, assignmentId: string) =>

@@ -1,0 +1,8 @@
+<!-- The Askretes mark for the browser tab: the same paths as components/brand/askretes-mark.tsx, with no background. A tab cannot read the page's tokens, so the two colours are written here; the ink turns light on a dark browser so the letter stays visible. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="118 96 806 820">
+  <style>.ink{fill:#141414}.pen{stroke:#141414}@media (prefers-color-scheme: dark){.ink{fill:#f4efe4}.pen{stroke:#f4efe4}}</style>
+  <path class="ink" d="M563 112C541 150 520 210 500 262L708 808C722 846 718 872 688 878L688 906L914 906L914 886C878 882 858 858 842 822L582 176C574 154 567 132 563 112Z"/>
+  <path class="ink" d="M362 614L588 610C604 609 614 602 624 598C620 620 622 642 628 664C612 652 600 646 584 646L358 648Z"/>
+  <path fill="#cc1a1e" d="M567 104C520 98 474 120 446 178L214 744C196 790 166 836 140 868C118 896 138 916 182 914C238 911 276 880 296 828L503 262C522 210 538 138 567 104Z"/>
+  <path class="pen" fill="none" stroke-width="15" stroke-linecap="round" d="M350 497L509 492M336 546L484 543"/>
+</svg>

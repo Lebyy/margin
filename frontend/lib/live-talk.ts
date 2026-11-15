@@ -6,6 +6,7 @@
 // call Gemini itself.
 
 import { API_BASE } from "@/lib/api";
+import { createResampler } from "@/lib/pcm";
 
 export type LiveCaption = { role: "student" | "tutor"; text: string; speak: boolean; partial: boolean };
 
@@ -38,23 +39,6 @@ class PcmCapture extends AudioWorkletProcessor {
 }
 registerProcessor("pcm-capture", PcmCapture);
 `;
-
-/** 16-bit little-endian PCM at 16 kHz, which is the rate the live model expects. */
-function toPcm16k(samples: Float32Array, rate: number): ArrayBuffer {
-  const outRate = 16000;
-  const ratio = rate / outRate;
-  const length = Math.max(1, Math.floor(samples.length / ratio));
-  const pcm = new Int16Array(length);
-  for (let i = 0; i < length; i++) {
-    const pos = i * ratio;
-    const left = Math.floor(pos);
-    const right = Math.min(left + 1, samples.length - 1);
-    const sample = samples[left] + (samples[right] - samples[left]) * (pos - left);
-    const clamped = Math.max(-1, Math.min(1, sample));
-    pcm[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
-  }
-  return pcm.buffer;
-}
 
 /**
  * Opens one Talk session and returns a function that hangs up.
@@ -153,7 +137,7 @@ export function startLive(
       }
       if (message.type === "error") {
         window.clearTimeout(giveUp);
-        fail(message.error === "session_not_found" ? "Start a session first." : "Voice is not available right now.");
+        fail(message.error === "session_not_found" ? "Start a session first." : message.error === "live_closed" ? "Talk ended. Press Talk to start again." : "Voice is not available right now.");
         return;
       }
       if (message.type === "stop") {
@@ -181,7 +165,10 @@ export function startLive(
 }
 
 async function startMic(socket: WebSocket): Promise<() => void> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // Echo cancellation matters most: without it Askretes' own voice from the speakers reaches the microphone, the model hears itself, and it interrupts its own reply. Noise suppression and gain control keep a quiet or noisy room transcribable.
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
   const context = new AudioContext();
   void context.resume();
   const blob = new Blob([WORKLET], { type: "application/javascript" });
@@ -192,14 +179,15 @@ async function startMic(socket: WebSocket): Promise<() => void> {
   const node = new AudioWorkletNode(context, "pcm-capture");
   const mute = context.createGain();
   mute.gain.value = 0;
-  node.port.onmessage = (event: MessageEvent<{ samples: Float32Array; rate: number }>) => {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    socket.send(toPcm16k(event.data.samples, event.data.rate));
-  };
+  const resample = createResampler(context.sampleRate, (pcm) => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(pcm);
+  });
+  node.port.onmessage = (event: MessageEvent<{ samples: Float32Array; rate: number }>) => resample(event.data.samples);
   source.connect(node);
   node.connect(mute);
   mute.connect(context.destination);
   return () => {
+    node.port.onmessage = null;
     stream.getTracks().forEach((track) => track.stop());
     void context.close();
   };

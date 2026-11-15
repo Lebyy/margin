@@ -71,7 +71,7 @@ export function nextHintLevel(input: PolicyInput): HintLevel {
 }
 
 /**
- * The request rule: Margin nudges unless the student asks for more, and only
+ * The request rule: Askretes nudges unless the student asks for more, and only
  * after ATTEMPTS_BEFORE_HELP real attempts on this question.
  *
  * - A jailbreak (asking for the answer, claimed permission) is a nudge at any

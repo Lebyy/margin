@@ -7,8 +7,8 @@
 // class of different students, does any reply leak a key, do honest students
 // get real hints, does pressure ever raise the level, and what does the
 // professor's dashboard actually show for a class like this. It also shows,
-// honestly, what Margin cannot see: a student who uses another AI only
-// appears as a student who barely used Margin.
+// honestly, what Askretes cannot see: a student who uses another AI only
+// appears as a student who barely used Askretes.
 //
 // Why it is not in `npm test`. The project law says `npm test` and
 // `npm run redteam` make zero live calls. This file lives under test/sim/,

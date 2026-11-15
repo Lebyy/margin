@@ -74,8 +74,10 @@ export function StudentFilters({
             <SearchField.ClearButton />
           </SearchField.Group>
         </SearchField>
+        {/* On a phone the four filters are wider than the screen; the group scrolls sideways inside its own width instead of pushing the whole panel wider. */}
         <ToggleButtonGroup
           aria-label="Progress"
+          className="max-w-full overflow-x-auto [scrollbar-width:none]"
           selectionMode="single"
           disallowEmptySelection
           selectedKeys={[filter.status]}

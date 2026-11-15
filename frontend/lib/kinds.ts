@@ -27,5 +27,5 @@ export const KIND: Record<
   code: { name: "Code", blurb: "A program to write.", icon: Code2, color: "accent", work: "Your code", placeholder: "Write your code here" },
   written: { name: "Written", blurb: "A short answer or a paragraph.", icon: PenLine, color: "warning", work: "Your answer", placeholder: "Write your answer in your own words" },
   math: { name: "Math", blurb: "A problem worked to a final answer.", icon: Sigma, color: "danger", work: "Your working", placeholder: "Show your working, one step per line" },
-  topic: { name: "Learn", blurb: "Material to learn. No answer key. Margin teaches it.", icon: BookOpen, color: "success", work: "Your notes", placeholder: "Write what you understand so far" },
+  topic: { name: "Learn", blurb: "Material to learn. No answer key. Askretes teaches it.", icon: BookOpen, color: "success", work: "Your notes", placeholder: "Write what you understand so far" },
 };

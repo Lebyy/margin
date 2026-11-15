@@ -7,14 +7,14 @@
 @import "@heroui/styles";
 
 /*
- * Margin's own tokens. Everything else on screen uses HeroUI's tokens
+ * Askretes' own tokens. Everything else on screen uses HeroUI's tokens
  * (background, surface, muted, border, accent, danger).
  *
  * --margin-red is the professor's red pen: the margin line, the mark beside a
  * student's line, and the current rung of the hint ladder. --paper is the
  * sheet the work sits on, and --paper-line its ruling.
  *
- * Margin ships light only. A component reads the token and never a hex color,
+ * Askretes ships light only. A component reads the token and never a hex color,
  * so a later theme change would still be one edit here.
  */
 :root {

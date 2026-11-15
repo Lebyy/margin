@@ -93,8 +93,9 @@ const assignmentSchema = new Schema(
     // A learning topic is the one kind with no key: it is material to teach, and there is no solution to hold back. Every other kind must have one, or the guard would have nothing to check a hint against.
     answer_key: {
       type: String,
-      required: function (this: { kind?: string }) {
-        return this.kind !== "topic";
+      // An empty key is allowed: a professor may post questions before the key (the form warns them). The guard then has no key lines to match, and the judge reads the draft alone. A key that is missing altogether is still refused.
+      required: function (this: { kind?: string; answer_key?: string | null }) {
+        return this.kind !== "topic" && typeof this.answer_key !== "string";
       },
       select: false,
     },
@@ -363,6 +364,55 @@ const messageSchema = new Schema(
     // it existed and on Talk captions; roster.ts places those by the session's
     // per-question clock instead, so leaving it out never hides a turn.
     question_index: { type: Number, default: null, min: 0 },
+    // The tutor's tool calls on this turn, as the professor's transcript shows
+    // them: the tool, its arguments, and what it answered (cut short). Only the
+    // released draft's calls are kept; a held draft's arguments are the held
+    // words, and those are stored nowhere.
+    tool_calls: {
+      type: [{ _id: false, name: { type: String, required: true }, args: { type: Schema.Types.Mixed, default: {} }, result: { type: String, default: "" } }],
+      default: [],
+    },
+    // What the tools asked the student's page to do (draw, mark, write, open a
+    // slide), after the guard released them. Kept so the transcript and a
+    // reload can say what happened on the canvas. The canvas itself is the
+    // student's and stays in their browser.
+    actions: { type: [Schema.Types.Mixed], default: [] },
+    // On a student message: the page sent the tutor a list of what was on the
+    // canvas, and whether it sent a picture of it too. The picture is kept in
+    // the blob store under `picture_key`, so the professor sees exactly what
+    // Askretes was shown.
+    canvas: {
+      type: { _id: false, shared: { type: Boolean, default: false }, picture: { type: Boolean, default: false }, picture_key: { type: String, default: null } },
+      default: null,
+    },
+    // Files attached to a student message: name, kind, size, and where the
+    // original is kept, so the student and the professor can open it again.
+    attachments: {
+      type: [
+        {
+          _id: false,
+          id: { type: String, default: null },
+          name: { type: String, required: true },
+          kind: { type: String, required: true },
+          bytes: { type: Number, default: 0 },
+          // Where the original file is kept in the blob store (storage.ts), and the type it is served with.
+          storage_key: { type: String, default: null },
+          content_type: { type: String, default: null },
+        },
+      ],
+      default: [],
+    },
+    // The canvas as shapes, for the professor's transcript: on a student
+    // message, the board the student shared; on a tutor message, the board
+    // after Askretes' marks. Excalidraw elements, with links removed; the
+    // pictures on the board are kept separately, in `board_files`.
+    board: { type: [Schema.Types.Mixed], default: undefined },
+    // The pictures on that board, kept in the blob store: the Excalidraw file
+    // id each image element names, and where its bytes are.
+    board_files: {
+      type: [{ _id: false, id: { type: String, required: true }, storage_key: { type: String, required: true }, content_type: { type: String, required: true } }],
+      default: undefined,
+    },
   },
   { collection: "messages", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
@@ -511,23 +561,31 @@ const courseMaterialSchema = new Schema(
 courseMaterialSchema.index({ course_id: 1, created_at: 1 });
 export const CourseMaterial = mongoose.model("CourseMaterial", courseMaterialSchema);
 
-// A post in a class discussion: a question or a reply, from a student, the
-// professor, or Margin. `parent_id` is null on a question and set on a reply.
-// The author is the name the person typed and their side. A post by Margin is
-// stored with role "margin", so nobody can mistake the tutor's answer for the
-// professor's.
-const postSchema = new Schema(
+// The professor's conversation with Askretes' class analyst about one
+// assignment (analyst.ts). Every question and answer is kept, with the tools
+// the analyst called and what they returned (cut short), so the professor can
+// scroll back. Students appear in it only as labels (S1, S2, ...); the page
+// shows names from the current label map.
+const analystMessageSchema = new Schema(
   {
-    course_id: { type: Schema.Types.ObjectId, ref: "Course", required: true },
-    parent_id: { type: Schema.Types.ObjectId, ref: "Post", default: null },
-    author: { type: String, required: true, trim: true },
-    role: { type: String, enum: ["student", "prof", "margin"], required: true },
-    body: { type: String, required: true },
+    // One of the two: an assignment's conversation (the analyst beside its dashboard), or a class's (the class chat, which can draft assignments).
+    assignment_id: { type: Schema.Types.ObjectId, ref: "Assignment", default: null },
+    course_id: { type: Schema.Types.ObjectId, ref: "Course", default: null },
+    professor: { type: String, default: null },
+    role: { type: String, enum: ["professor", "analyst"], required: true },
+    // A draft the class chat made in this answer, by id and title, so the page can offer "Review and post" again after a reload.
+    draft: { type: Schema.Types.Mixed, default: null },
+    content: { type: String, required: true },
+    tool_calls: {
+      type: [{ _id: false, name: { type: String, required: true }, args: { type: Schema.Types.Mixed, default: {} }, result: { type: String, default: "" } }],
+      default: [],
+    },
   },
-  { collection: "posts", timestamps: { createdAt: "created_at", updatedAt: false } as const },
+  { collection: "analyst_messages", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );
-postSchema.index({ course_id: 1, created_at: 1 });
-export const Post = mongoose.model("Post", postSchema);
+analystMessageSchema.index({ assignment_id: 1, created_at: 1 });
+analystMessageSchema.index({ course_id: 1, created_at: 1 });
+export const AnalystMessage = mongoose.model("AnalystMessage", analystMessageSchema);
 
 // A student in a class. It exists because the student pressed Join, or
 // started a session on one of the class's assignments; no script enrolls

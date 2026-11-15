@@ -1,4 +1,4 @@
-// What Margin draws on the student's canvas when asked.
+// What Askretes draws on the student's canvas when asked.
 //
 // This is MindPad's "ask the agent to draw a concept map or summarize this
 // chapter, and the canvas updates", with this product's rule on top: a
@@ -17,7 +17,7 @@
 //
 // Any failure draws nothing. A provider error, a payload that is not the
 // schema, and a drawing the guard holds all return null, and the page says
-// Margin could not draw that. There is no weaker fallback drawing.
+// Askretes could not draw that. There is no weaker fallback drawing.
 
 import { z } from "zod";
 import { assessDraft } from "./guard.ts";
@@ -122,10 +122,10 @@ export function pictureOf(drawing: Drawing): Promise<{ mimeType: string; base64:
   );
 }
 
-/** One thing Margin pointed at on a picture: a short label, one sentence about it, and where it is, in 0-to-1 units from the picture's top left. */
+/** One thing Askretes pointed at on a picture: a short label, one sentence about it, and where it is, in 0-to-1 units from the picture's top left. */
 export type Mark = { label: string; note: string; box: StepBox };
 
-/** What Margin says about a picture the student put on the canvas. */
+/** What Askretes says about a picture the student put on the canvas. */
 export type Annotation = { description: string; marks: Mark[] };
 
 export { IMAGE_TYPES };

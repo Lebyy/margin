@@ -5,17 +5,22 @@ import { createContext, Fragment, useContext } from "react";
 import type { Lecture } from "@/lib/api";
 
 /**
- * The class's lectures, for turning Margin's slide citations into links.
+ * The class's lectures, for turning Askretes' slide citations into links.
  * The assignment page provides them; anywhere without a provider, citations
  * stay plain text.
+ *
+ * `open` is set by a page with a slide pane beside the chat. A citation then
+ * opens the slide in that pane and the conversation stays where it is. The
+ * link's address still points at the class's slides, so opening it in a new
+ * tab, or with the pane unavailable, still lands on the same slide.
  */
-export const CitationContext = createContext<{ courseId: string; lectures: Lecture[] } | null>(null);
+export const CitationContext = createContext<{ courseId: string; lectures: Lecture[]; open?: (lectureId: string, page: number) => void } | null>(null);
 
 /** The one citation shape the tutor is told to write for a single slide (tutor.ts, level 2). */
 const CITATION = /\[Lecture (\d{1,3}), slide (\d{1,4})\]/g;
 
 /**
- * A reply from Margin, with each "[Lecture n, slide p]" made a link that
+ * A reply from Askretes, with each "[Lecture n, slide p]" made a link that
  * opens the class's slide viewer at that lecture and page.
  *
  * The text is split into plain strings and links and rendered as React
@@ -41,6 +46,12 @@ export function CitedText({ text }: { text: string }) {
         key={`l${index}`}
         href={`/course/${ctx.courseId}?tab=slides&lecture=${lecture.id}&page=${page}`}
         className="font-sans text-[0.9em] font-medium text-accent underline underline-offset-2"
+        onClick={(e) => {
+          // A plain click opens the pane. A modified click (new tab, new window) is left to the browser and follows the address.
+          if (!ctx.open || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+          e.preventDefault();
+          ctx.open(lecture.id, page);
+        }}
       >
         {whole}
       </NextLink>,

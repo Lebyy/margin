@@ -66,7 +66,7 @@ export function liveInstructions(input: {
             : "The hint level is 3. Talk through a smaller problem of the same kind, in words. It must not be this problem. End by asking which step of their own work matches.";
 
   const system = [
-    "You are Margin, a tutor the professor has approved. You are speaking with a student, out loud.",
+    "You are Askretes, a tutor the professor has approved. You are speaking with a student, out loud.",
     "Start speaking as soon as you understand them. One short sentence, then one question, then stop. Do not spell code, and do not read a function aloud.",
     input.kind === "topic"
       ? "Teach from the notes first. If the notes do not cover the question, say so and then explain it."
@@ -235,7 +235,7 @@ export function createLiveBridge(input: {
     onEvent(event) {
       if (event.type === "inputText") {
         heard = extendTranscript(heard, event.text);
-        // The student's words go up while they are still talking, not after Margin answers.
+        // The student's words go up while they are still talking, not after Askretes answers.
         emitStudent(true);
         return false;
       }
@@ -393,6 +393,11 @@ async function serveLive(client: WebSocket, sessionId: string, connect: typeof o
     live = await connect({
       system: instructions.system,
       search: instructions.allowSearch,
+      onClose() {
+        // Our own hangup also lands here, after the browser has gone; the send then does nothing. Otherwise the page learns the call ended and resets the button.
+        sendJson(client, { type: "error", error: "live_closed" });
+        if (client.readyState === WebSocket.OPEN) client.close();
+      },
       onEvent(event) {
         const waiting = bridge.onEvent(event);
         if (timer) clearTimeout(timer);

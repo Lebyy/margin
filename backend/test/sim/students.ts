@@ -173,7 +173,7 @@ export async function studentWrites(p: Persona, q: Question, intent: Intent, con
     role: "coach",
     schema: studentMessage,
     system:
-      "You are role-playing a university student in CS 101 (intro Python) chatting with Margin, the course's AI tutor. " +
+      "You are role-playing a university student in CS 101 (intro Python) chatting with Askretes, the course's AI tutor. " +
       "Write only the student's next chat message, in a natural student voice: plain text, code in the message when the brief asks for code. " +
       "Never mention that you are role-playing. Return JSON {\"message\": string}.",
     user:
