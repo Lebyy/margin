@@ -5,10 +5,11 @@ import { ArrowRight, Clock, MessageCircleQuestion, MessageSquareText, RefreshCw,
 import { AnimatePresence, motion } from "motion/react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ApiNumber } from "@/components/api-number";
 import { Paper } from "@/components/paper";
 import { ChooseProfessor } from "@/components/prof/choose-professor";
+import { StudentIdCard, type CardIssuer } from "@/components/prof/student-id-card";
 import { matches, NO_FILTER, StudentFilters, type StudentFilter } from "@/components/prof/student-filters";
 import { duration, TimingsPanel } from "@/components/prof/timings-panel";
 import { useAssignment } from "@/components/prof/use-assignment";
@@ -23,13 +24,11 @@ import {
   type StruggleType,
   type StudentSummary,
   type ThursdayCard,
+  type Timings,
   type Transcript,
   type TranscriptTurn,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
-
-/** The words on each student card's status chip. */
-const STATUS_LABEL: Record<StudentSummary["status"], string> = { not_started: "Not started", in_progress: "In progress", finished: "Finished" };
 
 /** The struggle types the heatmap has a column for. `none` is not a struggle, so it has no column. */
 const STRUGGLE_COLUMNS: Exclude<StruggleType, "none">[] = ["misconception", "stuck_starting", "syntax_or_mechanics", "careless_error"];
@@ -68,10 +67,31 @@ export default function DashboardPage() {
   const [filter, setFilter] = useState<StudentFilter>(NO_FILTER);
   // How many matching cards are drawn. A class of 200 is drawn in pages of 24 so the page stays quick to scroll.
   const [shownCount, setShownCount] = useState(24);
+  // The class the open assignment belongs to, for the student cards' colour strip and "CS 101 · Fall 2026" line.
+  const [issuer, setIssuer] = useState<CardIssuer>(null);
+  const courseId = pick.state === "ready" ? (pick.assignments.find((a) => a.id === pick.assignmentId)?.course_id ?? null) : null;
+  useEffect(() => {
+    if (!courseId) return;
+    let live = true;
+    api
+      .profCourses()
+      .then(({ courses }) => {
+        const c = courses.find((x) => x.id === courseId);
+        if (live) setIssuer(c ? { code: c.code || c.name, term: c.term, accent: c.accent } : null);
+      })
+      .catch(() => live && setIssuer(null));
+    return () => {
+      live = false;
+    };
+  }, [courseId]);
 
   // Bumped by the refresh button. The effect below re-reads the three routes whenever it changes.
   const [version, setVersion] = useState(0);
   const refresh = () => setVersion((v) => v + 1);
+
+  // The timing table's data. Fetched with everything else below, not by the panel after the page has drawn:
+  // that second wave started at about 1.9 s on a class of 200. Undefined while loading, null if it failed.
+  const [timings, setTimings] = useState<Timings | null | undefined>(undefined);
 
   useEffect(() => {
     if (!assignmentId) return;
@@ -81,13 +101,16 @@ export default function DashboardPage() {
       api.roster(assignmentId),
       // 404 `no_card_yet` is the ordinary state before the first generate, not an error.
       api.thursdayCard(assignmentId).catch(() => null),
+      // A failed timing read only empties that panel; it does not fail the dashboard.
+      api.timings(assignmentId).catch(() => null),
     ])
-      .then(([s, r, c]) => {
+      .then(([s, r, c, t]) => {
         if (!live) return;
         setFailed(false);
         setSummary(s);
         setRoster(r);
         setCard(c);
+        setTimings(t);
       })
       .catch(() => live && setFailed(true))
       .finally(() => live && setLoaded(true));
@@ -95,6 +118,13 @@ export default function DashboardPage() {
       live = false;
     };
   }, [assignmentId, version]);
+
+  // The list below follows the search a moment behind the typing (useDeferredValue), so each keystroke shows in the
+  // box at once and the cards and the table catch up when the browser is free. The set of matching ids is made once
+  // per filter change, so the memoized timing panel sees the same Set until the filter actually changes.
+  const deferredFilter = useDeferredValue(filter);
+  const matching = useMemo(() => (roster ? roster.students.filter((s) => matches(s, deferredFilter)) : []), [roster, deferredFilter]);
+  const matchingIds = useMemo(() => (deferredFilter === NO_FILTER ? null : new Set(matching.map((s) => s.student_id))), [deferredFilter, matching]);
 
   /**
    * Runs the generate endpoint, once, on a press.
@@ -165,7 +195,6 @@ export default function DashboardPage() {
     );
   }
 
-  const matching = roster.students.filter((s) => matches(s, filter));
 
   return (
     <div className="flex flex-col gap-5">
@@ -203,7 +232,7 @@ export default function DashboardPage() {
             <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {matching.slice(0, shownCount).map((s) => (
                 <li key={s.student_id}>
-                  <StudentLines student={s} onOpen={() => setOpenStudent(s)} />
+                  <StudentIdCard student={s} issuer={issuer} onOpen={setOpenStudent} />
                 </li>
               ))}
             </ul>
@@ -216,7 +245,7 @@ export default function DashboardPage() {
         </Card.Content>
       </Card>
 
-      <TimingsPanel assignmentId={assignmentId} version={version} studentIds={filter === NO_FILTER ? null : new Set(matching.map((s) => s.student_id))} />
+      <TimingsPanel timings={timings} studentIds={matchingIds} />
 
       <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
     </div>
@@ -511,39 +540,6 @@ function Stat({ value, label }: { value: number; label: string }) {
       </span>
       <span className="max-w-[14rem] text-xs leading-4 text-muted">{label}</span>
     </p>
-  );
-}
-
-/**
- * One student's three lines, their average time per question, and the button that opens their work.
- * The whole summary is plain text and the action is a separate HeroUI button, so the card is not one large click target that a screen reader would announce as a single unlabeled control.
- */
-function StudentLines({ student, onOpen }: { student: StudentSummary; onOpen: () => void }) {
-  return (
-    <div className="flex h-full flex-col gap-2 rounded-lg border border-border px-3.5 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-medium">{student.display_name}</p>
-        <Chip size="sm" variant="soft" color={student.status === "finished" ? "success" : student.status === "in_progress" ? "accent" : "default"}>
-          {STATUS_LABEL[student.status]}
-        </Chip>
-      </div>
-      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-y-1 text-sm">
-        <dt className="text-muted">Concept</dt>
-        <dd>{student.concept ? conceptLabel(student.concept) : "no turns yet"}</dd>
-        <dt className="text-muted">Struggle</dt>
-        <dd>{student.concept ? STRUGGLE_LABEL[student.struggle_type] : "no turns yet"}</dd>
-        <dt className="text-muted">Last hint</dt>
-        <dd>{student.last_hint_level ? `level ${student.last_hint_level}` : "none yet"}</dd>
-        <dt className="text-muted">Avg time</dt>
-        <dd className="tabular-nums">
-          {student.average_seconds === null ? "no question finished" : `${duration(student.average_seconds)} per question · ${student.questions_done} done`}
-        </dd>
-      </dl>
-      {/* Enabled with no turns too: a student who never messaged still has their time on each question to show. Not started has nothing to open. */}
-      <Button size="sm" variant="ghost" className="mt-auto self-start" onPress={onOpen} isDisabled={student.status === "not_started"}>
-        Open work <ArrowRight className="size-3.5" aria-hidden />
-      </Button>
-    </div>
   );
 }
 

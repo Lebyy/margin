@@ -1,8 +1,11 @@
 "use client";
 
-import { Alert, Card, Chip, Spinner, Table } from "@heroui/react";
-import { useEffect, useState } from "react";
-import { api, type Timings } from "@/lib/api";
+import { Alert, Button, Card, Chip, Spinner, Table } from "@heroui/react";
+import { memo, useMemo, useState } from "react";
+import type { Timings } from "@/lib/api";
+
+/** Rows drawn at first, and added per "Show more". Each row is 22 table cells, so a class of 200 drawn at once was 3,700 cells. */
+const ROWS_PER_PAGE = 24;
 
 /**
  * Time per question. (Each student's look-back answers moved to their Open work drawer, where the name search reaches them.)
@@ -16,28 +19,26 @@ import { api, type Timings } from "@/lib/api";
  * where the assignment is hard, not a ranking. Rows are in the order the
  * server sends (newest first), not sorted by speed.
  *
- * It reads `/api/prof/timings`, which is a database read, so opening the
- * dashboard calls no model. `version` is the dashboard's refresh counter.
+ * Speed, measured on a class of 200: this table was most of the page's 9,000
+ * elements, and it was rebuilt on every keystroke in the search and every
+ * drawer opened, freezing the page for one to three seconds. Now the
+ * dashboard loads the data with everything else and passes it in; the panel
+ * is memoized, so it redraws only when the data or the filter changes; the
+ * filter arrives as one stable Set; and rows are drawn 24 at a time.
+ *
+ * `timings` is undefined while loading and null when the request failed.
  * `studentIds` is the dashboard's student filter: when set, only those
- * students' rows and look-back answers are shown, so one filter narrows the
- * whole page.
+ * students' rows are shown, so one filter narrows the whole page.
  */
-export function TimingsPanel({ assignmentId, version, studentIds = null }: { assignmentId: string; version: number; studentIds?: Set<string> | null }) {
-  const [data, setData] = useState<{ id: string; timings: Timings | null } | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api
-      .timings(assignmentId)
-      .then((t) => live && setData({ id: assignmentId, timings: t }))
-      .catch(() => live && setData({ id: assignmentId, timings: null }));
-    return () => {
-      live = false;
-    };
-  }, [assignmentId, version]);
-
-  // Data loaded for a different assignment is never shown under this one's title.
-  const current = data && data.id === assignmentId ? data : null;
+export const TimingsPanel = memo(function TimingsPanel({ timings, studentIds = null }: { timings: Timings | null | undefined; studentIds?: Set<string> | null }) {
+  const [rows, setRows] = useState(ROWS_PER_PAGE);
+  const shown = useMemo(() => (timings && studentIds ? { ...timings, sessions: timings.sessions.filter((s) => studentIds.has(s.student_id)) } : timings), [timings, studentIds]);
+  // A new filter starts from the first page again, so the count under the table always describes what matches.
+  const [seenFilter, setSeenFilter] = useState(studentIds);
+  if (seenFilter !== studentIds) {
+    setSeenFilter(studentIds);
+    setRows(ROWS_PER_PAGE);
+  }
 
   return (
     <Card aria-label="Time per question">
@@ -46,32 +47,36 @@ export function TimingsPanel({ assignmentId, version, studentIds = null }: { ass
         <Card.Description>From opening a question to pressing Next or Finish. Students are told this is shared. Use it to see which question is hard, not to rank anyone.</Card.Description>
       </Card.Header>
       <Card.Content className="flex flex-col gap-4">
-        {!current ? (
+        {timings === undefined ? (
           <div className="flex items-center gap-2 py-6 text-muted">
             <Spinner size="sm" /> Loading times
           </div>
-        ) : !current.timings ? (
+        ) : !shown ? (
           <Alert status="danger">
             <Alert.Indicator />
             <Alert.Content>
               <Alert.Description>The times could not be loaded.</Alert.Description>
             </Alert.Content>
           </Alert>
-        ) : current.timings.sessions.length === 0 ? (
-          <p className="py-4 text-muted">Nobody has started yet.</p>
+        ) : shown.sessions.length === 0 ? (
+          <p className="py-4 text-muted">{studentIds ? "No student matches these filters." : "Nobody has started yet."}</p>
         ) : (
-          <TimingsTable
-            timings={studentIds ? { ...current.timings, sessions: current.timings.sessions.filter((s) => studentIds.has(s.student_id)) } : current.timings}
-          />
+          <>
+            <TimingsTable questions={shown.questions} sessions={shown.sessions.slice(0, rows)} />
+            {shown.sessions.length > rows ? (
+              <Button variant="secondary" className="self-center" onPress={() => setRows((n) => n + ROWS_PER_PAGE)}>
+                Show {Math.min(ROWS_PER_PAGE, shown.sessions.length - rows)} more of {shown.sessions.length - rows}
+              </Button>
+            ) : null}
+          </>
         )}
       </Card.Content>
     </Card>
   );
-}
+});
 
 /** The table of seconds per question. Look-back answers are in each student's Open work drawer, after the last question. */
-function TimingsTable({ timings }: { timings: Timings }) {
-  const { questions, sessions } = timings;
+function TimingsTable({ questions, sessions }: { questions: Timings["questions"]; sessions: Timings["sessions"] }) {
   return (
     <>
       <Table>
