@@ -28,8 +28,9 @@ services:
         value: gcs
       - key: GCS_BUCKET
         value: askretes-student-files-62090fbe
+      # Every address the site is served from: the custom domain and its www, and Render's own address.
       - key: WEB_ORIGINS
-        value: https://askretes-web.onrender.com
+        value: https://askretes.us,https://www.askretes.us,https://askretes-web.onrender.com
       - key: LLM_API_KEY
         sync: false
       - key: MONGODB_URI
