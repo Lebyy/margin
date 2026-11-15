@@ -149,8 +149,8 @@ function QA({ question, answer }: { question: string; answer: string }) {
   );
 }
 
-/** Seconds as "4m 12s", "45s", or "1h 3m". Formatting only; the number is the server's. */
-function duration(seconds: number): string {
+/** Seconds as "4m 12s", "45s", or "1h 3m". Formatting only; the number is the server's. Shared by the timing table, the student cards, and the work drawer, so one time reads the same everywhere. */
+export function duration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
   if (m < 60) return `${m}m ${seconds % 60}s`;

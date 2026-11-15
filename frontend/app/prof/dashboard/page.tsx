@@ -1,14 +1,14 @@
 "use client";
 
 import { Alert, Button, Card, Chip, Drawer, Label, Meter, Spinner } from "@heroui/react";
-import { ArrowRight, MessageSquareText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, Clock, MessageSquareText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiNumber } from "@/components/api-number";
 import { Paper } from "@/components/paper";
-import { TimingsPanel } from "@/components/prof/timings-panel";
+import { duration, TimingsPanel } from "@/components/prof/timings-panel";
 import { useAssignment } from "@/components/prof/use-assignment";
 import {
   api,
@@ -22,6 +22,7 @@ import {
   type StudentSummary,
   type ThursdayCard,
   type Transcript,
+  type TranscriptTurn,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -164,6 +165,7 @@ export default function DashboardPage() {
       </div>
 
       <GuardStrip roster={roster} />
+      <ClassTime roster={roster} />
 
       <Card aria-label="Students">
         <Card.Header>
@@ -434,6 +436,40 @@ function GuardStrip({ roster }: { roster: Roster }) {
   );
 }
 
+/**
+ * How long this assignment takes the class, as two numbers the roster route computed.
+ *
+ * The time to finish counts only students who finished, so a student halfway
+ * through does not make the assignment look short. It is the class's number,
+ * shown to size the assignment, not to compare people; the per-student
+ * averages sit on each student's card, in start order, never sorted by speed.
+ */
+function ClassTime({ roster }: { roster: Roster }) {
+  const { finished_students, average_total_seconds, average_seconds_per_question } = roster.timing;
+  return (
+    <Card aria-label="How long this assignment takes">
+      <Card.Content className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <Clock className="size-4 text-muted" aria-hidden /> Time, for this class
+        </p>
+        <TimeStat seconds={average_total_seconds} label={`average time to finish (${finished_students} finished)`} />
+        <TimeStat seconds={average_seconds_per_question} label="average per question" />
+        <p className="basis-full text-xs text-muted">From opening a question to pressing Next. Students are told their time is shared.</p>
+      </Card.Content>
+    </Card>
+  );
+}
+
+/** One time figure. A dash until the server has a finished question to average. */
+function TimeStat({ seconds, label }: { seconds: number | null; label: string }) {
+  return (
+    <p className="flex items-baseline gap-2">
+      <span className="font-serif text-2xl font-semibold tabular-nums">{seconds === null ? "–" : duration(seconds)}</span>
+      <span className="max-w-[14rem] text-xs leading-4 text-muted">{label}</span>
+    </p>
+  );
+}
+
 function Stat({ value, label }: { value: number; label: string }) {
   return (
     <p className="flex items-baseline gap-2">
@@ -446,7 +482,7 @@ function Stat({ value, label }: { value: number; label: string }) {
 }
 
 /**
- * One student's three lines, and the button that opens their transcript.
+ * One student's three lines, their average time per question, and the button that opens their work.
  * The whole summary is plain text and the action is a separate HeroUI button, so the card is not one large click target that a screen reader would announce as a single unlabeled control.
  */
 function StudentLines({ student, onOpen }: { student: StudentSummary; onOpen: () => void }) {
@@ -460,9 +496,14 @@ function StudentLines({ student, onOpen }: { student: StudentSummary; onOpen: ()
         <dd>{student.concept ? STRUGGLE_LABEL[student.struggle_type] : "no turns yet"}</dd>
         <dt className="text-muted">Last hint</dt>
         <dd>{student.last_hint_level ? `level ${student.last_hint_level}` : "none yet"}</dd>
+        <dt className="text-muted">Avg time</dt>
+        <dd className="tabular-nums">
+          {student.average_seconds === null ? "no question finished" : `${duration(student.average_seconds)} per question · ${student.questions_done} done`}
+        </dd>
       </dl>
-      <Button size="sm" variant="ghost" className="mt-auto self-start" onPress={onOpen} isDisabled={student.turns === 0}>
-        Open transcript <ArrowRight className="size-3.5" aria-hidden />
+      {/* Enabled with no turns too: a student who never messaged still has their time on each question to show. */}
+      <Button size="sm" variant="ghost" className="mt-auto self-start" onPress={onOpen}>
+        Open work <ArrowRight className="size-3.5" aria-hidden />
       </Button>
     </div>
   );
@@ -496,7 +537,7 @@ function TranscriptDrawer({
     api
       .transcript(studentId, assignmentId)
       .then((t) => live && setLoadedTranscript(t))
-      .catch(() => live && setLoadedTranscript({ student_id: studentId, display_name: "", turns: [] }));
+      .catch(() => live && setLoadedTranscript({ student_id: studentId, display_name: "", questions: [], turns: [] }));
     return () => {
       live = false;
     };
@@ -506,52 +547,103 @@ function TranscriptDrawer({
     <Drawer>
       <Drawer.Backdrop isOpen={student !== null} onOpenChange={(open) => !open && onClose()} variant="blur">
         <Drawer.Content placement="right">
-          <Drawer.Dialog className="w-full sm:max-w-lg" aria-label="Student transcript">
+          <Drawer.Dialog className="w-full sm:max-w-2xl" aria-label="Student work by question">
             <Drawer.CloseTrigger />
             <Drawer.Header>
               <Drawer.Heading>{student?.display_name}</Drawer.Heading>
-              <p className="text-xs text-muted">This assignment only.</p>
+              <p className="text-xs text-muted">This assignment only. Each question with the time it took and the turns on it.</p>
             </Drawer.Header>
             <Drawer.Body>
               {!transcript ? (
                 <div className="flex items-center gap-2 text-sm text-muted">
-                  <Spinner size="sm" /> Loading turns
+                  <Spinner size="sm" /> Loading work
                 </div>
-              ) : transcript.turns.length === 0 ? (
-                <p className="text-sm text-muted">No turns to show.</p>
+              ) : transcript.questions.length === 0 ? (
+                <p className="text-sm text-muted">Nothing to show.</p>
               ) : (
-                <ol className="flex flex-col gap-4">
-                  {transcript.turns.map((t, i) => (
-                    <li key={i} className={cn("rounded-lg border px-3 py-2.5", t.role === "tutor" ? "border-margin-red/40 bg-margin-red-soft" : "border-border")}>
-                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs font-semibold uppercase tracking-wide">{t.role === "tutor" ? "Margin" : "Student"}</span>
-                        {t.role === "tutor" && t.hint_level ? (
-                          <Chip size="sm" variant="soft">level {t.hint_level}</Chip>
-                        ) : null}
-                        {t.label ? (
-                          <>
-                            <Chip size="sm" variant="soft" color="accent">{conceptLabel(t.label.concept)}</Chip>
-                            <Chip size="sm" variant="soft" color={t.label.struggle_type === "none" ? "default" : "warning"}>
-                              {STRUGGLE_LABEL[t.label.struggle_type]}
-                            </Chip>
-                          </>
-                        ) : null}
-                        {t.guard && (t.guard.leaks || t.retries > 0) ? (
-                          <Chip size="sm" variant="soft" color="danger">
-                            draft held · {t.guard.severity}
-                          </Chip>
-                        ) : null}
-                      </div>
-                      <p className={cn("whitespace-pre-wrap text-sm leading-6", t.role === "tutor" && "font-serif text-base")}>{t.content}</p>
-                    </li>
-                  ))}
-                </ol>
+                <WorkByQuestion transcript={transcript} />
               )}
             </Drawer.Body>
           </Drawer.Dialog>
         </Drawer.Content>
       </Drawer.Backdrop>
     </Drawer>
+  );
+}
+
+/**
+ * A student's work, one section per question: the prompt, the time on it, and
+ * the turns on it in order. Every question is listed, including ones with no
+ * turns, because "finished in 40 seconds without asking anything" is part of
+ * the picture. Turns the server could not place (a session older than the
+ * clock) are listed last under their own heading rather than guessed into a
+ * question.
+ */
+function WorkByQuestion({ transcript }: { transcript: Transcript }) {
+  const unplaced = transcript.turns.filter((t) => t.question_index === null);
+  return (
+    <div className="flex flex-col gap-6">
+      {transcript.questions.map((q) => {
+        const turns = transcript.turns.filter((t) => t.question_index === q.index);
+        return (
+          <section key={q.index} aria-labelledby={`work-q${q.index}`} className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <h3 id={`work-q${q.index}`} className="font-semibold">
+                Question {q.index + 1}
+              </h3>
+              <Chip size="sm" variant="soft">
+                <span className="tabular-nums">{q.seconds === null ? "not finished" : duration(q.seconds)}</span>
+              </Chip>
+              <span className="text-xs text-muted">
+                {turns.length === 0 ? "no messages" : `${turns.filter((t) => t.role === "student").length} from the student`}
+              </span>
+            </div>
+            <p className="text-sm text-muted">{q.prompt}</p>
+            {turns.length > 0 ? <TurnList turns={turns} /> : null}
+          </section>
+        );
+      })}
+      {unplaced.length > 0 ? (
+        <section aria-labelledby="work-unplaced" className="flex flex-col gap-2">
+          <h3 id="work-unplaced" className="font-semibold">
+            Not tied to a question
+          </h3>
+          <TurnList turns={unplaced} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+/** Turns in order, each with who wrote it, the level, the scribe's label, and whether the guard held a draft. */
+function TurnList({ turns }: { turns: TranscriptTurn[] }) {
+  return (
+    <ol className="flex flex-col gap-3">
+      {turns.map((t, i) => (
+        <li key={i} className={cn("rounded-lg border px-3 py-2.5", t.role === "tutor" ? "border-margin-red/40 bg-margin-red-soft" : "border-border")}>
+          <div className="mb-1 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide">{t.role === "tutor" ? "Margin" : "Student"}</span>
+            {t.role === "tutor" && t.hint_level ? (
+              <Chip size="sm" variant="soft">level {t.hint_level}</Chip>
+            ) : null}
+            {t.label ? (
+              <>
+                <Chip size="sm" variant="soft" color="accent">{conceptLabel(t.label.concept)}</Chip>
+                <Chip size="sm" variant="soft" color={t.label.struggle_type === "none" ? "default" : "warning"}>
+                  {STRUGGLE_LABEL[t.label.struggle_type]}
+                </Chip>
+              </>
+            ) : null}
+            {t.guard && (t.guard.leaks || t.retries > 0) ? (
+              <Chip size="sm" variant="soft" color="danger">
+                draft held · {t.guard.severity}
+              </Chip>
+            ) : null}
+          </div>
+          <p className={cn("whitespace-pre-wrap text-sm leading-6", t.role === "tutor" && "font-serif text-base")}>{t.content}</p>
+        </li>
+      ))}
+    </ol>
   );
 }
 

@@ -11,6 +11,7 @@
 
 import mongoose from "mongoose";
 import { Assignment, Message, ScribeEvent, Session, Student } from "./models.ts";
+import { questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import type { GuardLayer, GuardSeverity, StruggleType } from "./types.ts";
 
 /** One student's three lines: the concept, the kind of struggle, and the last hint level. */
@@ -24,6 +25,10 @@ export type StudentSummary = {
   /** The level of the tutor's most recent reply to this student. Null if the tutor has not answered yet. */
   last_hint_level: number | null;
   turns: number;
+  /** Questions this student finished (pressed Next or Finish on), across their sessions. */
+  questions_done: number;
+  /** Mean seconds over those finished questions, from the server's clock. Null before the first one. */
+  average_seconds: number | null;
 };
 
 export type Roster = {
@@ -36,6 +41,12 @@ export type Roster = {
    * Neither is per student: an integrity count beside a name is the surveillance this dashboard is not.
    */
   guard: { answer_requests: number; drafts_held: number; replies: number };
+  /**
+   * Time for the class as a whole, from the same per-question clock.
+   * `average_total_seconds` is the mean time to finish over students who finished (each student's latest finished session), so a student still working never pulls it down with a partial total.
+   * `average_seconds_per_question` is the mean over every finished question by anyone. Both are null until something has finished.
+   */
+  timing: { finished_students: number; average_total_seconds: number | null; average_seconds_per_question: number | null };
 };
 
 /**
@@ -64,6 +75,9 @@ export async function roster(assignmentId: string): Promise<Roster | null> {
     .select("session_id hint_level retries guard_verdict")
     .lean();
   const studentOfSession = new Map(sessions.map((s) => [String(s._id), String(s.student_id)]));
+  const assignment = await Assignment.findById(assignmentId).select("prompt questions").lean();
+  const count = questionPrompts(assignment!).length;
+  const time = classTime(sessions as { student_id: unknown; question_times?: QuestionTime[] | null; completed_at?: Date | null; created_at?: unknown }[], count);
 
   const lastLevel = new Map<string, number>();
   let draftsHeld = 0;
@@ -86,12 +100,62 @@ export async function roster(assignmentId: string): Promise<Roster | null> {
         struggle_type: top.struggle_type,
         last_hint_level: lastLevel.get(id) ?? null,
         turns: mine.length,
+        questions_done: time.perStudent.get(id)?.done ?? 0,
+        average_seconds: time.perStudent.get(id)?.average ?? null,
       };
     }),
     guard: {
       answer_requests: events.filter((e) => e.jailbreak_attempt).length,
       drafts_held: draftsHeld,
       replies: tutorMessages.length,
+    },
+    timing: time.classwide,
+  };
+}
+
+const mean = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, n) => a + n, 0) / xs.length) : null);
+
+/**
+ * The roster's time numbers, computed in code from each session's clock.
+ *
+ * A student's average covers every question they finished in any of their
+ * sessions, so a student who restarted is not reset to nothing. The class
+ * time to finish uses each student's most recent finished session, and only
+ * students who finished count: averaging in a half-done total would make the
+ * assignment look shorter than it is.
+ */
+function classTime(
+  sessions: { student_id: unknown; question_times?: QuestionTime[] | null; completed_at?: Date | null; created_at?: unknown }[],
+  count: number,
+): {
+  perStudent: Map<string, { done: number; average: number | null }>;
+  classwide: Roster["timing"];
+} {
+  const perStudent = new Map<string, { done: number; average: number | null }>();
+  const finishedTotals = new Map<string, number>();
+  const allSeconds: number[] = [];
+  const byStudent = new Map<string, { seconds: number[]; done: Set<number> }>();
+  for (const s of sessions) {
+    const id = String(s.student_id);
+    const seconds = secondsPerQuestion(s.question_times ?? [], count);
+    const mine = byStudent.get(id) ?? { seconds: [], done: new Set<number>() };
+    seconds.forEach((n, i) => {
+      if (n === null) return;
+      mine.seconds.push(n);
+      mine.done.add(i);
+      allSeconds.push(n);
+    });
+    byStudent.set(id, mine);
+    // Sessions arrive oldest first, so a later finished session replaces an earlier one.
+    if (s.completed_at && seconds.every((n) => n !== null)) finishedTotals.set(id, seconds.reduce((a: number, n) => a + (n ?? 0), 0));
+  }
+  for (const [id, m] of byStudent) perStudent.set(id, { done: m.done.size, average: mean(m.seconds) });
+  return {
+    perStudent,
+    classwide: {
+      finished_students: finishedTotals.size,
+      average_total_seconds: mean([...finishedTotals.values()]),
+      average_seconds_per_question: mean(allSeconds),
     },
   };
 }
@@ -140,11 +204,22 @@ export type TranscriptTurn = {
   /** The scribe's label on a student turn. Null on a tutor turn. */
   label: { concept: string; struggle_type: StruggleType; attempt_made: boolean } | null;
   created_at: string;
+  /** The question this turn was on, 0-based, or null when it cannot be placed (see `placeTurn`). */
+  question_index: number | null;
+};
+
+/** One question of the assignment, as this student's work view heads it. */
+export type TranscriptQuestion = {
+  index: number;
+  prompt: string;
+  /** Seconds from opening the question to pressing Next, from this student's most recent session that finished it. Null if they never did. */
+  seconds: number | null;
 };
 
 export type Transcript = {
   student_id: string;
   display_name: string;
+  questions: TranscriptQuestion[];
   turns: TranscriptTurn[];
 };
 
@@ -161,7 +236,17 @@ export async function transcript(studentId: string, assignmentId: string): Promi
   const student = await Student.findById(studentId).select("display_name").lean();
   if (!student) return null;
 
-  const sessions = await Session.find({ student_id: studentId, assignment_id: assignmentId }).select("_id").lean();
+  const sessions = await Session.find({ student_id: studentId, assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).select("_id question_times").lean();
+  const assignment = await Assignment.findById(assignmentId).select("prompt questions").lean();
+  const prompts = assignment ? questionPrompts(assignment) : [];
+  // Latest session wins per question, so a restart shows the time of the attempt the student finished last.
+  const seconds: (number | null)[] = prompts.map(() => null);
+  for (const s of sessions) {
+    secondsPerQuestion((s.question_times ?? []) as QuestionTime[], prompts.length).forEach((n, i) => {
+      if (n !== null) seconds[i] = n;
+    });
+  }
+  const clockOf = new Map(sessions.map((s) => [String(s._id), (s.question_times ?? []) as QuestionTime[]]));
   const messages = await Message.find({ session_id: { $in: sessions.map((s) => s._id) } })
     .sort({ created_at: 1, _id: 1 })
     .lean();
@@ -173,6 +258,7 @@ export async function transcript(studentId: string, assignmentId: string): Promi
   return {
     student_id: studentId,
     display_name: student.display_name,
+    questions: prompts.map((prompt, index) => ({ index, prompt, seconds: seconds[index] })),
     turns: messages.map((m) => {
       const label = labels.get(String(m._id));
       return {
@@ -188,7 +274,26 @@ export async function transcript(studentId: string, assignmentId: string): Promi
           ? { concept: label.concept, struggle_type: label.struggle_type as StruggleType, attempt_made: label.attempt_made }
           : null,
         created_at: new Date(m.created_at as Date).toISOString(),
+        question_index: m.question_index ?? placeTurn(clockOf.get(String(m.session_id)) ?? [], new Date(m.created_at as Date)),
       };
     }),
   };
+}
+
+/**
+ * The question an untagged turn was on, read from its session's clock.
+ *
+ * Rows written before messages carried `question_index`, and Talk captions,
+ * have no tag. The clock entry that had started by the turn's time and was
+ * the latest to start is the question the student was looking at, because a
+ * question opens only when the previous one is finished. A turn older than
+ * every entry (a session from before the clock existed) is null and is shown
+ * apart, never guessed into question 1.
+ */
+function placeTurn(times: QuestionTime[], at: Date): number | null {
+  let found: QuestionTime | null = null;
+  for (const t of times) {
+    if (new Date(t.started_at) <= at && (!found || new Date(t.started_at) >= new Date(found.started_at))) found = t;
+  }
+  return found ? found.index : null;
 }

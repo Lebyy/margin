@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import { after, before, describe, test } from "node:test";
 import { createApp } from "../src/app.ts";
 import { connectDb, disconnectDb } from "../src/db.ts";
-import { CANARY } from "../src/models.ts";
+import { CANARY, Message, Session } from "../src/models.ts";
 import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // The routes the two screens read: the assignment lists, the per-student
@@ -184,6 +184,45 @@ describe("the routes the screens read", { skip }, () => {
     const other = JSON.parse((await call("GET", `/api/prof/students/${ada.student_id}/transcript?assignment_id=${otherId}`)).text);
     assert.equal(other.turns.length, 0);
     assert.equal((await call("GET", `/api/prof/students/nope/transcript?assignment_id=${assignmentId}`)).status, 404);
+  });
+
+  test("a student's work is grouped by question with the time on each, and the roster carries the averages", async () => {
+    // Case: a two-question assignment. Cy takes a turn on Q1, presses Next,
+    // takes a turn on Q2, and one older turn has no question tag. Every turn
+    // must land under its question, Q1 must carry its seconds and Q2 none, and
+    // the roster must give Cy's average and the class time to finish.
+    const two = JSON.parse(
+      (await call("POST", "/api/prof/assignments", { ...SUM_LIST, title: "Two questions", questions: [{ prompt: "Write count_list(xs) recursively.", answer_key: "def count_list(xs):\n    if not xs:\n        return 0\n    return 1 + count_list(xs[1:])" }] })).text,
+    )._id;
+    const cy = JSON.parse((await call("POST", "/api/sessions", { assignment_id: two, display_name: "Cy" })).text);
+    label = { concept: "base_case", struggle_type: "misconception", attempt_made: true, jailbreak_attempt: false };
+    draft = "What should an empty list give back?";
+    await call("POST", `/api/sessions/${cy.session_id}/messages`, { text: "Q1 try" });
+    await call("POST", `/api/sessions/${cy.session_id}/finish-question`);
+    await call("POST", `/api/sessions/${cy.session_id}/messages`, { text: "Q2 try" });
+    // A row written before messages carried question_index. The clock places it on Q2, which was open.
+    await new Message({ session_id: cy.session_id, role: "student", content: "untagged Q2 note" }).save();
+
+    const work = JSON.parse((await call("GET", `/api/prof/students/${cy.student_id}/transcript?assignment_id=${two}`)).text);
+    assert.deepEqual(work.questions.map((q: { index: number; prompt: string }) => [q.index, q.prompt.slice(0, 15)]), [[0, "Write sum_list("], [1, "Write count_lis"]]);
+    assert.equal(typeof work.questions[0].seconds, "number");
+    assert.equal(work.questions[1].seconds, null, "an open question has no time");
+    assert.deepEqual(work.turns.map((t: { content: string; question_index: number }) => [t.content.slice(0, 6), t.question_index]), [["Q1 try", 0], ["What s", 0], ["Q2 try", 1], ["What s", 1], ["untagg", 1]]);
+    assert.ok(!carriesKey(JSON.stringify(work)));
+
+    let roster = JSON.parse((await call("GET", `/api/prof/students?assignment_id=${two}`)).text);
+    assert.equal(roster.students[0].questions_done, 1);
+    assert.equal(roster.students[0].average_seconds, work.questions[0].seconds);
+    assert.deepEqual(roster.timing, { finished_students: 0, average_total_seconds: null, average_seconds_per_question: work.questions[0].seconds });
+
+    // Finished sessions, with clocks set so the averages are exact: Cy 60 s + 120 s, Dee 30 s + 30 s.
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 14, 12, 0, s));
+    await Session.updateOne({ _id: cy.session_id }, { completed_at: at(180), question_times: [{ index: 0, started_at: at(0), finished_at: at(60) }, { index: 1, started_at: at(60), finished_at: at(180) }] });
+    const dee = JSON.parse((await call("POST", "/api/sessions", { assignment_id: two, display_name: "Dee" })).text);
+    await Session.updateOne({ _id: dee.session_id }, { completed_at: at(60), question_times: [{ index: 0, started_at: at(0), finished_at: at(30) }, { index: 1, started_at: at(30), finished_at: at(60) }] });
+    roster = JSON.parse((await call("GET", `/api/prof/students?assignment_id=${two}`)).text);
+    assert.deepEqual(roster.students.map((s: { display_name: string; average_seconds: number; questions_done: number }) => [s.display_name, s.average_seconds, s.questions_done]), [["Cy", 90, 2], ["Dee", 30, 2]]);
+    assert.deepEqual(roster.timing, { finished_students: 2, average_total_seconds: 120, average_seconds_per_question: 60 });
   });
 
   test("the stored card and its professor message are read back without a new model call", async () => {

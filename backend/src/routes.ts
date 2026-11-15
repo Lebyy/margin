@@ -390,6 +390,7 @@ async function answerPhoto(
     session_id: session._id,
     role: "student",
     content: `Photo of my work. Marked step: ${marked.step}`,
+    question_index: current.index,
   }).save();
   await saveScribeEvent({
     label: {
@@ -423,6 +424,7 @@ async function answerPhoto(
     hint_level: level,
     guard_verdict: asked.verdict,
     retries: 0,
+    question_index: current.index,
   }).save();
 
   res.json({ step: marked.step, box: marked.box, question: asked.question, level });
@@ -779,6 +781,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
       session_id: session._id,
       role: "student",
       content: text,
+      question_index: question.index,
     }).save();
     await saveScribeEvent({
       label,
@@ -819,6 +822,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
       hint_level: result.level,
       guard_verdict: released.verdict,
       retries: result.retries,
+      question_index: question.index,
     }).save();
     await Session.updateOne({ _id: session._id }, { current_level: result.level, question_attempts: attempts });
     res.json({
@@ -891,8 +895,9 @@ export function createRouter(deps: RouteDeps = {}): Router {
     // for the same three attempts as asking in words. Before that the student
     // is told why, and no model is called.
     if ((session.question_attempts ?? 0) < ATTEMPTS_BEFORE_HELP) {
-      await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK }).save();
-      await new Message({ session_id: session._id, role: "tutor", content: HELP_LOCKED_NOTICE, hint_level: session.current_level }).save();
+      const question_index = session.current_question ?? 0;
+      await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK, question_index }).save();
+      await new Message({ session_id: session._id, role: "tutor", content: HELP_LOCKED_NOTICE, hint_level: session.current_level, question_index }).save();
       res.json({ reply: HELP_LOCKED_NOTICE, level: START_LEVEL, session_level: session.current_level, verdict: { leaks: false, severity: "none", reason: "", layer: "deterministic" }, retries: 0 });
       return;
     }
@@ -923,8 +928,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
     if (leaksAnotherQuestion(result.reply, question.otherKeys, canary, (assignment.kind ?? "code") as AssignmentKind)) {
       result = { ...result, reply: fallbackFor((assignment.kind ?? "code") as AssignmentKind, question.prompt), verdict: HELD_FOR_ANOTHER_QUESTION };
     }
-    await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK }).save();
-    await new Message({ session_id: session._id, role: "tutor", content: result.reply, hint_level: result.level, guard_verdict: result.verdict, retries: result.retries }).save();
+    await new Message({ session_id: session._id, role: "student", content: SMALLER_PROBLEM_ASK, question_index: question.index }).save();
+    await new Message({ session_id: session._id, role: "tutor", content: result.reply, hint_level: result.level, guard_verdict: result.verdict, retries: result.retries, question_index: question.index }).save();
     res.json({
       reply: result.reply,
       level: result.level,

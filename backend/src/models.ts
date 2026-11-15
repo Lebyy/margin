@@ -357,6 +357,12 @@ const messageSchema = new Schema(
     hint_level: { ...hintLevelField, default: null },
     guard_verdict: { type: guardVerdictSchema, default: null },
     retries: { type: Number, default: 0, min: 0 },
+    // Which question of the assignment this turn was on, 0-based, copied from
+    // the session's current_question when the row is written. The professor's
+    // per-question work view groups turns by it. Null on rows written before
+    // it existed and on Talk captions; roster.ts places those by the session's
+    // per-question clock instead, so leaving it out never hides a turn.
+    question_index: { type: Number, default: null, min: 0 },
   },
   { collection: "messages", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );

@@ -213,12 +213,18 @@ export type StudentSummary = {
   struggle_type: StruggleType;
   last_hint_level: number | null;
   turns: number;
+  /** Questions this student pressed Next or Finish on. */
+  questions_done: number;
+  /** Mean seconds over those questions, computed by the server. Null before the first. */
+  average_seconds: number | null;
 };
 
 export type Roster = {
   assignment_id: string;
   students: StudentSummary[];
   guard: { answer_requests: number; drafts_held: number; replies: number };
+  /** Class time, computed by the server from the per-question clock. Nulls until something has finished. */
+  timing: { finished_students: number; average_total_seconds: number | null; average_seconds_per_question: number | null };
 };
 
 export type TranscriptTurn = {
@@ -230,9 +236,14 @@ export type TranscriptTurn = {
   retries: number;
   label: { concept: string; struggle_type: StruggleType; attempt_made: boolean } | null;
   created_at: string;
+  /** The question this turn was on, 0-based, or null when the server could not place it. */
+  question_index: number | null;
 };
 
-export type Transcript = { student_id: string; display_name: string; turns: TranscriptTurn[] };
+/** One question as a student's work view heads it: the prompt and this student's seconds on it (null if not finished). */
+export type TranscriptQuestion = { index: number; prompt: string; seconds: number | null };
+
+export type Transcript = { student_id: string; display_name: string; questions: TranscriptQuestion[]; turns: TranscriptTurn[] };
 
 export type ThursdayCard = {
   card_id: string;
