@@ -10,14 +10,22 @@
 // students who feel ranked stop using the tool or perform for it.
 
 import mongoose from "mongoose";
-import { Assignment, Message, ScribeEvent, Session, Student } from "./models.ts";
+import { Assignment, Enrollment, Message, ScribeEvent, Session, Student } from "./models.ts";
 import { questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import type { GuardLayer, GuardSeverity, StruggleType } from "./types.ts";
+
+/**
+ * Where a student is on this assignment. `not_started` is a student enrolled in
+ * the class who has no session on it; `finished` pressed Submit on the last
+ * question in some session; anything between is `in_progress`.
+ */
+export type StudentStatus = "not_started" | "in_progress" | "finished";
 
 /** One student's three lines: the concept, the kind of struggle, and the last hint level. */
 export type StudentSummary = {
   student_id: string;
   display_name: string;
+  status: StudentStatus;
   /** The concept this student struggled with on the most turns, or their most recent concept if they never struggled. Null before any labelled turn. */
   concept: string | null;
   /** The most common struggle on that concept. `none` when the student has not struggled. */
@@ -25,6 +33,8 @@ export type StudentSummary = {
   /** The level of the tutor's most recent reply to this student. Null if the tutor has not answered yet. */
   last_hint_level: number | null;
   turns: number;
+  /** The highest level any reply to this student reached on this assignment. The last level resets to 1 on each new question, so "did they ever climb" needs this. Null before any reply. */
+  max_hint_level: number | null;
   /** Questions this student finished (pressed Next or Finish on), across their sessions. */
   questions_done: number;
   /** Mean seconds over those finished questions, from the server's clock. Null before the first one. */
@@ -52,9 +62,12 @@ export type Roster = {
 /**
  * The students who have a session on this assignment, or null if the assignment does not exist.
  *
- * Only people who started a session appear, because that is the only way a
- * student document is created. A student with a session and no turns still
- * appears, with no concept, so the list matches the sessions in the database.
+ * Students who started a session come first, in the order they started. After
+ * them come the class's enrolled students who have not opened this assignment,
+ * in the order they joined, marked `not_started` with no concept and no time:
+ * a professor needs to see who has not begun, and the dashboard's status
+ * filter would otherwise have nothing to show under "not started". A student
+ * with a session and no turns still appears, with no concept.
  */
 export async function roster(assignmentId: string): Promise<Roster | null> {
   if (!mongoose.isValidObjectId(assignmentId)) return null;
@@ -66,8 +79,20 @@ export async function roster(assignmentId: string): Promise<Roster | null> {
     const id = String(s.student_id);
     if (!order.includes(id)) order.push(id);
   }
+  const started = new Set(order);
+  const finished = new Set(sessions.filter((s) => s.completed_at).map((s) => String(s.student_id)));
+  const courseId = (await Assignment.findById(assignmentId).select("course_id").lean())?.course_id;
+  if (courseId) {
+    const enrolled = await Enrollment.find({ course_id: courseId }).sort({ created_at: 1, _id: 1 }).select("student_id").lean();
+    for (const e of enrolled) {
+      const id = String(e.student_id);
+      if (!order.includes(id)) order.push(id);
+    }
+  }
   const students = await Student.find({ _id: { $in: order } }).select("display_name").lean();
   const names = new Map(students.map((s) => [String(s._id), s.display_name]));
+  // An enrollment whose student row is gone has no one to show; a started student always stays, as before.
+  for (let i = order.length - 1; i >= 0; i -= 1) if (!started.has(order[i]) && !names.has(order[i])) order.splice(i, 1);
 
   const events = await ScribeEvent.find({ assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).lean();
   const tutorMessages = await Message.find({ session_id: { $in: sessions.map((s) => s._id) }, role: "tutor" })
@@ -80,10 +105,14 @@ export async function roster(assignmentId: string): Promise<Roster | null> {
   const time = classTime(sessions as { student_id: unknown; question_times?: QuestionTime[] | null; completed_at?: Date | null; created_at?: unknown }[], count);
 
   const lastLevel = new Map<string, number>();
+  const maxLevel = new Map<string, number>();
   let draftsHeld = 0;
   for (const m of tutorMessages) {
     const student = studentOfSession.get(String(m.session_id));
-    if (student && m.hint_level != null) lastLevel.set(student, m.hint_level);
+    if (student && m.hint_level != null) {
+      lastLevel.set(student, m.hint_level);
+      maxLevel.set(student, Math.max(maxLevel.get(student) ?? 0, m.hint_level));
+    }
     // A retry means a draft was refused and rewritten. A fallback layer means every draft was refused.
     if ((m.retries ?? 0) > 0 || m.guard_verdict?.layer === "fallback") draftsHeld += 1;
   }
@@ -96,10 +125,12 @@ export async function roster(assignmentId: string): Promise<Roster | null> {
       return {
         student_id: id,
         display_name: names.get(id) ?? "",
+        status: (finished.has(id) ? "finished" : started.has(id) ? "in_progress" : "not_started") as StudentStatus,
         concept: top.concept,
         struggle_type: top.struggle_type,
         last_hint_level: lastLevel.get(id) ?? null,
         turns: mine.length,
+        max_hint_level: maxLevel.get(id) ?? null,
         questions_done: time.perStudent.get(id)?.done ?? 0,
         average_seconds: time.perStudent.get(id)?.average ?? null,
       };
@@ -216,11 +247,24 @@ export type TranscriptQuestion = {
   seconds: number | null;
 };
 
+/**
+ * The two look-back questions written for this student after the last question, and what they answered.
+ * `what_if_index` is the 0-based question the second one is about. An answer the student has not written is "".
+ */
+export type TranscriptReflection = {
+  why: string;
+  what_if: string;
+  what_if_index: number;
+  answers: { why: string; what_if: string };
+};
+
 export type Transcript = {
   student_id: string;
   display_name: string;
   questions: TranscriptQuestion[];
   turns: TranscriptTurn[];
+  /** From the most recent session that reached the reflection; null when the student never finished. */
+  reflection: TranscriptReflection | null;
 };
 
 /**
@@ -236,7 +280,7 @@ export async function transcript(studentId: string, assignmentId: string): Promi
   const student = await Student.findById(studentId).select("display_name").lean();
   if (!student) return null;
 
-  const sessions = await Session.find({ student_id: studentId, assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).select("_id question_times").lean();
+  const sessions = await Session.find({ student_id: studentId, assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).select("_id question_times reflection").lean();
   const assignment = await Assignment.findById(assignmentId).select("prompt questions").lean();
   const prompts = assignment ? questionPrompts(assignment) : [];
   // Latest session wins per question, so a restart shows the time of the attempt the student finished last.
@@ -259,6 +303,8 @@ export async function transcript(studentId: string, assignmentId: string): Promi
     student_id: studentId,
     display_name: student.display_name,
     questions: prompts.map((prompt, index) => ({ index, prompt, seconds: seconds[index] })),
+    // The professor reads these in the student's work view, after the last question, instead of in a separate list.
+    reflection: lookBack(sessions.map((s) => s.reflection)),
     turns: messages.map((m) => {
       const label = labels.get(String(m._id));
       return {
@@ -278,6 +324,13 @@ export async function transcript(studentId: string, assignmentId: string): Promi
       };
     }),
   };
+}
+
+/** The latest stored reflection among a student's sessions (they are oldest first), in the shape the work view shows. */
+function lookBack(reflections: ({ why: string; what_if: string; what_if_index: number; answers?: { why?: string | null; what_if?: string | null } | null } | null | undefined)[]): TranscriptReflection | null {
+  const r = [...reflections].reverse().find((x) => x);
+  if (!r) return null;
+  return { why: r.why, what_if: r.what_if, what_if_index: r.what_if_index, answers: { why: r.answers?.why ?? "", what_if: r.answers?.what_if ?? "" } };
 }
 
 /**

@@ -1,12 +1,11 @@
 "use client";
 
-import { Alert, Card, Chip, Disclosure, Spinner, Table } from "@heroui/react";
-import { MessageCircleQuestion } from "lucide-react";
+import { Alert, Card, Chip, Spinner, Table } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { api, type Timings } from "@/lib/api";
 
 /**
- * Time per question, and each student's look-back answers.
+ * Time per question. (Each student's look-back answers moved to their Open work drawer, where the name search reaches them.)
  *
  * One row per session (a student who started twice has two rows), with the
  * seconds each question took from the server's clock. The page formats the
@@ -19,8 +18,11 @@ import { api, type Timings } from "@/lib/api";
  *
  * It reads `/api/prof/timings`, which is a database read, so opening the
  * dashboard calls no model. `version` is the dashboard's refresh counter.
+ * `studentIds` is the dashboard's student filter: when set, only those
+ * students' rows and look-back answers are shown, so one filter narrows the
+ * whole page.
  */
-export function TimingsPanel({ assignmentId, version }: { assignmentId: string; version: number }) {
+export function TimingsPanel({ assignmentId, version, studentIds = null }: { assignmentId: string; version: number; studentIds?: Set<string> | null }) {
   const [data, setData] = useState<{ id: string; timings: Timings | null } | null>(null);
 
   useEffect(() => {
@@ -58,17 +60,18 @@ export function TimingsPanel({ assignmentId, version }: { assignmentId: string; 
         ) : current.timings.sessions.length === 0 ? (
           <p className="py-4 text-muted">Nobody has started yet.</p>
         ) : (
-          <TimingsTable timings={current.timings} />
+          <TimingsTable
+            timings={studentIds ? { ...current.timings, sessions: current.timings.sessions.filter((s) => studentIds.has(s.student_id)) } : current.timings}
+          />
         )}
       </Card.Content>
     </Card>
   );
 }
 
-/** The table and, under it, the reflections of the students who finished. */
+/** The table of seconds per question. Look-back answers are in each student's Open work drawer, after the last question. */
 function TimingsTable({ timings }: { timings: Timings }) {
   const { questions, sessions } = timings;
-  const reflected = sessions.filter((s) => s.reflection);
   return (
     <>
       <Table>
@@ -108,46 +111,10 @@ function TimingsTable({ timings }: { timings: Timings }) {
           </Table.Content>
         </Table.ScrollContainer>
       </Table>
-
-      {reflected.length > 0 ? (
-        <section aria-labelledby="reflections-heading" className="flex flex-col gap-2">
-          <h3 id="reflections-heading" className="text-sm font-medium">
-            Look-back answers
-          </h3>
-          {reflected.map((s) => (
-            <Disclosure key={s.session_id} className="rounded-xl border border-border px-4">
-              <Disclosure.Heading>
-                <Disclosure.Trigger className="flex w-full items-center gap-2 py-3 text-left font-medium">
-                  <MessageCircleQuestion className="size-4 text-margin-red" aria-hidden /> {s.display_name}
-                  {!s.reflection!.answers.why && !s.reflection!.answers.what_if ? <span className="text-sm font-normal text-muted">not answered yet</span> : null}
-                  <Disclosure.Indicator className="ml-auto" />
-                </Disclosure.Trigger>
-              </Disclosure.Heading>
-              <Disclosure.Content>
-                <Disclosure.Body>
-                  <dl className="flex flex-col gap-3 pb-4">
-                    <QA question={s.reflection!.why} answer={s.reflection!.answers.why} />
-                    <QA question={`${questions.length > 1 ? `Q${s.reflection!.what_if_index + 1}. ` : ""}${s.reflection!.what_if}`} answer={s.reflection!.answers.what_if} />
-                  </dl>
-                </Disclosure.Body>
-              </Disclosure.Content>
-            </Disclosure>
-          ))}
-        </section>
-      ) : null}
     </>
   );
 }
 
-/** One reflection question and the student's answer, printed as plain text. */
-function QA({ question, answer }: { question: string; answer: string }) {
-  return (
-    <div>
-      <dt className="text-sm text-muted">{question}</dt>
-      <dd className="mt-0.5 whitespace-pre-wrap font-serif text-[17px] leading-7">{answer || <span className="text-muted">No answer.</span>}</dd>
-    </div>
-  );
-}
 
 /** Seconds as "4m 12s", "45s", or "1h 3m". Formatting only; the number is the server's. Shared by the timing table, the student cards, and the work drawer, so one time reads the same everywhere. */
 export function duration(seconds: number): string {

@@ -9,6 +9,8 @@
 // Nothing in this file computes a statistic. A percent on screen is the
 // number in the response body. The pages format it and do not recompute it.
 
+import { browser } from "./browser";
+
 /** Where the Express API listens. The dev server is on 3000 and the API on 4000, and the API's CORS allows only that origin. */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
 
@@ -206,13 +208,19 @@ export type ClassSummary = {
   concepts: ConceptSummary[];
 };
 
+/** Not started: enrolled, never opened it. In progress: opened, not submitted. Finished: pressed Submit on the last question. */
+export type StudentStatus = "not_started" | "in_progress" | "finished";
+
 export type StudentSummary = {
   student_id: string;
   display_name: string;
+  status: StudentStatus;
   concept: string | null;
   struggle_type: StruggleType;
   last_hint_level: number | null;
   turns: number;
+  /** The highest hint level any reply to this student reached. Null before any reply. */
+  max_hint_level: number | null;
   /** Questions this student pressed Next or Finish on. */
   questions_done: number;
   /** Mean seconds over those questions, computed by the server. Null before the first. */
@@ -243,7 +251,17 @@ export type TranscriptTurn = {
 /** One question as a student's work view heads it: the prompt and this student's seconds on it (null if not finished). */
 export type TranscriptQuestion = { index: number; prompt: string; seconds: number | null };
 
-export type Transcript = { student_id: string; display_name: string; questions: TranscriptQuestion[]; turns: TranscriptTurn[] };
+/** The two look-back questions written after the last question, and the student's answers ("" if not written). */
+export type TranscriptReflection = { why: string; what_if: string; what_if_index: number; answers: { why: string; what_if: string } };
+
+export type Transcript = {
+  student_id: string;
+  display_name: string;
+  questions: TranscriptQuestion[];
+  turns: TranscriptTurn[];
+  /** Null until the student finishes the last question. */
+  reflection: TranscriptReflection | null;
+};
 
 export type ThursdayCard = {
   card_id: string;
@@ -333,6 +351,16 @@ export class ApiError extends Error {
  * One JSON request.
  * A failed connection becomes `api_unreachable`, so a page can say the API is not running instead of showing a stack trace. `cache: "no-store"` is set because every screen shows live records, and a cached class summary would show yesterday's percent as today's.
  */
+/**
+ * The header that tells professor routes who is asking (backend prof-scope.ts). Sent only on /api/prof calls and only
+ * when a professor profile is chosen; the server then refuses classes that are not this professor's. A label, not a login.
+ */
+function professorHeader(path: string): Record<string, string> {
+  if (!path.startsWith("/api/prof")) return {};
+  const name = browser.profProfile();
+  return name ? { "x-margin-professor": encodeURIComponent(name) } : {};
+}
+
 async function request<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown, raw?: { type: string; data: Blob }): Promise<T> {
   let res: Response;
   try {
@@ -340,7 +368,7 @@ async function request<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", p
       method,
       cache: "no-store",
       // A raw body (a lecture PDF) is sent as its own bytes with its own type; everything else is JSON.
-      headers: raw ? { "content-type": raw.type } : body === undefined ? undefined : { "content-type": "application/json" },
+      headers: { ...(raw ? { "content-type": raw.type } : body === undefined ? {} : { "content-type": "application/json" }), ...professorHeader(path) },
       body: raw ? raw.data : body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -364,6 +392,8 @@ const q = (id: string) => encodeURIComponent(id);
 export const api = {
   health: () => request<{ ok: boolean; db: string }>("GET", "/health"),
   listAssignments: () => request<{ assignments: AssignmentListItem[] }>("GET", "/api/assignments"),
+  /** The assignments the chosen professor teaches, for the dashboard and messages pickers. */
+  profAssignments: () => request<{ assignments: AssignmentListItem[] }>("GET", "/api/prof/assignments"),
   assignment: (id: string) => request<Assignment>("GET", `/api/assignments/${q(id)}`),
   profAssignment: (id: string) => request<Assignment & { has_answer_key: boolean; lecture_ids?: string[] }>("GET", `/api/prof/assignments/${q(id)}`),
   /** The body is sent as JSON. The key is never placed in a URL, where it would land in history and server logs. */

@@ -44,6 +44,7 @@ import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, question
 import { reflectOn, type Reflection } from "./reflect.ts";
 import { slideNotes } from "./slides.ts";
 import { createAssignmentPdfRouter } from "./assignment-pdf.ts";
+import { professorOf, scopeToProfessor } from "./prof-scope.ts";
 import { courseCard, createCourseRouter, enroll, listItem, statusByAssignment } from "./course-routes.ts";
 import type { TutorRunner } from "./tutor.ts";
 import type { AssignmentKind, GuardVerdict, HintLevel } from "./types.ts";
@@ -512,6 +513,8 @@ const studyCache = new Map<string, StudyCard[]>();
 export function createRouter(deps: RouteDeps = {}): Router {
   const router = Router();
   router.use(requireDb);
+  // Before every professor route: a class named in the request must be the asking professor's (prof-scope.ts).
+  router.use(scopeToProfessor);
   router.use(createCourseRouter());
   router.use(createAssignmentPdfRouter({ reader: deps.assignmentReader }));
 
@@ -1198,6 +1201,34 @@ export function createRouter(deps: RouteDeps = {}): Router {
   });
 
   /**
+   * GET /api/prof/assignments: the assignments the professor pages can pick from, newest first.
+   *
+   * The dashboard and the messages page choose one assignment from this. It
+   * leaves out hidden classes, and with a professor named (prof-scope.ts) it
+   * lists only the classes that professor teaches, so one professor's picker
+   * never offers another's class. The class name is included, so two
+   * assignments with the same title in different classes can be told apart.
+   */
+  router.get("/api/prof/assignments", async (req, res) => {
+    const professor = professorOf(req);
+    const courses = await Course.find({ hidden: { $ne: true }, ...(professor ? { professor } : {}) }).select("_id").lean();
+    const docs = await Assignment.find({ course_id: { $in: courses.map((c) => c._id) } })
+      .sort({ created_at: -1, _id: -1 })
+      .select("course_name title kind concepts course_id")
+      .lean();
+    res.json({
+      assignments: docs.map((d) => ({
+        id: String(d._id),
+        course_name: d.course_name,
+        title: d.title,
+        kind: d.kind ?? "code",
+        concepts: d.concepts ?? [],
+        course_id: d.course_id ? String(d.course_id) : null,
+      })),
+    });
+  });
+
+  /**
    * GET /api/prof/assignments/:id: the saved assignment, for the setup form.
    *
    * The form reloads the prompt, notes, concepts, and ceiling. The key is not
@@ -1577,6 +1608,9 @@ export function createRouter(deps: RouteDeps = {}): Router {
       return;
     }
     const { id, ...fields } = body.data;
+    // A class a professor creates is theirs: with no professor typed, the asking professor's name is the label.
+    const asking = professorOf(req);
+    if (!id && asking && !fields.professor) fields.professor = asking;
     const courseId = id ?? String(await courseIdFor(fields.name));
     const saved = await Course.findByIdAndUpdate(courseId, fields, { returnDocument: "after" }).lean();
     if (!saved) {

@@ -25,6 +25,7 @@ export const PROF_PROFILES: ProfProfile[] = [
   { kind: "prof", name: "Dr. Samuel Ortiz", courseName: "Undergraduate Electrostatics 101" },
   { kind: "prof", name: "Dr. Grace Adeyemi", courseName: "ME 201: Engineering Statics" },
   { kind: "prof", name: "Dr. Nadia Rahman", courseName: "CS 251: Data Structures and Algorithms" },
+  { kind: "prof", name: "Dr. Elena Rivera", courseName: "CS 101: Introduction to Computer Science" },
 ];
 
 /** "GM" for Grace McKinney, "NR" for Dr. Nadia Rahman: the title is skipped so two doctors do not both read "D". */

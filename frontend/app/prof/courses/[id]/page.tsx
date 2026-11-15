@@ -1,5 +1,7 @@
 "use client";
 
+import { ChooseProfessor } from "@/components/prof/choose-professor";
+import { browser } from "@/lib/browser";
 import { Alert, Breadcrumbs, Button, Card, Chip, Description, Input, Label, Radio, RadioGroup, Spinner, Tabs, TextArea, TextField } from "@heroui/react";
 import { BarChart3, Check, FileText, Pencil, Plus, TrendingDown, Upload } from "lucide-react";
 import NextLink from "next/link";
@@ -80,6 +82,28 @@ export default function ManageCoursePage() {
       <div className="flex justify-center pt-24">
         <Spinner aria-label="Opening the class" />
       </div>
+    );
+  }
+
+  // Only the professor who teaches a class manages it. The class itself is public (students open it), so this page
+  // checks the label here; the professor routes it calls refuse the same way on the server (prof-scope.ts).
+  const me = browser.profProfile();
+  if (!me) return <ChooseProfessor />;
+  if (course.professor !== me) {
+    return (
+      <Alert status="warning" className="mx-auto mt-10 max-w-xl">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Title>Not your class</Alert.Title>
+          <Alert.Description>
+            {course.name} is taught by {course.professor || "another professor"}. Your classes are under{" "}
+            <NextLink href="/prof/courses" className="underline underline-offset-2">
+              Your classes
+            </NextLink>
+            .
+          </Alert.Description>
+        </Alert.Content>
+      </Alert>
     );
   }
 

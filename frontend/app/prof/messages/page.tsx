@@ -7,6 +7,7 @@ import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Paper } from "@/components/paper";
+import { ChooseProfessor } from "@/components/prof/choose-professor";
 import { useAssignment } from "@/components/prof/use-assignment";
 import { api, type ProfessorMessage } from "@/lib/api";
 
@@ -60,7 +61,9 @@ export default function MessagesPage() {
         </div>
       </Paper>
 
-      {pick.state === "loading" || (assignmentId && messages === null && !failed) ? (
+      {pick.state === "no_profile" ? (
+        <ChooseProfessor reason="Choose who you are to see the messages for your classes." />
+      ) : pick.state === "loading" || (assignmentId && messages === null && !failed) ? (
         <div className="flex items-center justify-center gap-2 py-16 text-muted">
           <Spinner size="sm" /> Loading messages
         </div>

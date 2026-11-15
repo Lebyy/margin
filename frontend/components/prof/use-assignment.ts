@@ -6,6 +6,7 @@ import { browser } from "@/lib/browser";
 
 export type AssignmentPick =
   | { state: "loading" }
+  | { state: "no_profile" }
   | { state: "none" }
   | { state: "error"; message: string }
   | { state: "ready"; assignmentId: string; assignments: AssignmentListItem[]; choose: (id: string) => void };
@@ -19,6 +20,11 @@ export type AssignmentPick =
  * and the newest one otherwise. There is no course switcher behind this: it only
  * settles which of the saved assignments to read.
  *
+ * Only the chosen professor's classes are offered (GET /api/prof/assignments
+ * is scoped by the professor header). With no professor chosen the state is
+ * `no_profile` and nothing is read, so a page never shows another
+ * professor's class by default.
+ *
  * `none` means no assignment exists at all. The page then tells the professor
  * to create one. It does not make one up to have something to draw.
  */
@@ -27,8 +33,15 @@ export function useAssignment(): AssignmentPick {
 
   useEffect(() => {
     let live = true;
+    if (!browser.profProfile()) {
+      const id = window.setTimeout(() => live && setPick({ state: "no_profile" }), 0);
+      return () => {
+        live = false;
+        window.clearTimeout(id);
+      };
+    }
     api
-      .listAssignments()
+      .profAssignments()
       .then(({ assignments }) => {
         if (!live) return;
         if (assignments.length === 0) {

@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import { after, before, describe, test } from "node:test";
 import { createApp } from "../src/app.ts";
 import { connectDb, disconnectDb } from "../src/db.ts";
-import { CANARY, Message, Session } from "../src/models.ts";
+import { Assignment, CANARY, Course, Message, Session } from "../src/models.ts";
 import { clearCollections, dropTestDatabase, testUri } from "./support/db.ts";
 
 // The routes the two screens read: the assignment lists, the per-student
@@ -93,10 +93,10 @@ describe("the routes the screens read", { skip }, () => {
   });
 
   /** Sends a request to the running app and returns status plus raw text. */
-  async function call(method: string, path: string, body?: unknown) {
+  async function call(method: string, path: string, body?: unknown, extra: Record<string, string> = {}) {
     const res = await fetch(base + path, {
       method,
-      headers: body === undefined ? {} : { "content-type": "application/json" },
+      headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...extra },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: res.status, text: await res.text() };
@@ -152,10 +152,10 @@ describe("the routes the screens read", { skip }, () => {
     const { status, text } = await call("GET", `/api/prof/students?assignment_id=${assignmentId}`);
     assert.equal(status, 200);
     const body = JSON.parse(text);
-    assert.deepEqual(body.students.map((s: { display_name: string }) => s.display_name), ["Ada", "Bob"]);
+    assert.deepEqual(body.students.map((s: { display_name: string; status: string }) => [s.display_name, s.status]), [["Ada", "in_progress"], ["Bob", "in_progress"]]);
     assert.deepEqual(
-      [body.students[0].concept, body.students[0].struggle_type, body.students[0].last_hint_level, body.students[0].turns],
-      ["base_case", "misconception", 1, 2],
+      [body.students[0].concept, body.students[0].struggle_type, body.students[0].last_hint_level, body.students[0].turns, body.students[0].max_hint_level],
+      ["base_case", "misconception", 1, 2, 1],
     );
     assert.deepEqual(
       [body.students[1].concept, body.students[1].struggle_type, body.students[1].last_hint_level],
@@ -192,7 +192,7 @@ describe("the routes the screens read", { skip }, () => {
     // must land under its question, Q1 must carry its seconds and Q2 none, and
     // the roster must give Cy's average and the class time to finish.
     const two = JSON.parse(
-      (await call("POST", "/api/prof/assignments", { ...SUM_LIST, title: "Two questions", questions: [{ prompt: "Write count_list(xs) recursively.", answer_key: "def count_list(xs):\n    if not xs:\n        return 0\n    return 1 + count_list(xs[1:])" }] })).text,
+      (await call("POST", "/api/prof/assignments", { ...SUM_LIST, course_name: "Two-question class", title: "Two questions", questions: [{ prompt: "Write count_list(xs) recursively.", answer_key: "def count_list(xs):\n    if not xs:\n        return 0\n    return 1 + count_list(xs[1:])" }] })).text,
     )._id;
     const cy = JSON.parse((await call("POST", "/api/sessions", { assignment_id: two, display_name: "Cy" })).text);
     label = { concept: "base_case", struggle_type: "misconception", attempt_made: true, jailbreak_attempt: false };
@@ -208,6 +208,7 @@ describe("the routes the screens read", { skip }, () => {
     assert.equal(typeof work.questions[0].seconds, "number");
     assert.equal(work.questions[1].seconds, null, "an open question has no time");
     assert.deepEqual(work.turns.map((t: { content: string; question_index: number }) => [t.content.slice(0, 6), t.question_index]), [["Q1 try", 0], ["What s", 0], ["Q2 try", 1], ["What s", 1], ["untagg", 1]]);
+    assert.equal(work.reflection, null, "no look-back before the student finishes");
     assert.ok(!carriesKey(JSON.stringify(work)));
 
     let roster = JSON.parse((await call("GET", `/api/prof/students?assignment_id=${two}`)).text);
@@ -220,8 +221,19 @@ describe("the routes the screens read", { skip }, () => {
     await Session.updateOne({ _id: cy.session_id }, { completed_at: at(180), question_times: [{ index: 0, started_at: at(0), finished_at: at(60) }, { index: 1, started_at: at(60), finished_at: at(180) }] });
     const dee = JSON.parse((await call("POST", "/api/sessions", { assignment_id: two, display_name: "Dee" })).text);
     await Session.updateOne({ _id: dee.session_id }, { completed_at: at(60), question_times: [{ index: 0, started_at: at(0), finished_at: at(30) }, { index: 1, started_at: at(30), finished_at: at(60) }] });
+    // Cy's look-back questions and answers come back with their work, after the questions.
+    await Session.updateOne({ _id: cy.session_id }, { reflection: { why: "Why check the empty list first?", what_if: "What if xs had one item?", what_if_index: 1, answers: { why: "So the recursion stops.", what_if: "" } } });
+    const done = JSON.parse((await call("GET", `/api/prof/students/${cy.student_id}/transcript?assignment_id=${two}`)).text);
+    assert.deepEqual(done.reflection, { why: "Why check the empty list first?", what_if: "What if xs had one item?", what_if_index: 1, answers: { why: "So the recursion stops.", what_if: "" } });
+
+    // Eve joins the class and never opens the assignment. She is listed after the students who started, as not started.
+    const courseId = (await Assignment.findById(two).select("course_id").lean())!.course_id;
+    await call("POST", `/api/courses/${courseId}/join`, { display_name: "Eve" });
     roster = JSON.parse((await call("GET", `/api/prof/students?assignment_id=${two}`)).text);
-    assert.deepEqual(roster.students.map((s: { display_name: string; average_seconds: number; questions_done: number }) => [s.display_name, s.average_seconds, s.questions_done]), [["Cy", 90, 2], ["Dee", 30, 2]]);
+    assert.deepEqual(
+      roster.students.map((s: { display_name: string; status: string; average_seconds: number | null; questions_done: number; turns: number }) => [s.display_name, s.status, s.average_seconds, s.questions_done, s.turns]),
+      [["Cy", "finished", 90, 2, 2], ["Dee", "finished", 30, 2, 0], ["Eve", "not_started", null, 0, 0]],
+    );
     assert.deepEqual(roster.timing, { finished_students: 2, average_total_seconds: 120, average_seconds_per_question: 60 });
   });
 
@@ -413,5 +425,48 @@ describe("the routes the screens read", { skip }, () => {
     const capped = JSON.parse((await call("POST", "/api/prof/assignments", { ...SUM_LIST, title: "Capped at two", hint_ceiling: 2 })).text);
     const s = JSON.parse((await call("POST", "/api/sessions", { assignment_id: capped._id, display_name: "Eve" })).text);
     assert.equal((await call("POST", `/api/sessions/${s.session_id}/smaller`)).status, 409);
+  });
+
+  test("a professor sees and can open only the classes they teach", async () => {
+    // Case: two professors, one class each, plus a hidden class of the first. Sent as Dr. A, the class list and the
+    // assignment picker hold only A's visible class, and every route that names B's class answers 403. Without the
+    // header (tests, scripts) nothing is scoped, but the hidden class still stays out of the picker.
+    const as = (name: string) => ({ "x-margin-professor": encodeURIComponent(name) });
+    const a = JSON.parse((await call("POST", "/api/prof/courses", { name: "Scope A", professor: "Dr. Ána A" })).text).id;
+    const b = JSON.parse((await call("POST", "/api/prof/courses", { name: "Scope B", professor: "Dr. B" })).text).id;
+    const hiddenA = JSON.parse((await call("POST", "/api/prof/courses", { name: "Scope A old", professor: "Dr. Ána A" })).text).id;
+    await Course.updateOne({ _id: hiddenA }, { hidden: true });
+    const aWork = JSON.parse((await call("POST", "/api/prof/assignments", { ...SUM_LIST, course_name: "Scope A", title: "A work" })).text)._id;
+    const bWork = JSON.parse((await call("POST", "/api/prof/assignments", { ...SUM_LIST, course_name: "Scope B", title: "B work" })).text)._id;
+    await call("POST", "/api/prof/assignments", { ...SUM_LIST, course_name: "Scope A old", title: "A old work" });
+
+    const courses = JSON.parse((await call("GET", "/api/prof/courses", undefined, as("Dr. Ána A"))).text).courses.map((c: { id: string }) => c.id);
+    assert.deepEqual(courses, [a]);
+    const picker = JSON.parse((await call("GET", "/api/prof/assignments", undefined, as("Dr. Ána A"))).text).assignments.map((x: { title: string }) => x.title);
+    assert.deepEqual(picker, ["A work"]);
+
+    for (const path of [
+      `/api/prof/class-summary?assignment_id=${bWork}`,
+      `/api/prof/students?assignment_id=${bWork}`,
+      `/api/prof/timings?assignment_id=${bWork}`,
+      `/api/prof/messages?assignment_id=${bWork}`,
+      `/api/prof/assignments/${bWork}`,
+    ]) {
+      const r = await call("GET", path, undefined, as("Dr. Ána A"));
+      assert.equal(r.status, 403, path);
+      assert.equal(JSON.parse(r.text).error, "not_your_class");
+    }
+    assert.equal((await call("POST", "/api/prof/courses", { id: b, name: "Scope B", notes: "taken over" }, as("Dr. Ána A"))).status, 403);
+    assert.equal((await call("POST", "/api/prof/assignments", { ...SUM_LIST, course_name: "Scope B", title: "Slipped in" }, as("Dr. Ána A"))).status, 403);
+    // Their own class answers as before.
+    assert.equal((await call("GET", `/api/prof/class-summary?assignment_id=${aWork}`, undefined, as("Dr. Ána A"))).status, 200);
+    // A class created while signed in as a professor is labelled with that professor.
+    const made = JSON.parse((await call("POST", "/api/prof/courses", { name: "Scope A new" }, as("Dr. Ána A"))).text);
+    assert.equal(made.professor, "Dr. Ána A");
+
+    // No header: every visible class, never the hidden one.
+    const all = JSON.parse((await call("GET", "/api/prof/assignments")).text).assignments.map((x: { title: string }) => x.title);
+    assert.ok(all.includes("A work") && all.includes("B work") && !all.includes("A old work"));
+    assert.equal((await call("GET", `/api/prof/class-summary?assignment_id=${bWork}`)).status, 200);
   });
 });

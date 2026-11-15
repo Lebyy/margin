@@ -1,5 +1,6 @@
 "use client";
 
+import { ChooseProfessor } from "@/components/prof/choose-professor";
 import { Button, Card, Input, Label, Spinner, TextField } from "@heroui/react";
 import { Plus, TrendingDown } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -57,6 +58,9 @@ export default function CoursesPage() {
       setSaving(false);
     }
   }
+
+  // Loaded, and no professor chosen: ask first. "Your classes" means nothing without a "you".
+  if (courses !== null && !profProfile) return <ChooseProfessor />;
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">

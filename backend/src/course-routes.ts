@@ -11,6 +11,7 @@ import express, { Router } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
 import { accentFor, Assignment, Course, Enrollment, LectureFile, Session, SlidePage, Student, ThursdayCard } from "./models.ts";
+import { professorOf } from "./prof-scope.ts";
 import { deletePdf, extractPages, looksLikePdf, MAX_PDF_BYTES, openPdf, storePdf, titleFromFilename } from "./slides.ts";
 
 /** The assignment fields the course pages read. Never the key, the question keys, or the canary. */
@@ -341,9 +342,11 @@ export function createCourseRouter(): Router {
    * card has null, and the page says there is no Margin data yet. Nothing
    * here asks a model.
    */
-  router.get("/api/prof/courses", async (_req, res) => {
+  router.get("/api/prof/courses", async (req, res) => {
     // Hidden classes are taken off the professor's course cards. Their Thursday cards stay stored.
-    const courses = await Course.find({ hidden: { $ne: true } }).sort({ name: 1 }).lean();
+    // With a professor named (see prof-scope.ts), only the classes they teach are listed.
+    const professor = professorOf(req);
+    const courses = await Course.find({ hidden: { $ne: true }, ...(professor ? { professor } : {}) }).sort({ name: 1 }).lean();
     const work = await Assignment.find().select("course_id kind title").lean();
     const cards = await ThursdayCard.find({ assignment_id: { $in: work.map((a) => a._id) } }).sort({ generated_at: -1, _id: -1 }).lean();
     res.json({

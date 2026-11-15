@@ -1,13 +1,15 @@
 "use client";
 
 import { Alert, Button, Card, Chip, Drawer, Label, Meter, Spinner } from "@heroui/react";
-import { ArrowRight, Clock, MessageSquareText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, Clock, MessageCircleQuestion, MessageSquareText, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiNumber } from "@/components/api-number";
 import { Paper } from "@/components/paper";
+import { ChooseProfessor } from "@/components/prof/choose-professor";
+import { matches, NO_FILTER, StudentFilters, type StudentFilter } from "@/components/prof/student-filters";
 import { duration, TimingsPanel } from "@/components/prof/timings-panel";
 import { useAssignment } from "@/components/prof/use-assignment";
 import {
@@ -25,6 +27,9 @@ import {
   type TranscriptTurn,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+/** The words on each student card's status chip. */
+const STATUS_LABEL: Record<StudentSummary["status"], string> = { not_started: "Not started", in_progress: "In progress", finished: "Finished" };
 
 /** The struggle types the heatmap has a column for. `none` is not a struggle, so it has no column. */
 const STRUGGLE_COLUMNS: Exclude<StruggleType, "none">[] = ["misconception", "stuck_starting", "syntax_or_mechanics", "careless_error"];
@@ -59,6 +64,10 @@ export default function DashboardPage() {
   const [generating, setGenerating] = useState(false);
   const [cardNote, setCardNote] = useState<string | null>(null);
   const [openStudent, setOpenStudent] = useState<StudentSummary | null>(null);
+  // The professor's filter over the student list and the timing table. Kept across a refresh so new rows land inside it.
+  const [filter, setFilter] = useState<StudentFilter>(NO_FILTER);
+  // How many matching cards are drawn. A class of 200 is drawn in pages of 24 so the page stays quick to scroll.
+  const [shownCount, setShownCount] = useState(24);
 
   // Bumped by the refresh button. The effect below re-reads the three routes whenever it changes.
   const [version, setVersion] = useState(0);
@@ -108,6 +117,8 @@ export default function DashboardPage() {
     }
   }
 
+  // No professor chosen: ask, rather than show anyone's class (see ChooseProfessor).
+  if (pick.state === "no_profile") return <ChooseProfessor />;
   if (pick.state === "loading" || (assignmentId && !loaded)) {
     return (
       <div className="flex items-center justify-center gap-2 pt-24 text-muted">
@@ -154,6 +165,8 @@ export default function DashboardPage() {
     );
   }
 
+  const matching = roster.students.filter((s) => matches(s, filter));
+
   return (
     <div className="flex flex-col gap-5">
       <Header title={title ?? ""} onRefresh={refresh} />
@@ -171,21 +184,39 @@ export default function DashboardPage() {
         <Card.Header>
           <Card.Title>Students</Card.Title>
           <Card.Description>
-            In the order they started. Not ranked, not graded.
+            In the order they started, then those who have not started. Not ranked, not graded.
           </Card.Description>
         </Card.Header>
-        <Card.Content>
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {roster.students.map((s) => (
-              <li key={s.student_id}>
-                <StudentLines student={s} onOpen={() => setOpenStudent(s)} />
-              </li>
-            ))}
-          </ul>
+        <Card.Content className="flex flex-col gap-4">
+          <StudentFilters
+            filter={filter}
+            onChange={(f) => {
+              setFilter(f);
+              setShownCount(24);
+            }}
+            concepts={summary.concepts.map((c) => c.concept)}
+            students={roster.students}
+          />
+          {matching.length === 0 ? (
+            <p className="py-6 text-center text-muted">No student matches these filters.</p>
+          ) : (
+            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {matching.slice(0, shownCount).map((s) => (
+                <li key={s.student_id}>
+                  <StudentLines student={s} onOpen={() => setOpenStudent(s)} />
+                </li>
+              ))}
+            </ul>
+          )}
+          {matching.length > shownCount ? (
+            <Button variant="secondary" className="self-center" onPress={() => setShownCount((n) => n + 24)}>
+              Show {Math.min(24, matching.length - shownCount)} more of {matching.length - shownCount}
+            </Button>
+          ) : null}
         </Card.Content>
       </Card>
 
-      <TimingsPanel assignmentId={assignmentId} version={version} />
+      <TimingsPanel assignmentId={assignmentId} version={version} studentIds={filter === NO_FILTER ? null : new Set(matching.map((s) => s.student_id))} />
 
       <TranscriptDrawer student={openStudent} assignmentId={assignmentId} onClose={() => setOpenStudent(null)} />
     </div>
@@ -203,6 +234,8 @@ function Picker({ pick }: { pick: ReturnType<typeof useAssignment> }) {
       {pick.assignments.map((a) => (
         <Button key={a.id} size="sm" variant={a.id === pick.assignmentId ? "secondary" : "ghost"} aria-pressed={a.id === pick.assignmentId} onPress={() => pick.choose(a.id)}>
           {a.title}
+          {/* Two classes can each have a "Problem Set 3"; the class name tells them apart. */}
+          <span className="text-xs text-muted">{a.course_name}</span>
         </Button>
       ))}
     </div>
@@ -488,7 +521,12 @@ function Stat({ value, label }: { value: number; label: string }) {
 function StudentLines({ student, onOpen }: { student: StudentSummary; onOpen: () => void }) {
   return (
     <div className="flex h-full flex-col gap-2 rounded-lg border border-border px-3.5 py-3">
-      <p className="font-medium">{student.display_name}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-medium">{student.display_name}</p>
+        <Chip size="sm" variant="soft" color={student.status === "finished" ? "success" : student.status === "in_progress" ? "accent" : "default"}>
+          {STATUS_LABEL[student.status]}
+        </Chip>
+      </div>
       <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-y-1 text-sm">
         <dt className="text-muted">Concept</dt>
         <dd>{student.concept ? conceptLabel(student.concept) : "no turns yet"}</dd>
@@ -501,8 +539,8 @@ function StudentLines({ student, onOpen }: { student: StudentSummary; onOpen: ()
           {student.average_seconds === null ? "no question finished" : `${duration(student.average_seconds)} per question · ${student.questions_done} done`}
         </dd>
       </dl>
-      {/* Enabled with no turns too: a student who never messaged still has their time on each question to show. */}
-      <Button size="sm" variant="ghost" className="mt-auto self-start" onPress={onOpen}>
+      {/* Enabled with no turns too: a student who never messaged still has their time on each question to show. Not started has nothing to open. */}
+      <Button size="sm" variant="ghost" className="mt-auto self-start" onPress={onOpen} isDisabled={student.status === "not_started"}>
         Open work <ArrowRight className="size-3.5" aria-hidden />
       </Button>
     </div>
@@ -537,7 +575,7 @@ function TranscriptDrawer({
     api
       .transcript(studentId, assignmentId)
       .then((t) => live && setLoadedTranscript(t))
-      .catch(() => live && setLoadedTranscript({ student_id: studentId, display_name: "", questions: [], turns: [] }));
+      .catch(() => live && setLoadedTranscript({ student_id: studentId, display_name: "", questions: [], turns: [], reflection: null }));
     return () => {
       live = false;
     };
@@ -551,7 +589,7 @@ function TranscriptDrawer({
             <Drawer.CloseTrigger />
             <Drawer.Header>
               <Drawer.Heading>{student?.display_name}</Drawer.Heading>
-              <p className="text-xs text-muted">This assignment only. Each question with the time it took and the turns on it.</p>
+              <p className="text-xs text-muted">This assignment only. Each question with the time it took and the turns on it, then the look-back answers.</p>
             </Drawer.Header>
             <Drawer.Body>
               {!transcript ? (
@@ -611,6 +649,43 @@ function WorkByQuestion({ transcript }: { transcript: Transcript }) {
           <TurnList turns={unplaced} />
         </section>
       ) : null}
+      <LookBack reflection={transcript.reflection} questionCount={transcript.questions.length} />
+    </div>
+  );
+}
+
+/**
+ * The student's two look-back answers, after their last question.
+ *
+ * They used to be a separate list at the bottom of the dashboard with no way
+ * to find one student. Here they sit at the end of that student's work, which
+ * the name search already reaches. A student who has not finished has none
+ * yet, and the section says so rather than disappearing.
+ */
+function LookBack({ reflection, questionCount }: { reflection: Transcript["reflection"]; questionCount: number }) {
+  return (
+    <section aria-labelledby="work-lookback" className="flex flex-col gap-3 border-t border-border pt-5">
+      <h3 id="work-lookback" className="flex items-center gap-2 font-semibold">
+        <MessageCircleQuestion className="size-4 text-margin-red" aria-hidden /> Look-back answers
+      </h3>
+      {!reflection ? (
+        <p className="text-sm text-muted">Written after the last question. This student has not finished yet.</p>
+      ) : (
+        <dl className="flex flex-col gap-4">
+          <LookBackAnswer question={reflection.why} answer={reflection.answers.why} />
+          <LookBackAnswer question={`${questionCount > 1 ? `Question ${reflection.what_if_index + 1}. ` : ""}${reflection.what_if}`} answer={reflection.answers.what_if} />
+        </dl>
+      )}
+    </section>
+  );
+}
+
+/** One look-back question and the student's answer, as plain text. */
+function LookBackAnswer({ question, answer }: { question: string; answer: string }) {
+  return (
+    <div>
+      <dt className="text-sm text-muted">{question}</dt>
+      <dd className="mt-0.5 whitespace-pre-wrap font-serif text-[17px] leading-7">{answer || <span className="text-muted">No answer.</span>}</dd>
     </div>
   );
 }
