@@ -33,34 +33,47 @@ export function professorOf(req: Request): string | null {
 
 const isId = (v: unknown): v is string => typeof v === "string" && mongoose.isValidObjectId(v);
 
-/** The class of an assignment, or null for an unknown id. */
-async function courseOfAssignment(id: unknown) {
-  if (!isId(id)) return null;
-  return (await Assignment.findById(id).select("course_id").lean())?.course_id ?? null;
-}
-
 /**
- * The class this professor request is about, or undefined when the route does not name one
- * (a new class, a new assignment under a new name, a draft already tied to a class).
+ * Who teaches the class a request names, in one round trip: `undefined` when the route names no class,
+ * `null` when the named class (or assignment, or lecture) does not exist, else the class's professor label.
+ * An assignment or a lecture is joined to its class inside the database ($lookup) rather than read in two
+ * queries, because every professor request pays this before its own work and the database is a network hop away.
  */
-async function classOf(req: Request): Promise<unknown> {
+async function teacherOf(req: Request): Promise<string | null | undefined> {
   const path = req.path;
   const body = (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body) ? req.body : {}) as Record<string, unknown>;
-  if (req.query.assignment_id !== undefined) return courseOfAssignment(req.query.assignment_id);
+  const viaClass = async (from: "assignments" | "lecture_files", id: unknown) => {
+    if (!isId(id)) return null;
+    const model = from === "assignments" ? Assignment : LectureFile;
+    const [row] = await model.aggregate<{ classes: number; professor?: string | null }>([
+      { $match: { _id: new mongoose.Types.ObjectId(id) } },
+      { $lookup: { from: "courses", localField: "course_id", foreignField: "_id", as: "c" } },
+      { $project: { classes: { $size: "$c" }, professor: { $first: "$c.professor" } } },
+    ]);
+    if (!row) return null;
+    // An assignment saved before classes existed has none; nothing to check, as before.
+    return row.classes === 0 ? undefined : (row.professor ?? "");
+  };
+  const byCourse = async (filter: Record<string, unknown>) => {
+    const c = await Course.findOne(filter).select("professor").lean();
+    return c ? (c.professor ?? "") : null;
+  };
+  if (req.query.assignment_id !== undefined) return viaClass("assignments", req.query.assignment_id);
   let m = /^\/api\/prof\/assignments\/([^/]+)$/.exec(path);
-  if (m) return courseOfAssignment(m[1]);
+  if (m) return viaClass("assignments", m[1]);
   m = /^\/api\/prof\/courses\/([^/]+)(?:\/|$)/.exec(path);
-  if (m) return isId(m[1]) ? m[1] : null;
+  if (m) return isId(m[1]) ? byCourse({ _id: m[1] }) : null;
   m = /^\/api\/prof\/lectures\/([^/]+)$/.exec(path);
-  if (m) return isId(m[1]) ? ((await LectureFile.findById(m[1]).select("course_id").lean())?.course_id ?? null) : null;
+  if (m) return viaClass("lecture_files", m[1]);
   if (path === "/api/prof/courses" && req.method === "POST") {
-    if (isId(body.id)) return body.id;
-    if (typeof body.name === "string") return (await Course.findOne({ name: body.name.trim() }).select("_id").lean())?._id;
+    if (isId(body.id)) return byCourse({ _id: body.id });
+    // A new class name is no one's yet; an existing name belongs to its professor.
+    if (typeof body.name === "string") return (await byCourse({ name: body.name.trim() })) ?? undefined;
     return undefined;
   }
   if (path === "/api/prof/assignments" && req.method === "POST") {
-    if (isId(body.id)) return courseOfAssignment(body.id);
-    if (typeof body.course_name === "string") return (await Course.findOne({ name: body.course_name.trim() }).select("_id").lean())?._id;
+    if (isId(body.id)) return viaClass("assignments", body.id);
+    if (typeof body.course_name === "string") return (await byCourse({ name: body.course_name.trim() })) ?? undefined;
   }
   return undefined;
 }
@@ -72,10 +85,8 @@ async function classOf(req: Request): Promise<unknown> {
 export async function scopeToProfessor(req: Request, res: Response, next: NextFunction): Promise<void> {
   const professor = professorOf(req);
   if (!professor || !req.path.startsWith("/api/prof/")) return next();
-  const courseId = await classOf(req);
-  if (!courseId) return next();
-  const course = await Course.findById(courseId).select("professor").lean();
-  if (course && course.professor !== professor) {
+  const teacher = await teacherOf(req);
+  if (typeof teacher === "string" && teacher !== professor) {
     res.status(403).json({ error: "not_your_class" });
     return;
   }

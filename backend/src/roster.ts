@@ -71,37 +71,55 @@ export type Roster = {
  */
 export async function roster(assignmentId: string): Promise<Roster | null> {
   if (!mongoose.isValidObjectId(assignmentId)) return null;
-  if (!(await Assignment.exists({ _id: assignmentId }))) return null;
 
-  const sessions = await Session.find({ assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).lean();
+  // The database is a network hop away (about 60-100 ms each), so the reads go in three rounds of parallel
+  // queries instead of eight in a row: first everything keyed by the assignment, then what needs its sessions or
+  // class, then the names. Only the fields used below are fetched; a class of 200 has thousands of rows here.
+  const [assignment, sessions, events] = await Promise.all([
+    Assignment.findById(assignmentId).select("course_id prompt questions").lean(),
+    Session.find({ assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).select("student_id completed_at question_times created_at").lean(),
+    ScribeEvent.find({ assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).select("student_id concept struggle_type jailbreak_attempt").lean(),
+  ]);
+  if (!assignment) return null;
+
   const order: string[] = [];
-  for (const s of sessions) {
-    const id = String(s.student_id);
-    if (!order.includes(id)) order.push(id);
-  }
+  const seen = new Set<string>();
+  const add = (id: string) => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      order.push(id);
+    }
+  };
+  for (const s of sessions) add(String(s.student_id));
   const started = new Set(order);
   const finished = new Set(sessions.filter((s) => s.completed_at).map((s) => String(s.student_id)));
-  const courseId = (await Assignment.findById(assignmentId).select("course_id").lean())?.course_id;
-  if (courseId) {
-    const enrolled = await Enrollment.find({ course_id: courseId }).sort({ created_at: 1, _id: 1 }).select("student_id").lean();
-    for (const e of enrolled) {
-      const id = String(e.student_id);
-      if (!order.includes(id)) order.push(id);
-    }
-  }
+
+  const [enrolled, tutorMessages] = await Promise.all([
+    assignment.course_id ? Enrollment.find({ course_id: assignment.course_id }).sort({ created_at: 1, _id: 1 }).select("student_id").lean() : Promise.resolve([]),
+    Message.find({ session_id: { $in: sessions.map((s) => s._id) }, role: "tutor" })
+      .sort({ created_at: 1, _id: 1 })
+      .select("session_id hint_level retries guard_verdict.layer")
+      .lean(),
+  ]);
+  for (const e of enrolled) add(String(e.student_id));
+
   const students = await Student.find({ _id: { $in: order } }).select("display_name").lean();
   const names = new Map(students.map((s) => [String(s._id), s.display_name]));
   // An enrollment whose student row is gone has no one to show; a started student always stays, as before.
   for (let i = order.length - 1; i >= 0; i -= 1) if (!started.has(order[i]) && !names.has(order[i])) order.splice(i, 1);
 
-  const events = await ScribeEvent.find({ assignment_id: assignmentId }).sort({ created_at: 1, _id: 1 }).lean();
-  const tutorMessages = await Message.find({ session_id: { $in: sessions.map((s) => s._id) }, role: "tutor" })
-    .sort({ created_at: 1, _id: 1 })
-    .select("session_id hint_level retries guard_verdict")
-    .lean();
+  // Each student's labels, grouped in one pass. Filtering the whole list once per student was
+  // students x labels comparisons: about a quarter of a second for 166 students and 3,493 labels.
+  const eventsOf = new Map<string, typeof events>();
+  for (const e of events) {
+    const id = String(e.student_id);
+    const list = eventsOf.get(id);
+    if (list) list.push(e);
+    else eventsOf.set(id, [e]);
+  }
+
   const studentOfSession = new Map(sessions.map((s) => [String(s._id), String(s.student_id)]));
-  const assignment = await Assignment.findById(assignmentId).select("prompt questions").lean();
-  const count = questionPrompts(assignment!).length;
+  const count = questionPrompts(assignment).length;
   const time = classTime(sessions as { student_id: unknown; question_times?: QuestionTime[] | null; completed_at?: Date | null; created_at?: unknown }[], count);
 
   const lastLevel = new Map<string, number>();
@@ -120,7 +138,7 @@ export async function roster(assignmentId: string): Promise<Roster | null> {
   return {
     assignment_id: assignmentId,
     students: order.map((id) => {
-      const mine = events.filter((e) => String(e.student_id) === id);
+      const mine = eventsOf.get(id) ?? [];
       const top = topStruggle(mine);
       return {
         student_id: id,

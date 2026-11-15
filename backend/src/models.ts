@@ -405,6 +405,10 @@ scribeEventSchema.index({ assignment_id: 1, concept: 1 });
 scribeEventSchema.index({ student_id: 1, assignment_id: 1 });
 
 export type ScribeEventDoc = InferSchemaType<typeof scribeEventSchema>;
+// The roster and the class summary read one assignment's labels in time order. Without this the database
+// sorted every label in memory on each dashboard load.
+scribeEventSchema.index({ assignment_id: 1, created_at: 1, _id: 1 });
+
 export const ScribeEvent = mongoose.model("ScribeEvent", scribeEventSchema);
 
 // ---------------------------------------------------------------------------
