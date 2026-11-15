@@ -150,6 +150,8 @@ export default function StudentAssignmentPage() {
   const [paneView, setPaneView] = useState("home");
   const [lectureId, setLectureId] = useState<string | null>(null);
   const [slidePage, setSlidePage] = useState<number | null>(null);
+  // The slides Askretes last pointed to, for the viewer's highlight. `at` changes on every citation pressed, so pressing the same one again highlights it again.
+  const [cited, setCited] = useState<{ lectureId: string; from: number; to: number; at: number } | null>(null);
 
   /** The canvas's API while the board is on screen, and the replies waiting for it to open. */
   const board = useRef<ExcalidrawImperativeAPI | null>(null);
@@ -319,9 +321,10 @@ export default function StudentAssignmentPage() {
   }
 
   /** A slide citation in a reply, or the show_slide tool, opens that lecture at that slide in the pane. */
-  const openSlide = useCallback((lid: string, page: number) => {
+  const openSlide = useCallback((lid: string, page: number, end?: number) => {
     setLectureId(lid);
     setSlidePage(page);
+    setCited({ lectureId: lid, from: page, to: end && end > page ? end : page, at: Date.now() });
     setPaneView("slides");
     setPaneOpen(true);
   }, []);
@@ -625,6 +628,8 @@ export default function StudentAssignmentPage() {
                 lectures={lectures}
                 selectedId={lectureId}
                 page={slidePage}
+                cited={cited}
+                onPage={setSlidePage}
                 onSelect={(lid) => {
                   // Choosing a lecture from the menu opens it at its first page.
                   setLectureId(lid);

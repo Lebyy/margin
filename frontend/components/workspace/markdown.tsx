@@ -1,11 +1,13 @@
 "use client";
 
+import { Presentation } from "lucide-react";
 import NextLink from "next/link";
 import { useContext, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { CitationContext } from "@/components/student/cited-text";
+import type { Lecture } from "@/lib/api";
 import { texToSvg } from "@/lib/math";
 import { cn } from "@/lib/utils";
 
@@ -65,17 +67,21 @@ export function Markdown({ text, inline = false, className, onAppLink }: { text:
       if (cite) {
         const lecture = cites?.lectures.find((l) => l.id === cite[0]);
         const page = Number(cite[1]);
+        const end = cite[2] ? Number(cite[2]) : undefined;
         if (!cites || !lecture) return <>{children}</>;
+        // A slide reference reads as a small chip with the slides icon, so it is plainly something to press, and opens the slide in the pane beside the chat.
         return (
           <NextLink
             href={`/course/${cites.courseId}?tab=slides&lecture=${lecture.id}&page=${page}`}
-            className="font-sans text-[0.9em] font-medium text-accent underline underline-offset-2"
+            title={`Open Lecture ${lecture.lecture_number}: ${lecture.title} at slide ${page}`}
+            className="mx-0.5 inline-flex items-baseline gap-1 rounded-md bg-accent/10 px-1.5 font-sans text-[0.88em] font-medium text-accent no-underline transition-colors hover:bg-accent/20"
             onClick={(e) => {
               if (!cites.open || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
               e.preventDefault();
-              cites.open(lecture.id, page);
+              cites.open(lecture.id, page, end);
             }}
           >
+            <Presentation className="size-3.5 shrink-0 translate-y-0.5" aria-hidden />
             {children}
           </NextLink>
         );
@@ -102,12 +108,7 @@ export function Markdown({ text, inline = false, className, onAppLink }: { text:
   };
 
   // Slide citations become links the renderer can see: [Lecture 3, slide 9] -> [Lecture 3, slide 9](cite:<lecture id>:9), only for a lecture and slide the class has.
-  const prepared = cites?.lectures.length
-    ? text.replace(/\[Lecture (\d{1,3}), slide (\d{1,4})\](?!\()/g, (whole, n: string, p: string) => {
-        const lecture = cites.lectures.find((l) => l.lecture_number === Number(n));
-        return lecture && Number(p) >= 1 && Number(p) <= lecture.page_count ? `${whole}(cite:${lecture.id}:${p})` : whole;
-      })
-    : text;
+  const prepared = cites?.lectures.length ? linkSlides(text, cites.lectures) : text;
 
   const body = (
     <ReactMarkdown remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]} components={components} urlTransform={safeUrl}>
@@ -140,4 +141,50 @@ export function Formula({ tex, display }: { tex: string; display: boolean }): Re
   ) : (
     <span role="img" aria-label={label} className="inline-block align-middle" dangerouslySetInnerHTML={{ __html: svg }} />
   );
+}
+
+/*
+ * Slide references, in every way a reply writes them: the bracketed form the
+ * tutor is told to use, "[Lecture 3, slide 9]", and the looser ones a model
+ * also writes, "Lecture 3, slide 9", "Lecture 7 slides 12-16", "slide 4 of
+ * Lecture 2". Each becomes a Markdown link to `cite:<lecture id>:<first>[:<last>]`,
+ * which the link renderer above turns into a chip that opens the pane.
+ *
+ * Only a lecture the class has, and slides inside it, are linked; a wrong
+ * number stays as the words written, so a student is never sent to a slide
+ * that is not there. Code is left alone: a reference inside backticks or a
+ * fenced block would otherwise show Markdown link syntax inside the code.
+ */
+const BRACKETED = /\[Lecture (\d{1,3}),? slides? (\d{1,4})(?:\s?[-–]\s?(\d{1,4}))?\](?!\()/gi;
+const LECTURE_FIRST = /(?<![[\w])Lecture (\d{1,3}),?\s+slides? (\d{1,4})(?:\s?(?:[-–]|to)\s?(\d{1,4}))?(?![\w\]])/gi;
+const SLIDE_FIRST = /(?<![[\w])slides? (\d{1,4})(?:\s?(?:[-–]|to)\s?(\d{1,4}))? (?:of|in|from) Lecture (\d{1,3})(?![\w\]])/gi;
+
+function linkSlides(text: string, lectures: Lecture[]): string {
+  const target = (n: string, from: string, to?: string) => {
+    const lecture = lectures.find((l) => l.lecture_number === Number(n));
+    const a = Number(from);
+    const b = to ? Number(to) : a;
+    if (!lecture || a < 1 || a > lecture.page_count) return null;
+    const last = Math.min(Math.max(b, a), lecture.page_count);
+    return `cite:${lecture.id}:${a}${last > a ? `:${last}` : ""}`;
+  };
+  const outsideCode = (part: string) =>
+    part
+      .replace(BRACKETED, (whole, n: string, a: string, b?: string) => {
+        const t = target(n, a, b);
+        return t ? `${whole}(${t})` : whole;
+      })
+      .replace(LECTURE_FIRST, (whole, n: string, a: string, b?: string) => {
+        const t = target(n, a, b);
+        return t ? `[${whole}](${t})` : whole;
+      })
+      .replace(SLIDE_FIRST, (whole, a: string, b: string | undefined, n: string) => {
+        const t = target(n, a, b);
+        return t ? `[${whole}](${t})` : whole;
+      });
+  // Fenced blocks and inline code pass through untouched; everything between them is linked.
+  return text
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((part, i) => (i % 2 === 1 ? part : outsideCode(part)))
+    .join("");
 }

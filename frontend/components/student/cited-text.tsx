@@ -14,7 +14,8 @@ import type { Lecture } from "@/lib/api";
  * link's address still points at the class's slides, so opening it in a new
  * tab, or with the pane unavailable, still lands on the same slide.
  */
-export const CitationContext = createContext<{ courseId: string; lectures: Lecture[]; open?: (lectureId: string, page: number) => void } | null>(null);
+/** `open` takes the first cited slide and, for a range ("slides 12-16"), the last, so the pane can mark every slide Askretes pointed to. */
+export const CitationContext = createContext<{ courseId: string; lectures: Lecture[]; open?: (lectureId: string, page: number, end?: number) => void } | null>(null);
 
 /** The one citation shape the tutor is told to write for a single slide (tutor.ts, level 2). */
 const CITATION = /\[Lecture (\d{1,3}), slide (\d{1,4})\]/g;

@@ -1,7 +1,9 @@
 "use client";
 
 import { Button, Dropdown, Label, Tooltip } from "@heroui/react";
-import { ChevronDown, Download, ExternalLink, Presentation } from "lucide-react";
+import { ChevronDown, Download, ExternalLink, Presentation, Sparkles } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
+import { PdfSlides } from "@/components/pdf-slides";
 import { lectureFileUrl, type Lecture } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +33,8 @@ export function SlideViewer({
   page,
   onSelect,
   compact = false,
+  cited = null,
+  onPage,
 }: {
   courseId: string;
   lectures: Lecture[];
@@ -38,6 +42,10 @@ export function SlideViewer({
   page: number | null;
   onSelect: (id: string) => void;
   compact?: boolean;
+  /** The slides Askretes pointed to (a citation the student pressed). Shown as a highlighted banner over the slide, with a button per slide for a range. */
+  cited?: { lectureId: string; from: number; to: number; at: number } | null;
+  /** Moves the viewer to another page, for the range buttons. */
+  onPage?: (page: number) => void;
 }) {
   if (lectures.length === 0) {
     return (
@@ -54,7 +62,6 @@ export function SlideViewer({
   const title = `Lecture ${open.lecture_number}: ${open.title}${page ? `, slide ${page}` : ""}`;
 
   if (compact) {
-    const clean = `${src}${src.includes("#") ? "&" : "#"}toolbar=0&navpanes=0&view=FitH`;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-1 px-4 py-2 sm:px-5">
@@ -97,7 +104,11 @@ export function SlideViewer({
             <Tooltip.Content>Open in a new tab</Tooltip.Content>
           </Tooltip>
         </div>
-        <iframe key={clean} src={clean} title={title} className="min-h-[24rem] w-full flex-1 border-t border-border bg-surface" />
+        {cited && cited.lectureId === open.id ? <CitedBanner cited={cited} page={page} onPage={onPage} /> : null}
+        {/* The slides, drawn by pdf.js: the cited slide is outlined on the page itself, and students can highlight text (components/pdf-slides.tsx). */}
+        <div className="flex min-h-[24rem] flex-1 flex-col border-t border-border">
+          <PdfSlides key={open.id} src={file} title={title} page={page} cited={cited && cited.lectureId === open.id ? cited : null} lectureId={open.id} />
+        </div>
       </div>
     );
   }
@@ -128,11 +139,48 @@ export function SlideViewer({
         </ul>
       </nav>
       <div className="flex min-w-0 flex-col gap-2">
-        <iframe key={src} src={src} title={title} className="h-[min(75dvh,48rem)] w-full rounded-2xl border border-border bg-surface" />
+        <div className="flex h-[min(75dvh,48rem)] flex-col overflow-hidden rounded-2xl border border-border">
+          <PdfSlides key={open.id} src={file} title={title} page={page} cited={null} lectureId={open.id} />
+        </div>
         <a href={src} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 self-start text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">
           <ExternalLink className="size-3.5" aria-hidden /> Open the slides in a new tab
         </a>
       </div>
     </div>
+  );
+}
+
+/**
+ * The line above a cited slide: which slide Askretes pointed to, and for a
+ * range ("slides 12-16"), one button per slide so the student can step
+ * through exactly the ones cited. The current one is filled. Up to 12 are
+ * shown; a longer range says how many more.
+ */
+function CitedBanner({ cited, page, onPage }: { cited: { from: number; to: number; at: number }; page: number | null; onPage?: (page: number) => void }) {
+  const reduce = useReducedMotion();
+  const pages = Array.from({ length: Math.min(12, cited.to - cited.from + 1) }, (_, i) => cited.from + i);
+  const more = cited.to - cited.from + 1 - pages.length;
+  return (
+    <motion.div
+      key={cited.at}
+      initial={reduce ? false : { opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-l-2 border-margin-red bg-margin-red-soft px-4 py-2 sm:px-5"
+      role="status"
+    >
+      <Sparkles className="size-3.5 shrink-0 text-margin-red" aria-hidden />
+      <span className="text-sm">{cited.to > cited.from ? `Askretes pointed you to slides ${cited.from}–${cited.to}` : `Askretes pointed you to slide ${cited.from}`}</span>
+      {pages.length > 1 ? (
+        <span className="flex flex-wrap gap-1">
+          {pages.map((n) => (
+            <Button key={n} size="sm" variant={page === n ? "primary" : "secondary"} className="h-6 min-w-7 px-1.5 text-xs tabular-nums" aria-pressed={page === n} aria-label={`Slide ${n}`} onPress={() => onPage?.(n)}>
+              {n}
+            </Button>
+          ))}
+          {more > 0 ? <span className="self-center text-xs text-muted">+{more}</span> : null}
+        </span>
+      ) : null}
+    </motion.div>
   );
 }
