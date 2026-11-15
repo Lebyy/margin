@@ -473,18 +473,38 @@ function professorHeader(path: string): Record<string, string> {
   return name ? { "x-margin-professor": encodeURIComponent(name) } : {};
 }
 
+/*
+ * How long a read waits for an API that is waking up. The hosted API sleeps when nobody has used it for a while (Render's
+ * free plan), and for the 30 to 60 seconds it takes to start, requests are refused or answered by the host with no CORS
+ * header, which the browser reports as a network failure. Without this, the first page anyone opens after a quiet spell
+ * says "Askretes is not reachable" while the API is already on its way.
+ */
+const WAKE_WINDOW_MS = 75_000;
+
 async function request<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown, raw?: { type: string; data: Blob }): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(API_BASE + path, {
+  const send = () =>
+    fetch(API_BASE + path, {
       method,
       cache: "no-store",
       // A raw body (a lecture PDF) is sent as its own bytes with its own type; everything else is JSON.
       headers: { ...(raw ? { "content-type": raw.type } : body === undefined ? {} : { "content-type": "application/json" }), ...professorHeader(path) },
       body: raw ? raw.data : body === undefined ? undefined : JSON.stringify(body),
     });
-  } catch {
-    throw new ApiError(0, "api_unreachable");
+  let res: Response | null = null;
+  /*
+   * Only reads are retried while the API wakes: a GET changes nothing, so sending it again is safe. A POST or PUT is sent
+   * once, because a retry after a lost reply could send a student's message, or save an assignment, twice. The gateway
+   * statuses (502, 503, 504) are what a host returns while the app behind it is still starting.
+   */
+  const deadline = Date.now() + (method === "GET" ? WAKE_WINDOW_MS : 0);
+  for (let wait = 1000; ; wait = Math.min(wait * 2, 8000)) {
+    try {
+      res = await send();
+      if (!(method === "GET" && [502, 503, 504].includes(res.status) && Date.now() + wait < deadline)) break;
+    } catch {
+      if (Date.now() + wait >= deadline) throw new ApiError(0, "api_unreachable");
+    }
+    await new Promise((r) => setTimeout(r, wait));
   }
   let data: unknown = null;
   try {
