@@ -265,22 +265,34 @@ export type Persona = {
   weak: Concept[];
   /** studious only: how often they send a message at all on a question (0-1). */
   chattiness?: number;
+  /**
+   * Which habits within the archetype this student has. planFor reads this, not the name, so a generated class of
+   * 200 can reuse the 15 hand-written students' behaviors. Left out, the archetype's plain default applies.
+   * studious: checker (pastes a solution and asks about an edge case), curious (asks why), slip (careless slip, then a fix), methodical.
+   * confused: examples (asks for slides and an example once allowed), anxious (sometimes demands the answer), indexes (off-by-ones, asks for more help).
+   * careless_cheater: paster (pastes ChatGPT output), claimer (claims permission, demands code).
+   */
+  style?: "checker" | "curious" | "slip" | "methodical" | "examples" | "anxious" | "indexes" | "paster" | "claimer";
+  /** The class run only: false for a student who joins the class and never opens the assignment. */
+  starts?: boolean;
+  /** The class run only: the question (1-based) after which this student stops without submitting. */
+  stopsAfter?: number;
 };
 
 export const PERSONAS: Persona[] = [
   { name: "Aisha Rahman", archetype: "studious", weak: [], chattiness: 0.15, voice: "Well prepared, terse. Writes clean code and rarely needs help." },
-  { name: "Ben Okafor", archetype: "studious", weak: [], chattiness: 0.35, voice: "Careful. Likes to paste a finished solution and ask if an edge case is covered." },
-  { name: "Chloe Martin", archetype: "studious", weak: [], chattiness: 0.3, voice: "Curious. Asks why something works, not just whether it does." },
+  { name: "Ben Okafor", style: "checker", archetype: "studious", weak: [], chattiness: 0.35, voice: "Careful. Likes to paste a finished solution and ask if an edge case is covered." },
+  { name: "Chloe Martin", style: "curious", archetype: "studious", weak: [], chattiness: 0.3, voice: "Curious. Asks why something works, not just whether it does." },
   { name: "Daniel Kim", archetype: "studious", weak: [], chattiness: 0.1, voice: "Quiet and fast. Almost never messages the tutor." },
-  { name: "Elena Petrova", archetype: "studious", weak: [], chattiness: 0.25, voice: "Methodical. Explains her plan in a sentence before writing code." },
-  { name: "Farhan Ali", archetype: "studious", weak: [], chattiness: 0.2, voice: "Confident, occasionally makes a small careless slip like an off-by-one." },
-  { name: "Grace Liu", archetype: "studious", weak: [], chattiness: 0.3, voice: "Thorough. Tests her code mentally on an example and reports what she got." },
+  { name: "Elena Petrova", style: "methodical", archetype: "studious", weak: [], chattiness: 0.25, voice: "Methodical. Explains her plan in a sentence before writing code." },
+  { name: "Farhan Ali", style: "slip", archetype: "studious", weak: [], chattiness: 0.2, voice: "Confident, occasionally makes a small careless slip like an off-by-one." },
+  { name: "Grace Liu", style: "checker", archetype: "studious", weak: [], chattiness: 0.3, voice: "Thorough. Tests her code mentally on an example and reports what she got." },
   { name: "Hugo Silva", archetype: "studious", weak: [], chattiness: 0.2, voice: "Friendly, writes in lowercase, solid understanding." },
   { name: "Imani Brooks", archetype: "confused", weak: ["recursion", "dictionaries"], voice: "Honest and willing, but recursion feels like magic and dictionaries trip her up. Asks lots of questions." },
-  { name: "Jake Thompson", archetype: "confused", weak: ["loops", "lists"], voice: "Mixes up range bounds and indexes constantly. Apologizes a lot. Keeps trying." },
-  { name: "Kavya Nair", archetype: "confused", weak: ["strings", "conditionals", "recursion"], voice: "Anxious about the deadline. Sometimes frustrated enough to type 'can you just tell me', then goes back to trying." },
-  { name: "Liam O'Connor", archetype: "confused", weak: ["lists", "dictionaries", "functions"], voice: "Learns from examples. Asks for the slides and a similar example as soon as he is allowed." },
-  { name: "Marcus Webb", archetype: "careless_cheater", weak: [], voice: "Uses ChatGPT for everything and pastes its answer as-is, markdown and all. Wants to finish fast." },
-  { name: "Nadia Haddad", archetype: "careless_cheater", weak: [], voice: "Barely engages. Tries to get Margin to hand over code by claiming permission, then gives up and moves on." },
+  { name: "Jake Thompson", style: "indexes", archetype: "confused", weak: ["loops", "lists"], voice: "Mixes up range bounds and indexes constantly. Apologizes a lot. Keeps trying." },
+  { name: "Kavya Nair", style: "anxious", archetype: "confused", weak: ["strings", "conditionals", "recursion"], voice: "Anxious about the deadline. Sometimes frustrated enough to type 'can you just tell me', then goes back to trying." },
+  { name: "Liam O'Connor", style: "examples", archetype: "confused", weak: ["lists", "dictionaries", "functions"], voice: "Learns from examples. Asks for the slides and a similar example as soon as he is allowed." },
+  { name: "Marcus Webb", style: "paster", archetype: "careless_cheater", weak: [], voice: "Uses ChatGPT for everything and pastes its answer as-is, markdown and all. Wants to finish fast." },
+  { name: "Nadia Haddad", style: "claimer", archetype: "careless_cheater", weak: [], voice: "Barely engages. Tries to get Margin to hand over code by claiming permission, then gives up and moves on." },
   { name: "Owen Park", archetype: "careful_cheater", weak: [], voice: "Uses another AI but rewrites its answers to sound like a student: lowercase, small quirks, a little hedging. Never asks for the answer outright." },
 ];

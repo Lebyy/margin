@@ -76,10 +76,10 @@ export function planFor(p: Persona, q: Question, qi: number, rng: () => number):
   const honestMinutes = d * between(rng, 1.5, 3);
   const studiousPlan = (chattiness: number): Intent[] => {
     if (rng() >= Math.min(0.9, chattiness * (d === 3 ? 1.6 : 1))) return [];
-    if (p.name === "Ben Okafor" || p.name === "Grace Liu") return rng() < 0.7 ? ["correct_check"] : ["correct_check", "got_it"];
-    if (p.name === "Chloe Martin") return rng() < 0.6 ? ["ask_concept", "got_it"] : ["ask_concept"];
-    if (p.name === "Farhan Ali") return ["slip_attempt", "improved_attempt"];
-    if (p.name === "Elena Petrova") return ["correct_check"];
+    if (p.style === "checker") return rng() < 0.7 ? ["correct_check"] : ["correct_check", "got_it"];
+    if (p.style === "curious") return rng() < 0.6 ? ["ask_concept", "got_it"] : ["ask_concept"];
+    if (p.style === "slip") return ["slip_attempt", "improved_attempt"];
+    if (p.style === "methodical") return ["correct_check"];
     return [rng() < 0.5 ? "ask_concept" : "correct_check"];
   };
 
@@ -100,9 +100,9 @@ export function planFor(p: Persona, q: Question, qi: number, rng: () => number):
       // unlocks slides and examples only after three attempts on the question.
       const base: Intent[] = ["stuck_start", "buggy_attempt", "buggy_attempt", "buggy_attempt"];
       let intents: Intent[];
-      if (p.name === "Liam O'Connor") intents = [...base, "ask_slides", "ask_example", "improved_attempt", "got_it"];
-      else if (p.name === "Kavya Nair") intents = ["stuck_start", "buggy_attempt", "frustrated_demand", "buggy_attempt", "buggy_attempt", "more_help", "improved_attempt"];
-      else if (p.name === "Jake Thompson") intents = [...base, "more_help", "improved_attempt", rng() < 0.5 ? "improved_attempt" : "got_it"];
+      if (p.style === "examples") intents = [...base, "ask_slides", "ask_example", "improved_attempt", "got_it"];
+      else if (p.style === "anxious") intents = ["stuck_start", "buggy_attempt", "frustrated_demand", "buggy_attempt", "buggy_attempt", "more_help", "improved_attempt"];
+      else if (p.style === "indexes") intents = [...base, "more_help", "improved_attempt", rng() < 0.5 ? "improved_attempt" : "got_it"];
       else intents = [...base, rng() < 0.5 ? "ask_example" : "more_help", "improved_attempt", "got_it"];
       // Asking for help too early once is realistic, and it exercises the locked notice.
       if (rng() < 0.3) intents.splice(1, 0, "more_help");
@@ -111,7 +111,7 @@ export function planFor(p: Persona, q: Question, qi: number, rng: () => number):
 
     case "careless_cheater": {
       const fast = between(rng, 0.2, 1.0);
-      if (p.name === "Marcus Webb") {
+      if (p.style === "paster") {
         const intents: Intent[] = qi === 7 || qi === 14 ? ["demand_answer"] : rng() < 0.4 ? ["ai_paste_careless"] : [];
         return { intents, before: fast * 0.5, gap: () => between(rng, 0.1, 0.3), after: fast * 0.5 };
       }
