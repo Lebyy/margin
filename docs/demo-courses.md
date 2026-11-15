@@ -23,3 +23,15 @@ Do these steps through the UI only. No script.
 1. Open `/prof/courses`. The class card shows the weakest concept from the newest Thursday card.
 2. Open the class, then Dashboard. It shows the weakest concept, and Problem Set 3 opens `/prof/dashboard` for that assignment.
 3. Go to Generate the card, then Messages.
+
+## Lecture decks
+
+The decks the three classes use are in `docs/lectures/`, as `.pptx` to edit and `.pdf` to upload under Slides. They hold the lectures only. The answer keys are not in the repo: they are entered through the assignment form and stay in the database.
+
+| Class | Lecture | File |
+|---|---|---|
+| Undergraduate Electrostatics 101 | Lecture 3, Electric Charge, Field, and Potential | `physics200-lecture3-electrostatics` |
+| ME 201: Engineering Statics | Lecture 4, Equilibrium, Trusses, and Friction | `me201-lecture4-equilibrium` |
+| CS 251: Data Structures and Algorithms | Lecture 5, Complexity, Sorting, Trees, and Graphs | `cs251-lecture5-core-structures` |
+
+The worked examples on the slides use different numbers from the problem sets, so a slide cited at hint level 2 teaches the method without showing an answer.
