@@ -232,7 +232,34 @@ function blobToDataURL(blob: Blob): Promise<string> {
  * picture the tutor saw (mapped back through `frame`). A target that cannot be
  * found is skipped rather than drawn in the wrong place.
  */
+/*
+ * Text on the board is measured in Excalidraw's hand-drawn font. If an element is made before that font has loaded,
+ * Excalidraw sizes it with a fallback font's widths; once the real font arrives the lines are wider than their box and
+ * get clipped, until a double-click makes Excalidraw measure them again. So drawing waits for the font first, and after
+ * every drawing (and when a saved board opens) the text is measured again with the font in place. That second pass
+ * also repairs boards saved while the bug was clipping them.
+ */
+async function boardFonts(): Promise<void> {
+  try {
+    await Promise.all(["Excalifont", "Virgil"].map((f) => document.fonts.load(`20px ${f}`)));
+    await document.fonts.ready;
+  } catch {
+    // A font that cannot load leaves the fallback, and the measuring below still matches what is drawn.
+  }
+}
+
+/** Measures every text element on the board again, with the board's font loaded, without adding an undo step. */
+export async function remeasureText(api: ExcalidrawImperativeAPI): Promise<void> {
+  await boardFonts();
+  const all = api.getSceneElementsIncludingDeleted();
+  if (!all.some((e) => e.type === "text" && !e.isDeleted)) return;
+  const { restoreElements, CaptureUpdateAction } = await import("@excalidraw/excalidraw");
+  const fixed = restoreElements(all as never, null, { refreshDimensions: true, repairBindings: true });
+  api.updateScene({ elements: fixed, captureUpdate: CaptureUpdateAction.NEVER });
+}
+
 export async function applyActions(api: ExcalidrawImperativeAPI, actions: CanvasAction[], frame: Frame | null): Promise<{ pictures: { id: string; at: { x: number; y: number } }[] }> {
+  await boardFonts();
   const { convertToExcalidrawElements, CaptureUpdateAction } = await import("@excalidraw/excalidraw");
   const pictures: { id: string; at: { x: number; y: number } }[] = [];
   const added: unknown[] = [];
@@ -308,6 +335,7 @@ export async function applyActions(api: ExcalidrawImperativeAPI, actions: Canvas
     }
   }
   if (added.length) api.scrollToContent(added as never, { fitToContent: true, animate: true });
+  if (added.length) await remeasureText(api);
   return { pictures };
 }
 
@@ -317,6 +345,7 @@ export async function applyActions(api: ExcalidrawImperativeAPI, actions: Canvas
  * Returns the right edge and top of what was drawn, so a picture that arrives later can be placed beside it.
  */
 export async function drawLayout(api: ExcalidrawImperativeAPI, drawing: { kind: "map" | "steps" | "summary"; title: string; items: { label: string; detail: string }[] }): Promise<{ right: number; top: number }> {
+  await boardFonts();
   const { convertToExcalidrawElements, CaptureUpdateAction } = await import("@excalidraw/excalidraw");
   const existing = api.getSceneElements();
   const left = existing.length ? Math.max(...existing.map((e) => e.x + e.width)) + 160 : 0;
@@ -366,6 +395,7 @@ export async function drawLayout(api: ExcalidrawImperativeAPI, drawing: { kind: 
 
   const added = convertToExcalidrawElements(skeleton as never, { regenerateIds: true });
   api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...added], captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+  await remeasureText(api);
   api.scrollToContent(added, { fitToContent: true, animate: true });
   return { right, top };
 }

@@ -4,7 +4,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { readFiles, writeFiles } from "@/lib/whiteboard";
+import { readFiles, remeasureText, writeFiles } from "@/lib/whiteboard";
 
 /** How long the board waits after the last change before saving it, so a stroke is not written to storage at every pointer move. */
 const SAVE_DELAY = 600;
@@ -77,6 +77,8 @@ export default function Whiteboard({ storageKey, onApi, onPasteBlocked }: { stor
     (api: ExcalidrawImperativeAPI) => {
       announced.current = true;
       onApi(api);
+      // A saved board is measured again once the hand-drawn font is in, so text saved clipped (see remeasureText) opens whole.
+      void remeasureText(api);
     },
     [onApi],
   );
