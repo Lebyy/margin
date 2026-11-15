@@ -1,13 +1,17 @@
-# Render Blueprint for the Askretes API (the Express backend in backend/).
+# Render Blueprint for Askretes: the Next.js site (frontend/) and the Express API (backend/).
 #
-# The frontend is on Vercel; this is the API it calls. It runs as one always-on
-# Node process because Talk holds a WebSocket open and uploaded attachments are
-# kept in this process's memory between the upload and the message, neither of
-# which works on serverless functions.
+# The API runs as one always-on Node process because Talk holds a WebSocket open
+# and uploaded attachments are kept in that process's memory between the upload
+# and the message, neither of which works on serverless functions.
+#
+# The two services name each other by their public addresses: the site is built
+# with NEXT_PUBLIC_API_BASE (baked in at build time, so changing it needs a
+# redeploy of the site), and the API answers only the origins in WEB_ORIGINS
+# (backend/src/origins.ts). Render gives a service <name>.onrender.com when that
+# name is free; if it adds a suffix, update both values to the real addresses.
 #
 # Secrets are marked sync: false: Render asks for them once in its dashboard and
-# they never live in this repo. WEB_ORIGINS must list the Vercel address, or the
-# browser's requests are refused (see backend/src/origins.ts).
+# they never live in this repo.
 services:
   - type: web
     name: askretes-api
@@ -25,10 +29,24 @@ services:
       - key: GCS_BUCKET
         value: askretes-student-files-62090fbe
       - key: WEB_ORIGINS
-        sync: false
+        value: https://askretes-web.onrender.com
       - key: LLM_API_KEY
         sync: false
       - key: MONGODB_URI
         sync: false
       - key: GCS_KEY_BASE64
         sync: false
+
+  - type: web
+    name: askretes-web
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    # next start listens on Render's PORT on its own.
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22.19.0"
+      - key: NEXT_PUBLIC_API_BASE
+        value: https://askretes-api.onrender.com
