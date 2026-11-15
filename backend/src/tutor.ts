@@ -8,7 +8,7 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { createDeepAgent, registerHarnessProfile, StateBackend } from "deepagents";
 import { tool } from "langchain";
 import { z } from "zod";
-import { agentPlatformRequest, NO_THINKING, TUTOR_MODEL, stripIdentity } from "./llm.ts";
+import { agentPlatformRequest, NO_THINKING, TUTOR_MODEL, stripIdentity, withBackoff } from "./llm.ts";
 import { searchNotes } from "./notes.ts";
 import type { AssignmentKind, HintLevel } from "./types.ts";
 
@@ -398,9 +398,17 @@ async function runDeepAgent(call: TutorCall): Promise<string> {
     subagents: [],
     permissions: [{ operations: ["write"], paths: ["/**"], mode: "deny" }],
   });
-  const result = await agent.invoke(
-    { messages: [{ role: "user", content: call.user }] },
-    { recursionLimit: 24, signal: AbortSignal.timeout(TURN_TIMEOUT_MS) },
+  // A 429 that got past TimedChatGoogle's second copy is waited out and the whole draft is asked for again,
+  // inside the same 45 s the turn already allows: past that, the student gets the 503 they got before.
+  // The agent has no side effects (StateBackend, writes denied), so asking again cannot double anything.
+  const deadline = Date.now() + TURN_TIMEOUT_MS;
+  const result = await withBackoff(
+    () =>
+      agent.invoke(
+        { messages: [{ role: "user", content: call.user }] },
+        { recursionLimit: 24, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) },
+      ),
+    deadline,
   );
   return messageText(result.messages.at(-1)?.content);
 }

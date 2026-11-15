@@ -122,6 +122,57 @@ export function countIdentity(text: string): number {
   return count;
 }
 
+/**
+ * How a "too many requests" answer is retried.
+ *
+ * The project shares one per-minute quota. When a class presses Send at the
+ * same moment, Google answers some calls with 429 for a few seconds, and
+ * before this every such call failed the student's turn ("Margin could not
+ * answer"). Now the same request is sent again after a wait that doubles each
+ * time (about 1 s, 2 s, 4 s), with a random spread so a hundred students do
+ * not all come back in the same instant and cause the next spike.
+ *
+ * It is capped: `attempts` is the most requests one call can make, so a
+ * minute-long outage costs at most four requests per call and then fails as
+ * before. Only 429 and 503 are retried. A 400 would fail the same way again,
+ * and a 401 is a wrong key. Rejected calls are not billed, so a retry costs
+ * time, not credit. `sleep` and `random` are here so tests can run it with no
+ * real waiting.
+ */
+export const BACKOFF = {
+  attempts: 4,
+  baseMs: 1_000,
+  maxMs: 8_000,
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  random: Math.random,
+};
+
+/** True when the provider said it is busy (429, or 503), in any of the shapes the two SDKs throw it. */
+export function isBusy(error: unknown): boolean {
+  const e = error as { status?: unknown; code?: unknown; message?: unknown } | null;
+  const status = Number(e?.status ?? e?.code ?? 0);
+  if (status === 429 || status === 503) return true;
+  return typeof e?.message === "string" && /\b429\b|RESOURCE_EXHAUSTED|Too Many Requests|\b503\b|UNAVAILABLE/i.test(e.message);
+}
+
+/**
+ * Runs `call`, and again after a backoff wait while the provider says it is busy, up to BACKOFF.attempts in all.
+ * `deadline` (epoch ms) stops it from waiting past a time the caller has already promised the student; the last busy error is thrown instead.
+ */
+export async function withBackoff<T>(call: () => Promise<T>, deadline = Number.POSITIVE_INFINITY): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await call();
+    } catch (error) {
+      if (!isBusy(error) || attempt >= BACKOFF.attempts) throw error;
+      // 1 s, 2 s, 4 s ... capped, each spread between half and one and a half times.
+      const wait = Math.min(BACKOFF.maxMs, BACKOFF.baseMs * 2 ** (attempt - 1)) * (0.5 + BACKOFF.random());
+      if (Date.now() + wait >= deadline) throw error;
+      await BACKOFF.sleep(wait);
+    }
+  }
+}
+
 /** The model answered, and the answer is not the schema. Retry once, then this error. The message does not include the payload, because the guard's prompt contains the answer key. */
 export class PayloadError extends Error {
   constructor(message: string) {
@@ -156,14 +207,15 @@ export async function completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
   const user = stripIdentity(input.user);
   const generate = input.generate ?? ((request) => generateWithGemini(request, input.schema, input.image, input.role));
 
+  // A busy provider is waited out here (withBackoff). A bad payload is the separate one retry below.
   try {
-    return readPayload(await generate({ model, system, user }), input.schema);
+    return readPayload(await withBackoff(() => generate({ model, system, user })), input.schema);
   } catch (error) {
     if (!(error instanceof PayloadError)) throw error;
   }
 
   try {
-    return readPayload(await generate({ model, system, user }), input.schema);
+    return readPayload(await withBackoff(() => generate({ model, system, user })), input.schema);
   } catch (error) {
     if (error instanceof PayloadError) {
       throw new PayloadError("completeJson: the model payload did not match the schema after one retry");
