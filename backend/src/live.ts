@@ -14,6 +14,7 @@ import mongoose from "mongoose";
 import { WebSocket, WebSocketServer } from "ws";
 import { checkDeterministic, fallbackFor } from "./guard.ts";
 import { type LiveEvent, type LiveSession, openLive, stripIdentity } from "./llm.ts";
+import { webOrigins } from "./origins.ts";
 import { Assignment, CANARY, Course, CourseMaterial, Message, Session } from "./models.ts";
 import { NO_MATCH, searchNotes } from "./notes.ts";
 import type { AssignmentKind, HintLevel } from "./types.ts";
@@ -329,7 +330,7 @@ async function notesFor(assignment: { notes?: string | null; course_id?: unknown
 
 /**
  * Accepts Talk sockets on `/api/live`.
- * The session id is a query parameter. An unknown session is closed before any model call. The origin check matches the HTTP API, so a page other than the dev server cannot open a voice session with this process.
+ * The session id is a query parameter. An unknown session is closed before any model call. The origin check reads the same list as the HTTP API's CORS (origins.ts), so only the app's own pages can open a voice session with this process.
  */
 export function attachLive(server: HttpServer, connect: typeof openLive = openLive): void {
   const wss = new WebSocketServer({ noServer: true });
@@ -340,7 +341,7 @@ export function attachLive(server: HttpServer, connect: typeof openLive = openLi
       return;
     }
     const origin = request.headers.origin;
-    if (origin && origin !== "http://localhost:3000") {
+    if (origin && !webOrigins().includes(origin)) {
       socket.destroy();
       return;
     }

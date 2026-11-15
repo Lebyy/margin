@@ -1,4 +1,5 @@
 import cors from "cors";
+import { webOrigins } from "./origins.ts";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { dbState } from "./db.ts";
 import { createRouter, type RouteDeps } from "./routes.ts";
@@ -13,9 +14,10 @@ import { createRouter, type RouteDeps } from "./routes.ts";
 export function createApp(deps: RouteDeps = {}): express.Express {
   const app = express();
 
-  // Only the Next.js dev server may call the API from a browser. Widening this
-  // to "*" would let any page a professor has open read class data.
-  app.use(cors({ origin: "http://localhost:3000", methods: ["GET", "POST", "PUT", "PATCH", "DELETE"] }));
+  // Only the app's own pages may call the API from a browser: the dev server
+  // locally, the deployed site in production (WEB_ORIGINS, see origins.ts).
+  // Widening this to "*" would let any page a professor has open read class data.
+  app.use(cors({ origin: webOrigins(), methods: ["GET", "POST", "PUT", "PATCH", "DELETE"] }));
 
   // A phone photo sent as base64 for snap-your-work is a few MB. 10 MB fits it
   // and still refuses an accidental upload of something much larger. A body

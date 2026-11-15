@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch --env-file-if-exists=../.env src/index.ts",
+    "start": "node --env-file-if-exists=../.env src/index.ts",
     "test": "STORAGE_DRIVER=local node --env-file-if-exists=../.env --test test/*.ts",
     "redteam": "STORAGE_DRIVER=local node --env-file-if-exists=../.env --test test/redteam.ts",
     "sim": "SIM_LIVE=1 node --env-file-if-exists=../.env --test --test-reporter=spec test/sim/cs101.ts",

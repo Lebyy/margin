@@ -1,0 +1,34 @@
+# Render Blueprint for the Askretes API (the Express backend in backend/).
+#
+# The frontend is on Vercel; this is the API it calls. It runs as one always-on
+# Node process because Talk holds a WebSocket open and uploaded attachments are
+# kept in this process's memory between the upload and the message, neither of
+# which works on serverless functions.
+#
+# Secrets are marked sync: false: Render asks for them once in its dashboard and
+# they never live in this repo. WEB_ORIGINS must list the Vercel address, or the
+# browser's requests are refused (see backend/src/origins.ts).
+services:
+  - type: web
+    name: askretes-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22.19.0"
+      - key: STORAGE_DRIVER
+        value: gcs
+      - key: GCS_BUCKET
+        value: askretes-student-files-62090fbe
+      - key: WEB_ORIGINS
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: GCS_KEY_BASE64
+        sync: false
