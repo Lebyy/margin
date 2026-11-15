@@ -4,11 +4,13 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch --env-file-if-exists=../.env src/index.ts",
-    "test": "node --env-file-if-exists=../.env --test test/*.ts",
-    "redteam": "node --env-file-if-exists=../.env --test test/redteam.ts",
-    "sim": "SIM_LIVE=1 node --env-file-if-exists=../.env --test --test-reporter=spec test/sim/cs101.ts"
+    "test": "STORAGE_DRIVER=local node --env-file-if-exists=../.env --test test/*.ts",
+    "redteam": "STORAGE_DRIVER=local node --env-file-if-exists=../.env --test test/redteam.ts",
+    "sim": "SIM_LIVE=1 node --env-file-if-exists=../.env --test --test-reporter=spec test/sim/cs101.ts",
+    "storage:upload-local": "node --env-file-if-exists=../.env scripts/upload-local-storage.ts"
   },
   "dependencies": {
+    "@google-cloud/storage": "8.4.0",
     "@google/genai": "^3.3.0",
     "@langchain/core": "^1.4.1",
     "@langchain/google-genai": "^2.3.6",
@@ -16,6 +18,7 @@
     "deepagents": "^1.16.5",
     "express": "^5.3.0",
     "fflate": "0.8.2",
+    "google-auth-library": "11.3.4",
     "langchain": "^1.6.6",
     "minisearch": "7.2.0",
     "mongoose": "^9.12.1",
