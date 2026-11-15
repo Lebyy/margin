@@ -1,4 +1,4 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import express, { Router, type NextFunction, type Request, type Response } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
 import { dbState } from "./db.ts";
@@ -40,6 +40,8 @@ import { draftHint } from "./tutor.ts";
 import { checkDeterministic } from "./guard.ts";
 import { IMAGE_TYPES, findStep, guardQuestion } from "./vision.ts";
 import { studentFlashcards } from "./flashcards.ts";
+import { activitySchema, addActivity, copyNotes, typingRecord, typingSchema, type QuestionActivity } from "./integrity.ts";
+import { integrityReport } from "./integrity-report.ts";
 import { leaksAnotherQuestion, questionAt, questionCount, questionKeys, questionPrompts, secondsPerQuestion, type QuestionTime } from "./questions.ts";
 import { reflectOn, type Reflection } from "./reflect.ts";
 import { slideNotes } from "./slides.ts";
@@ -231,6 +233,8 @@ const messageInput = z
     // tools; a turn without it is answered exactly as before.
     // Ids from POST /api/sessions/:id/attachments. Each must belong to this session.
     attachments: z.array(z.string().uuid()).max(8).optional(),
+    // How the text was written (integrity.ts): counts and timings, never the keys. Optional, so Talk, tests, and an older page still send turns; a message without it is simply not reviewed for typing.
+    typing: typingSchema.optional(),
     canvas: z
       .object({
         summary: z.string().max(8000),
@@ -680,7 +684,7 @@ export function createRouter(deps: RouteDeps = {}): Router {
 
     // Checked before the student is created, so a bad assignment link does not
     // leave a student behind with no session.
-    const target = await Assignment.findById(assignment_id).select("course_id margin_enabled").lean();
+    const target = await Assignment.findById(assignment_id).select("course_id margin_enabled kind prompt questions").lean();
     if (!target) {
       res.status(404).json({ error: "assignment_not_found" });
       return;
@@ -717,6 +721,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
       assignment_id,
       level: session.current_level,
       current_question: 0,
+      // The line the page adds when the student copies a question (integrity.ts, the copy trap).
+      copy_notes: copyNotes(String(session._id), questionCount(target), (target.kind ?? "code") as AssignmentKind),
     });
   });
 
@@ -883,6 +889,8 @@ export function createRouter(deps: RouteDeps = {}): Router {
       canvas: parsed.data.canvas ? { shared: true, picture: !!parsed.data.canvas.image, picture_key: pictureKey } : null,
       attachments: attached.map((a) => ({ id: a.id, name: a.name, kind: a.kind, bytes: a.bytes, storage_key: a.storageKey, content_type: a.contentType })),
       ...(parsed.data.canvas?.image && parsed.data.canvas.scene ? { board: boardScene(parsed.data.canvas.scene) } : {}),
+      // Checked against the text that actually arrived, so text a script set without typing shows up as untracked.
+      typing: parsed.data.typing && parsed.data.text ? typingRecord(`${parsed.data.text}${parsed.data.attempt ?? ""}`, parsed.data.typing) : null,
     }).save();
     await saveScribeEvent({
       label,
@@ -1214,7 +1222,58 @@ export function createRouter(deps: RouteDeps = {}): Router {
       reflection: session.reflection ?? null,
       // A reload shows what each turn did with its tools (drew, marked, opened a slide), by tool name and the released actions. The arguments stay in the professor's transcript.
       messages: messages.map((m) => ({ role: m.role, content: m.content, hint_level: m.hint_level ?? null, tools: (m.tool_calls ?? []).map((c) => c.name), actions: m.actions ?? [], canvas_shared: !!m.canvas?.shared, attachments: (m.attachments ?? []).map((f) => ({ id: f.id, name: f.name, kind: f.kind })) })),
+      copy_notes: await notesForSession(session),
     });
+  });
+
+  /** The copy-trap lines for a session's assignment (see integrity.ts), for a page that reloads into an existing session. */
+  async function notesForSession(session: { _id: unknown; assignment_id: unknown }): Promise<string[]> {
+    const a = await Assignment.findById(session.assignment_id).select("kind questions").lean();
+    return a ? copyNotes(String(session._id), questionCount(a), (a.kind ?? "code") as AssignmentKind) : [];
+  }
+
+  /**
+   * POST /api/sessions/:id/activity: the page's report of time on the current
+   * question since its last report (active, away, blocked pastes, copies of
+   * the question). Sent every 30 seconds and when the page is hidden, the last
+   * one with navigator.sendBeacon, which can only send text/plain across
+   * origins without a preflight, so the body is read as text and parsed here.
+   * Added to the session's per-question totals. Nothing comes back: the
+   * student page never reads its own clock.
+   */
+  router.post("/api/sessions/:id/activity", express.text({ type: "text/plain", limit: "4kb" }), async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      res.status(404).end();
+      return;
+    }
+    let body: unknown = req.body;
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        res.status(400).end();
+        return;
+      }
+    }
+    const parsed = activitySchema.safeParse(body);
+    if (!parsed.success) {
+      res.status(400).end();
+      return;
+    }
+    const session = await Session.findById(req.params.id).select("activity current_question completed_at").lean();
+    if (!session) {
+      res.status(404).end();
+      return;
+    }
+    // Only the question the student is on (or just left) can gain time; a page cannot add hours to a question long since closed.
+    const q = parsed.data.question_index;
+    if (q > (session.current_question ?? 0) || q < (session.current_question ?? 0) - 1) {
+      res.status(204).end();
+      return;
+    }
+    const next = addActivity((session.activity ?? []) as QuestionActivity[], parsed.data);
+    await Session.updateOne({ _id: session._id }, { $set: { activity: next } });
+    res.status(204).end();
   });
 
   /**
@@ -1645,6 +1704,40 @@ export function createRouter(deps: RouteDeps = {}): Router {
         };
       }),
     });
+  });
+
+  /**
+   * GET /api/prof/integrity?assignment_id=: how each student's work was produced.
+   *
+   * One row per session: time per question from the server's clock, active
+   * and away time from the page, how many pastes were blocked and how often a
+   * question was copied, and the findings from integrity.ts with their level
+   * (evidence, worth a look, or clear). Computed here from stored records;
+   * no model is called and nothing is stored, so changing a threshold in
+   * integrity.ts changes every row at once. A professor route only.
+   */
+  router.get("/api/prof/integrity", async (req, res) => {
+    const report = await integrityReport(String(req.query.assignment_id ?? ""));
+    if (!report) {
+      res.status(404).json({ error: "assignment_not_found" });
+      return;
+    }
+    res.json(report);
+  });
+
+  /** PUT /api/prof/sessions/:id/integrity-exempt: the professor's accommodation switch for one student's session. */
+  router.put("/api/prof/sessions/:id/integrity-exempt", async (req, res) => {
+    const parsed = z.object({ exempt: z.boolean() }).safeParse(req.body);
+    if (!mongoose.isValidObjectId(req.params.id) || !parsed.success) {
+      res.status(400).json({ error: "invalid_request" });
+      return;
+    }
+    const updated = await Session.findByIdAndUpdate(req.params.id, { $set: { integrity_exempt: parsed.data.exempt } }, { new: true }).select("integrity_exempt").lean();
+    if (!updated) {
+      res.status(404).json({ error: "session_not_found" });
+      return;
+    }
+    res.json({ exempt: !!updated.integrity_exempt });
   });
 
   /**

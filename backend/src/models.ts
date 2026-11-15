@@ -299,6 +299,17 @@ const sessionSchema = new Schema(
     },
     // Set when the student finishes the last question. Null while working.
     completed_at: { type: Date, default: null },
+    // Time on each question as the page saw it (integrity.ts): active and away
+    // time, how often the student left, blocked pastes, copies of the question.
+    // Added up from the page's reports. Like question_times, no student route
+    // returns it.
+    activity: {
+      type: [{ _id: false, index: Number, active_ms: Number, away_ms: Number, away_count: Number, longest_away_ms: Number, paste_blocked: Number, copies: Number }],
+      default: [],
+    },
+    // The professor's accommodation switch: the student uses dictation or
+    // assistive input, so signals read from typing are not shown for them.
+    integrity_exempt: { type: Boolean, default: false },
     // The two questions written for the student after the last question, and
     // their answers. Formative: the professor reads them, nothing grades them.
     reflection: {
@@ -413,6 +424,11 @@ const messageSchema = new Schema(
       type: [{ _id: false, id: { type: String, required: true }, storage_key: { type: String, required: true }, content_type: { type: String, required: true } }],
       default: undefined,
     },
+    // How a student message was written, for the professor's integrity review
+    // (integrity.ts): counts and timings only, never the keys. Null for a
+    // message the page did not describe (Talk, an older page, a test run).
+    // No student route selects it.
+    typing: { type: Schema.Types.Mixed, default: null },
   },
   { collection: "messages", timestamps: { createdAt: "created_at", updatedAt: false } as const },
 );

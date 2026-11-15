@@ -20,6 +20,7 @@ import { RichReply } from "@/components/workspace/rich-reply";
 import { StudentIdCard, type CardIssuer } from "@/components/prof/student-id-card";
 import { matches, NO_FILTER, StudentFilters, type StudentFilter } from "@/components/prof/student-filters";
 import { duration, TimingsPanel } from "@/components/prof/timings-panel";
+import { IntegrityPanel } from "@/components/prof/integrity-panel";
 import { useAssignment } from "@/components/prof/use-assignment";
 import {
   api,
@@ -320,6 +321,7 @@ function DashboardPage() {
             { id: "students", label: `Students ${roster.students.length}`, content: students },
             { id: "work", label: "Canvas & files", content: work ? <WorkPanel work={work} onOpenStudent={openById} onOpenFile={setViewing} /> : <p className="py-6 text-muted">No canvas or file work yet.</p> },
             { id: "timings", label: "Time", content: <TimingsPanel timings={timings} studentIds={matchingIds} /> },
+            { id: "integrity", label: "Integrity", content: <IntegrityPanel assignmentId={assignmentId} onOpenStudent={openById} /> },
             { id: "messages", label: "Messages", content: <MessagesView assignmentId={assignmentId} /> },
           ]}
         />

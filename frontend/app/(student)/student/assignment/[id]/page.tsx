@@ -19,7 +19,7 @@ import { ClassNotes } from "@/components/workspace/class-notes";
 import { ATTACH_ACCEPT, AttachmentTile, fileToBase64, MAX_ATTACH_BYTES, MAX_ATTACH_FILES, useRevokeOnRemove, type PendingFile } from "@/components/workspace/attachments";
 import { FileDownload, FileLightbox, PanelFile, SentFileTiles } from "@/components/workspace/file-viewer";
 import { fileKey, keepFile, opensInPanel, type FileRef } from "@/lib/files";
-import { CodeBlock, looksLikeWork, splitFenced } from "@/components/workspace/code-block";
+import { CodeBlock, splitFenced } from "@/components/workspace/code-block";
 import { RichReply } from "@/components/workspace/rich-reply";
 import { NavButton, useWorkspace } from "@/components/workspace/student-shell";
 import { api, ApiError, attachmentUrl, conceptLabel, questionPdfUrl, type Assignment, type CanvasAction, type Course, type HintLevel, type Lecture, type Reflection } from "@/lib/api";
@@ -30,6 +30,7 @@ import { applyActions, boardPictures, boardShapes, canvasContext, placePicture, 
 import { cn } from "@/lib/utils";
 import { exactDue, relativeDue } from "@/lib/courses";
 import { AskretesMark } from "@/components/brand/askretes-mark";
+import { useActivityReport, useTypingRecorder, type Typing } from "@/lib/integrity";
 
 /**
  * The fixed line the demo control sends. It is the claimed-permission
@@ -135,6 +136,10 @@ export default function StudentAssignmentPage() {
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // The copy-trap line for each question (lib/integrity.ts). Added to the clipboard when the student copies the question.
+  const [copyNotes, setCopyNotes] = useState<string[]>([]);
+  // Shown for a few seconds after a paste of text was stopped, so the student knows why nothing appeared.
+  const [pasteNote, setPasteNote] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   /** The class this assignment is in, for its code in the header and its notes and files in the pane. Null until loaded, or when the assignment has no class. */
   const [course, setCourse] = useState<Course | null>(null);
@@ -204,6 +209,7 @@ export default function StudentAssignmentPage() {
               if (!live) return;
               browser.setSessionId(assignmentId, s.session_id);
               setSessionId(s.session_id);
+              setCopyNotes(s.copy_notes ?? []);
               setLevel(s.level);
               // Starting the session makes the assignment "In progress" and joins the class, so the sidebar is read again.
               refreshSidebar();
@@ -218,6 +224,7 @@ export default function StudentAssignmentPage() {
           const s = await api.sessionMessages(stored);
           if (!live) return;
           setSessionId(s.session_id);
+              setCopyNotes(s.copy_notes ?? []);
           setStudentId(s.student_id);
           setLevel(s.level);
           setQuestionIndex(s.current_question ?? 0);
@@ -249,6 +256,7 @@ export default function StudentAssignmentPage() {
               if (!live) return;
               browser.setSessionId(assignmentId, s.session_id);
               setSessionId(s.session_id);
+              setCopyNotes(s.copy_notes ?? []);
               setLevel(s.level);
               refreshSidebar();
             } catch {
@@ -452,6 +460,7 @@ export default function StudentAssignmentPage() {
       if (name.trim()) browser.setName(name.trim());
       setStudentId(s.student_id);
       setSessionId(s.session_id);
+              setCopyNotes(s.copy_notes ?? []);
       setLevel(s.level);
       setQuestionIndex(0);
       setReflection(null);
@@ -485,7 +494,24 @@ export default function StudentAssignmentPage() {
    * server's guard reads the full draft, canvas words included, before any of
    * it is shown. The level is set from `result.level` and from nothing else.
    */
-  async function send(text: string, work = "") {
+  // The professor's integrity record (lib/integrity.ts): time on each question, and how each message was written. Nothing here is shown to the student.
+  const activity = useActivityReport(sessionId, questionIndex);
+  const onPasteBlocked = useCallback(() => {
+    activity.pasteBlocked();
+    setPasteNote(true);
+  }, [activity]);
+  const { ref: typingBox, filled: typingFilled, take: takeTyping } = useTypingRecorder(onPasteBlocked);
+  const questionNow = useRef("");
+  useEffect(() => {
+    questionNow.current = question;
+  }, [question]);
+  useEffect(() => {
+    if (!pasteNote) return;
+    const id = window.setTimeout(() => setPasteNote(false), 4000);
+    return () => window.clearTimeout(id);
+  }, [pasteNote]);
+
+  async function send(text: string, work = "", typing?: Typing) {
     if (!sessionId || sending) return;
     const q = text.trim();
     if (!q) return;
@@ -516,7 +542,7 @@ export default function StudentAssignmentPage() {
     // Each sent file is kept in this browser, so it can be opened again from the conversation after a reload.
     for (const f of sentFiles) if (f.file) void keepFile(fileKey(sessionId, f.name), f.file);
     try {
-      const result = await api.sendTurn(sessionId, q, tried || undefined, ctx?.context, sentFiles.map((f) => f.info!.id));
+      const result = await api.sendTurn(sessionId, q, tried || undefined, ctx?.context, sentFiles.map((f) => f.info!.id), typing);
       if (ctx?.sentPicture) {
         seenBoard.current = ctx.version;
         boardFrame.current = ctx.frame;
@@ -544,7 +570,10 @@ export default function StudentAssignmentPage() {
     const hasFiles = files.some((f) => f.status === "ready");
     const text = words || (work ? CHECK_MY_WORK : hasFiles ? "Here are my files. What should I look at?" : "");
     if (!text) return;
-    void send(text, work);
+    const typing = takeTyping();
+    // A sentence the page wrote for them (no words of their own) is the page's text, not untyped text.
+    if (!words) typing.filled += [...text].length;
+    void send(text, work, typing);
   }
 
   if (loadError || !assignment) {
@@ -581,7 +610,7 @@ export default function StudentAssignmentPage() {
   // The pane's views. The canvas is offered only with Askretes on, because Askretes is what draws on it and reads it.
   const views: PaneView[] = [
     ...(panelFile ? [{ id: "file", label: panelFile.name, bleed: true, tools: <FileDownload file={panelFile} />, content: <PanelFile key={panelFile.key} file={panelFile} /> }] : []),
-    ...(marginOn ? [{ id: "canvas", label: "Canvas", bleed: true, content: <Whiteboard storageKey={boardKey} onApi={onBoard} /> }] : []),
+    ...(marginOn ? [{ id: "canvas", label: "Canvas", bleed: true, content: <Whiteboard storageKey={boardKey} onApi={onBoard} onPasteBlocked={onPasteBlocked} /> }] : []),
     { id: "notes", label: "Notes", content: <ClassNotes notes={course?.notes ?? ""} materials={course?.materials ?? []} assignmentNotes={assignment.notes} assignmentTitle={assignment.title} /> },
     ...(assignment.course_id
       ? [
@@ -622,6 +651,8 @@ export default function StudentAssignmentPage() {
               <div className="h-full rounded-full bg-margin-red transition-[width]" style={{ width: `${((reflection ? prompts.length : current) / prompts.length) * 100}%` }} />
             </div>
           </li>
+          {/* What the professor sees, said once where the student looks at their progress. Recording it without saying so would make the dashboard a surveillance tool. */}
+          <li className="px-2 pt-1 text-xs leading-5 text-muted">Your professor sees how long each question takes and whether your work was typed. Pasting is off; attach files instead.</li>
         </PaneSection>
       ) : null}
       <PaneSection title="Your workspace">
@@ -699,7 +730,19 @@ export default function StudentAssignmentPage() {
 
   // The question being worked on, at the head of the conversation. Moving on is a step in the conversation, so Next and Submit sit with it.
   const brief = (
-    <article aria-label="The question" className="flex flex-col gap-2 border-b border-border pb-6">
+    <article
+      aria-label="The question"
+      className="flex flex-col gap-2 border-b border-border pb-6"
+      // Copying the question adds the copy-trap line for this question to the clipboard (see lib/integrity.ts). The page shows nothing different.
+      onCopy={(e) => {
+        const selected = window.getSelection()?.toString() ?? "";
+        const note = copyNotes[current];
+        activity.copied();
+        if (!selected.trim() || !note) return;
+        e.preventDefault();
+        e.clipboardData.setData("text/plain", `${selected}\n\n${note}`);
+      }}
+    >
       <p className="text-xs font-medium text-muted">{prompts.length > 1 ? (marginOn ? `Question ${current + 1} of ${prompts.length}` : `${prompts.length} questions`) : isTopic ? "Lesson" : "Question"}</p>
       {marginOn ? (
         <div className="font-serif text-lg leading-7">
@@ -790,23 +833,19 @@ export default function StudentAssignmentPage() {
               </Button>
             </div>
           ) : null}
+          {/* The recorder listens here: the box's key and input events bubble to this wrapper. */}
+          <div ref={typingBox}>
           <TextField value={question} onChange={setQuestion} isDisabled={sending} fullWidth aria-label="Message Askretes">
             <TextArea
               rows={1}
-              placeholder={attachment ? "Ask about your work, or just send it" : isTopic ? "Ask about this topic" : "Paste your attempt or ask a question"}
+              placeholder={attachment ? "Ask about your work, or just send it" : isTopic ? "Ask about this topic" : "Type your attempt or ask a question"}
               className="max-h-48 min-h-12 resize-none border-0 bg-transparent px-4 pt-3.5 text-[15px] leading-6 shadow-none outline-none focus:ring-0"
               onPaste={(e) => {
-                // A pasted file (a screenshot) is attached like a picked one.
+                // A pasted file (a screenshot) is attached like a picked one. Pasted text never gets here: the typing recorder stops it (lib/integrity.ts).
                 if (e.clipboardData.files.length) {
                   e.preventDefault();
                   addFiles(e.clipboardData.files);
-                  return;
                 }
-                // A multi-line or code-shaped paste becomes the work card instead of words in the box.
-                const text = e.clipboardData.getData("text/plain");
-                if (!looksLikeWork(text)) return;
-                e.preventDefault();
-                editAttachment(attachment ? `${attachment.replace(/\s+$/, "")}\n${text}` : text);
               }}
               onKeyDown={(e) => {
                 // Enter sends, Shift+Enter makes a new line.
@@ -817,6 +856,7 @@ export default function StudentAssignmentPage() {
               }}
             />
           </TextField>
+          </div>
           <div className="flex items-center gap-0.5 px-2 pb-2">
             <Dropdown>
               <Dropdown.Trigger className="flex size-8 items-center justify-center rounded-full text-muted hover:bg-default hover:text-foreground" aria-label="More" isDisabled={sending}>
@@ -853,7 +893,14 @@ export default function StudentAssignmentPage() {
                 e.target.value = "";
               }}
             />
-            <MicButton onText={setQuestion} isDisabled={sending} />
+            <MicButton
+              onText={(t) => {
+                // Dictated words are the student's, written by the page: counted as filled, so they are never read as untyped text.
+                typingFilled(Math.max(0, [...t].length - [...questionNow.current].length));
+                setQuestion(t);
+              }}
+              isDisabled={sending}
+            />
             <TalkButton
               // The composer is only drawn once a session exists, so this is never the empty string on screen.
               sessionId={sessionId ?? ""}
@@ -867,6 +914,11 @@ export default function StudentAssignmentPage() {
           </div>
         </div>
         {sendError ? <p className="px-2 text-sm text-danger">{sendError}</p> : null}
+        {pasteNote ? (
+          <p className="px-2 text-sm text-muted" role="status">
+            Pasting is off for assignments. Type your work, or attach it as a file.
+          </p>
+        ) : null}
         {/* The privacy line, where a chat app puts its one line of small print. The model sees the work, never the name. */}
         <p className="text-center text-xs text-muted">Askretes is AI and can make mistakes.</p>
       </form>
@@ -890,7 +942,7 @@ export default function StudentAssignmentPage() {
               ) : turns.length === 0 && !sending ? (
                 <div className="flex flex-col items-center gap-2 py-12 text-center">
                   <p className="font-serif text-3xl tracking-tight">{isTopic ? "What do you want to understand?" : "Where are you stuck?"}</p>
-                  <p className="max-w-md text-muted">{isTopic ? "Ask anything about this topic. Askretes teaches it from your professor's notes." : "Paste your attempt below and ask. Askretes points at the mistake and never writes the solution."}</p>
+                  <p className="max-w-md text-muted">{isTopic ? "Ask anything about this topic. Askretes teaches it from your professor's notes." : "Type your attempt below and ask. Askretes points at the mistake and never writes the solution."}</p>
                   {/* Two requests that show the canvas tools, offered once. Each is sent as a message, through the same path as the student's own words. */}
                   <div className="mt-3 flex flex-wrap justify-center gap-2">
                     <Button size="sm" variant="secondary" onPress={() => void send(`Draw a concept map of ${first} on my canvas.`)}>
@@ -1012,7 +1064,7 @@ function StartCard({
     <Card>
       <Card.Content>
         <h2 className="font-serif text-2xl font-semibold tracking-tight">Start</h2>
-        <p className="text-sm leading-6 text-muted">Your name lets your professor see where the class gets stuck. The model never sees it. Then paste your attempt and ask; Askretes points at the mistake and does not write the solution.</p>
+        <p className="text-sm leading-6 text-muted">Your name lets your professor see where the class gets stuck. The model never sees it. Then type your attempt and ask; Askretes points at the mistake and does not write the solution.</p>
         <form
           className="mt-1 flex flex-col gap-3"
           onSubmit={(e) => {

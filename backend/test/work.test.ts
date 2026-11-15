@@ -141,7 +141,7 @@ describe("the professor's view of canvas and file work", { skip }, () => {
     assert.equal(asked.status, 200);
     const body = JSON.parse(asked.text);
     // Case: every tool ran and its record came back, and the page gets the label map to show the name.
-    assert.deepEqual(body.tool_calls.map((c: { name: string }) => c.name), ["class_overview", "list_students", "student_work", "canvas_and_files", "assignment"]);
+    assert.deepEqual(body.tool_calls.map((c: { name: string }) => c.name), ["class_overview", "list_students", "student_work", "canvas_and_files", "assignment", "integrity_review"]);
     assert.equal(body.names.S1.name, "Ada");
     // Case: what the model saw names nobody, and never carries the answer key.
     const seen = toolOutputs.join("\n");
@@ -151,6 +151,6 @@ describe("the professor's view of canvas and file work", { skip }, () => {
     // Case: the question and the answer are stored, with the tool record, and come back with the history.
     const history = JSON.parse((await call("GET", `/api/prof/analyst?assignment_id=${assignmentId}`)).text);
     assert.deepEqual(history.messages.map((m: { role: string }) => m.role), ["professor", "analyst"]);
-    assert.equal(history.messages[1].tool_calls.length, 5);
+    assert.equal(history.messages[1].tool_calls.length, 6);
   });
 });

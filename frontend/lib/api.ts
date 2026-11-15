@@ -1,3 +1,4 @@
+import type { Typing } from "@/lib/integrity";
 // Every request the two screens make, in one file.
 //
 // The shapes below are the JSON the Express routes return, field for field.
@@ -209,7 +210,30 @@ export type PhotoReply = { step: string; box: PhotoBox; question: string; level:
  */
 export type Flashcards = { concept: string | null; cards: { front: string; back: string }[] };
 
-export type SessionStart = { session_id: string; student_id: string; assignment_id: string; level: HintLevel; current_question?: number };
+export type IntegrityFinding = {
+  strength: "evidence" | "pattern";
+  code: "copy_trap" | "script_input" | "untracked_text" | "superhuman_typing" | "robotic_rhythm" | "transcription" | "away_burst" | "fast_solve";
+  question_index: number | null;
+  detail: string;
+  innocent: string;
+};
+export type QuestionActivity = { index: number; active_ms: number; away_ms: number; away_count: number; longest_away_ms: number; paste_blocked: number; copies: number };
+export type IntegrityRow = {
+  session_id: string;
+  student_id: string;
+  display_name: string;
+  completed: boolean;
+  exempt: boolean;
+  level: "evidence" | "worth_a_look" | "clear";
+  findings: IntegrityFinding[];
+  seconds: (number | null)[];
+  activity: QuestionActivity[];
+  messages: number;
+  described: number;
+};
+export type IntegrityReport = { question_count: number; class_median_seconds: (number | null)[]; class_finished: number[]; students: IntegrityRow[] };
+
+export type SessionStart = { session_id: string; student_id: string; assignment_id: string; level: HintLevel; current_question?: number; copy_notes?: string[] };
 
 /** The two questions asked after the last question, with the student's answers so far. `what_if_index` is 0-based. */
 export type Reflection = { why: string; what_if: string; what_if_index: number; answers: { why: string; what_if: string } };
@@ -233,6 +257,8 @@ export type SessionTiming = {
 export type Timings = { questions: string[]; sessions: SessionTiming[] };
 
 export type SessionMessages = {
+  /** The copy-trap line for each question (see lib/integrity.ts and the server's integrity.ts). */
+  copy_notes?: string[];
   session_id: string;
   student_id: string;
   assignment_id: string;
@@ -534,6 +560,10 @@ export const api = {
   /** Edits title, due date and the switch; with `draft_id`, also replaces the questions and keys. 400 `pdfs_required` for an assignment without PDFs. */
   editPdfAssignment: (assignmentId: string, fields: { draft_id?: string; title: string; due_at: string | null; margin_enabled: boolean; questions?: string[] }) =>
     request<{ _id: string }>("PATCH", `/api/prof/assignments/${q(assignmentId)}`, fields),
+  /** The integrity review for one assignment: each student's level, findings, and time. A professor route. */
+  integrity: (assignmentId: string) => request<IntegrityReport>("GET", `/api/prof/integrity?assignment_id=${q(assignmentId)}`),
+  /** The accommodation switch: signals read from typing are not shown for this student. */
+  setIntegrityExempt: (sessionId: string, exempt: boolean) => request<{ exempt: boolean }>("PUT", `/api/prof/sessions/${q(sessionId)}/integrity-exempt`, { exempt }),
   profCourses: () => request<{ courses: ProfCourseCard[] }>("GET", "/api/prof/courses"),
   saveCourse: (course: { id?: string; name: string; description: string; notes: string; professor?: string; code?: string; term?: string; accent?: CourseAccent }) => request<{ id: string; name: string }>("POST", "/api/prof/courses", course),
   /** `text` for a text file, `file` for a PDF or a picture that the server reads into text once. */
@@ -550,8 +580,9 @@ export const api = {
     request<{ reflection: Reflection }>("PUT", `/api/sessions/${q(sessionId)}/reflection`, answers),
   sessionMessages: (sessionId: string) => request<SessionMessages>("GET", `/api/sessions/${q(sessionId)}/messages`),
   /** `attempt` is sent only when the student wrote one. There is no flag that claims an attempt. The server's scribe reads the words. */
-  sendTurn: (sessionId: string, text: string, attempt?: string, canvas?: CanvasContext, attachments?: string[]) =>
-    request<TurnReply>("POST", `/api/sessions/${q(sessionId)}/messages`, { text, ...(attempt ? { attempt } : {}), ...(canvas ? { canvas } : {}), ...(attachments?.length ? { attachments } : {}) }),
+  /** `typing` is how the box's text was written, counts and timings only (lib/integrity.ts). Sent with typed messages; a suggestion chip sends none. */
+  sendTurn: (sessionId: string, text: string, attempt?: string, canvas?: CanvasContext, attachments?: string[], typing?: Typing) =>
+    request<TurnReply>("POST", `/api/sessions/${q(sessionId)}/messages`, { text, ...(attempt ? { attempt } : {}), ...(canvas ? { canvas } : {}), ...(attachments?.length ? { attachments } : {}), ...(typing ? { typing } : {}) }),
   /** One file for the next message, as base64. The server reads it within its limits and answers with an id, or a 400/413 whose `message` the tile shows. */
   uploadAttachment: (sessionId: string, file: { name: string; base64: string }) => request<AttachmentInfo>("POST", `/api/sessions/${q(sessionId)}/attachments`, file),
   /** The board after a reply's canvas actions, for the professor's transcript. */

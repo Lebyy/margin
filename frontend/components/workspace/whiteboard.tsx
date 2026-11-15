@@ -28,7 +28,44 @@ const SAVE_DELAY = 600;
  * It is imported with `ssr: false`, because Excalidraw reads the window as it
  * loads and there is no board to render on the server.
  */
-export default function Whiteboard({ storageKey, onApi }: { storageKey: string; onApi: (api: ExcalidrawImperativeAPI | null) => void }) {
+export default function Whiteboard({ storageKey, onApi, onPasteBlocked }: { storageKey: string; onApi: (api: ExcalidrawImperativeAPI | null) => void; onPasteBlocked?: () => void }) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const blocked = useRef(onPasteBlocked);
+  useEffect(() => {
+    blocked.current = onPasteBlocked;
+  }, [onPasteBlocked]);
+
+  /*
+   * Pasting text onto the board is off, as it is in the chat box (lib/integrity.ts).
+   * Excalidraw reads pastes from the whole document, so the check sits on the
+   * window, before Excalidraw, and applies while the student is working on the
+   * board (their last click was on it). Two pastes still go through: a picture
+   * or file, which is an upload the professor sees, and Excalidraw's own
+   * copied shapes, so copying a shape within the board still works.
+   */
+  useEffect(() => {
+    let onBoard = false;
+    const down = (e: PointerEvent) => {
+      onBoard = !!box.current && box.current.contains(e.target as Node);
+    };
+    const paste = (e: ClipboardEvent) => {
+      const target = e.target as Node | null;
+      const inside = onBoard || (!!target && !!box.current?.contains(target));
+      if (!inside) return;
+      if (e.clipboardData?.files.length) return;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (text.includes('"type":"excalidraw/clipboard"')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      blocked.current?.();
+    };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("paste", paste, true);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("paste", paste, true);
+    };
+  }, []);
   const timer = useRef<number | null>(null);
   /** The save the timer is waiting to run. It is run at once when the board unmounts, so a stroke made just before switching tabs is not lost. */
   const pending = useRef<(() => void) | null>(null);
@@ -89,7 +126,7 @@ export default function Whiteboard({ storageKey, onApi }: { storageKey: string; 
   );
 
   return (
-    <div className="relative min-h-0 flex-1">
+    <div ref={box} className="relative min-h-0 flex-1">
       <div className="absolute inset-0">
         <Excalidraw
           theme="light"
